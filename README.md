@@ -70,8 +70,8 @@ Configurations:
 
 ### Community Meeting
 
-A regular community meeting takes place monthly on every first [Tuesday at 10:00 AM PT (Pacific Time)](https://zoom.us/j/404796463).
-Convert to your [local timezone](http://www.thetimezoneconverter.com/?t=10:00&tz=PT%20%28Pacific%20Time%29).
+A regular community meeting takes place monthly on every first [Wednesday at 9:00 AM PT (Pacific Time)](https://zoom.us/j/404796463).
+Convert to your [local timezone](http://www.thetimezoneconverter.com/?t=9:00&tz=PT%20%28Pacific%20Time%29).
 
 Any changes to the meeting schedule will be added to the [agenda doc](https://docs.google.com/document/d/1zU_xSN2I-d6EMJF3HSQlfceYuIlPFOJ3jWVYYoAqh8w/edit?usp=sharing) and posted to [Slack #users](https://edgefs.slack.com/messages/CDCUWDZP0) and the [edgefs-users mailing list](https://groups.google.com/forum/#!forum/edgefs).
 
