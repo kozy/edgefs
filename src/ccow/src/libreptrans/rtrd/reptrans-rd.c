@@ -8012,11 +8012,26 @@ rd_iterate_blobs_shard(struct repdev *dev, type_tag_t ttag,
 				op = MDB_GET_BOTH_RANGE;
 				data.mv_size = rtbuf(rbl, 1).len;
 				data.mv_data = rtbuf(rbl, 1).base;
+				/**
+				* Attempt to set position to a previous dupsort item.
+				* However, the mdb_cursor_get() can return a error if the entry was deleted
+				* So do a first lookup here and repeat it later with a closest key in a error case
+				*/
+				err = mdb_cursor_get(cursor, &key, pdata, op);
+				if (err) {
+					if (err == MDB_NOTFOUND)
+						op = MDB_SET_RANGE;
+					else {
+						log_error(lg, "Dev(%s) mdb_cursor_get() %d", dev->name, err);
+						err = -EIO;
+						break;
+					}
+				}
 			} else {
 				op = MDB_SET_RANGE;
 			}
 		}
-		while ((err = mdb_cursor_get(cursor, &key, pdata, op)) == 0) {
+		while ((op == MDB_GET_BOTH_RANGE) || ((err = mdb_cursor_get(cursor, &key, pdata, op)) == 0)) {
 			op = MDB_NEXT; // FIXME: why not MDB_NEXT_DUP in case of dup?
 
 			/* skip last key as it was processed in
@@ -8589,11 +8604,20 @@ _next_shard:
 					op = MDB_GET_BOTH_RANGE;
 					data.mv_size = rtbuf(rbl, 1).len;
 					data.mv_data = rtbuf(rbl, 1).base;
+					err = mdb_cursor_get(cursor, &key, pdata, op);
+					if (err) {
+						if (err == MDB_NOTFOUND)
+							op = MDB_SET_RANGE;
+					} else {
+						log_error(lg, "Dev(%s) mdb_cursor_get() %d", dev->name, err);
+						err = -EIO;
+						break;
+					}
 				} else {
 					op = MDB_SET_RANGE;
 				}
 			}
-			while ((err = mdb_cursor_get(cursor, &key, pdata, op)) == 0) {
+			while ((op == MDB_GET_BOTH_RANGE) || ((err = mdb_cursor_get(cursor, &key, pdata, op)) == 0)) {
 				op = MDB_NEXT; // FIXME: why not MDB_NEXT_DUP in case of dup?
 
 				/* skip last key as it was processed in
