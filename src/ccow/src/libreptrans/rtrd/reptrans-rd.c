@@ -8608,10 +8608,11 @@ _next_shard:
 					if (err) {
 						if (err == MDB_NOTFOUND)
 							op = MDB_SET_RANGE;
-					} else {
-						log_error(lg, "Dev(%s) mdb_cursor_get() %d", dev->name, err);
-						err = -EIO;
-						break;
+						else {
+							log_error(lg, "Dev(%s) mdb_cursor_get() %d", dev->name, err);
+							err = -EIO;
+							break;
+						}
 					}
 				} else {
 					op = MDB_SET_RANGE;
