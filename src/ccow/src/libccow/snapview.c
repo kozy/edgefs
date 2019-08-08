@@ -350,6 +350,33 @@ ccow_snapshot_rollback(ccow_t tctx, ccow_snapview_t sv_hdl,
 }
 
 /*
+ *  * SCOPE: Public
+ *
+ * Creates a new handle for existing snapview
+ * @param sv_hdl snapview handle
+ * @param sv_bid snapview bucket object name
+ * @param sv_bid_size snapview bucket object name size
+ * @param sv_oid snapview object name
+ * @param sv_oid_size snapview object name size
+ * Return zero on success, error otherwise.
+ *
+ */
+int
+ccow_snapview_new(ccow_snapview_t *sv_hdl, const char *sv_bid, size_t sv_bid_size,
+	const char *sv_oid, size_t sv_oid_size) {
+	struct ccow_snapview *sv = je_malloc(sizeof(struct ccow_snapview));
+	if (!sv)
+		return -ENOMEM;
+	/* Create the new SV Object */
+	sv->sv_bid = sv_bid;
+	sv->sv_bid_size = sv_bid_size;
+	sv->sv_oid = sv_oid;
+	sv->sv_oid_size = sv_oid_size;
+	*sv_hdl = sv;
+	return 0;
+}
+
+/*
  * SCOPE: Public
  *
  * Create a snapview object with tid/bid/oid
