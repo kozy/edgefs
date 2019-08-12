@@ -187,6 +187,7 @@ bg_set_default_config (struct repdev_bg_config* cfg) {
 	cfg->tp_hi_resiliency =DEV_TP_HI_WEIGHT;
 	cfg->elru_hits_count = DEV_ELRU_HIT_COUNTER;
 	cfg->elru_touch_ratio = DEV_ELRU_TOUCH_RATIO;
+	cfg->vbr_replication = DEV_VBR_REPLICATION_ENA;
 }
 
 #define FOREACH_BG(sched, job) \

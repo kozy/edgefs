@@ -4318,7 +4318,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 _replicate_vbrs:;
 
 	type_tag_t chunk_ttag = reptrans_backref_attr2ttag(vbr->attr);
-	if (chunk_ttag == TT_INVALID) {
+	if (!dev->bg_config->vbr_replication || chunk_ttag == TT_INVALID) {
 		/*
 		 * Previous VBR version (prior nedge 2.2) didn't keep chunk ttag
 		 * in VBR and such VBRs cannot be replicated
@@ -10643,6 +10643,13 @@ reptrans_parse_bg_jobs_config(const json_value* obj, struct repdev_bg_config* cf
 				return -EINVAL;
 			}
 			cfg->elru_hits_count = v->u.integer;
+		}  else if (strncmp(namekey, "vbr_replication", 15) == 0) {
+			if (v->type != json_integer || v->u.integer < 0) {
+				log_error(lg, "Syntax error: a VBR replication feature enable "
+					"flag has to be 0 or 1");
+				return -EINVAL;
+			}
+			cfg->vbr_replication = v->u.integer;
 		}
 	}
 	return 0;

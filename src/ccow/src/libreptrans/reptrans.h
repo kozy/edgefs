@@ -178,6 +178,7 @@ struct mcjoin_queue_entry {
 #define DEV_MDONLY_TOUCH_TABLE_SIZE_EMBEDDED	(2UL*1024UL*1024UL)
 #define DEV_ELRU_HIT_COUNTER			2
 #define DEV_ELRU_TOUCH_RATIO			1 /* 0.1% */
+#define DEV_VBR_REPLICATION_ENA			1
 
 /*
  * control flags for reptrans_flush()
@@ -275,6 +276,7 @@ struct repdev_bg_config {
 	uint32_t tp_hi_resiliency;
 	uint32_t elru_touch_ratio; /* %*10 of speculative_backref_timeout_min */
 	uint32_t elru_hits_count; /* Number of chunk hits prior first touch */
+	uint32_t vbr_replication; /* Enable or disable a VBR replication feature */
 };
 
 #define REPDEV_CAPACITY_LIMIT			0.87
