@@ -1008,10 +1008,8 @@ _ack_exit:
 		!(req->md.object_deleted == RT_DELETED_EXPUNGED_VERSION) &&
 	    (req->md.number_of_versions > 0) &&
 	    (ron->generation > req->md.number_of_versions)) {
-		int is_trlog_obj = (req->md.tid_size >= strlen(TRLOG_TID_PREFIX) &&
-		    strncmp(req->md.tid, TRLOG_TID_PREFIX, strlen(TRLOG_TID_PREFIX)) == 0);
 		err = ngrequest_purge(dev, req->hash_type, &req->md.nhid,
-		    ron->generation - req->md.number_of_versions, 0, 0, is_trlog_obj);
+		    ron->generation - req->md.number_of_versions, 0, 0, 0);
 		if (err) {
 			/* Not fatal, BG verification will eventually fix this */
 			log_warn(lg, "Dev(%s): cannot purge request, err %d",

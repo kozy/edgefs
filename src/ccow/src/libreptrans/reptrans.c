@@ -9309,7 +9309,7 @@ _exit:
 int
 reptrans_purge_versions(struct repdev *dev, const uint512_t *nhid,
 	uint64_t hi_version, uint64_t low_version, uint64_t version_uvid_timestamp,
-	crypto_hash_t hash_type, int trlog_object)
+	crypto_hash_t hash_type)
 {
 	/*
 	 * 1. Read all the object versions, add version_uvid_timestamp to query if required

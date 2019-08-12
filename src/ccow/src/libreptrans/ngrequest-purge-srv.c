@@ -92,15 +92,20 @@ ngrequest_exec(void* arg)
 	int err;
 
 	log_trace(lg, "arg %p", arg);
+	if (req->rsp.flags & NGREQUEST_PURGE_FLAG_DROP_STABLE_VERSION) {
+		reptrans_stable_version_delete(dev, &req->rsp.nhid);
+		req->rsp.status = 0;
+		log_info(lg, "Dev(%s) dropped a stable version entry for NHID %016lX%016lX",
+			dev->name, req->rsp.nhid.u.u.u, req->rsp.nhid.u.u.l);
+	}
 	log_debug(lg,
 		"dev %s nhid %lX hi_version %ld  low_version: %ld version_uvid_timestamp: %lu hash_type %s msg->status %d istrlog %d",
 		dev->name, req->rsp.nhid.u.u.u, req->rsp.hi_version, req->rsp.low_version, req->rsp.version_uvid_timestamp,
-		hash_type_name[req->rsp.hash_type], req->rsp.status, req->rsp.is_trlog_obj);
+		hash_type_name[req->rsp.hash_type], req->rsp.status, req->rsp.flags);
 
 	req->rsp.status = reptrans_purge_versions(dev, &req->rsp.nhid,
 		req->rsp.hi_version, req->rsp.low_version,
-		req->rsp.version_uvid_timestamp, req->rsp.hash_type,
-		req->rsp.is_trlog_obj);
+		req->rsp.version_uvid_timestamp, req->rsp.hash_type);
 }
 
 int
@@ -117,7 +122,7 @@ ngrequest_purge_unpack(msgpack_u* u, void* dptr) {
 		err = msgpack_unpack_uint64(u, &msg->version_uvid_timestamp);
 		if (err)
 			return err;
-		err = msgpack_unpack_uint8(u, &msg->is_trlog_obj);
+		err = msgpack_unpack_uint8(u, &msg->flags);
 		if (err)
 			return err;
 		err = msgpack_unpack_uint8(u, &msg->hash_type);

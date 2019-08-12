@@ -1012,8 +1012,7 @@ int reptrans_put_version(struct repdev *dev, struct vmmetadata *md,
 
 int reptrans_purge_versions(struct repdev *dev, const uint512_t *nhid,
 	uint64_t from_version, uint64_t to_version,
-	uint64_t version_uvid_timestamp, crypto_hash_t hash_type,
-	int trlog_object);
+	uint64_t version_uvid_timestamp, crypto_hash_t hash_type);
 
 /*
  * @internal
@@ -1182,6 +1181,9 @@ int
 ngcount_generations(struct repdev *dev, const uint512_t *nhid,
     uint64_t *generation_max);
 
+
+#define NGREQUEST_PURGE_FLAG_DROP_STABLE_VERSION (1<<1) /* Drop a cached stable version */
+
 /*
  * Tell all devices in negotiation group to purge old versions
  *
@@ -1190,7 +1192,7 @@ ngcount_generations(struct repdev *dev, const uint512_t *nhid,
 int
 ngrequest_purge(struct repdev *dev, uint8_t hash_type, const uint512_t *nhid,
 	uint64_t from_version, uint64_t to_version, uint64_t version_uvid_timestamp,
-	uint8_t is_trlog_obj);
+	uint8_t flags);
 
 /*
  * Remove a manifest along with its parity manifest

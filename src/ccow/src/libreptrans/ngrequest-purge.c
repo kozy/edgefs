@@ -233,7 +233,7 @@ reptrans_dev_async_call__purge(struct repdev_call *c)
 	uint64_t hi_version = (uint64_t)c->args[3];
 	uint64_t low_version = (uint64_t)c->args[4];
 	uint64_t version_uvid_timestamp = (uint64_t)c->args[5];
-	uint8_t is_trlog_obj = (uint8_t)((uint64_t)c->args[6] & 0xff);
+	uint8_t flags = (uint8_t)((uint64_t)c->args[6] & 0xff);
 
 	assert(dev);
 	assert(nhid);
@@ -252,7 +252,7 @@ reptrans_dev_async_call__purge(struct repdev_call *c)
 	r->hi_version = hi_version;
 	r->low_version = low_version;
 	r->version_uvid_timestamp = version_uvid_timestamp;
-	r->is_trlog_obj = is_trlog_obj;
+	r->is_trlog_obj = flags;
 	r->hash_type = hash_type;
 
 	log_debug(lg,
@@ -299,7 +299,7 @@ reptrans_dev_async_call__purge(struct repdev_call *c)
 int
 ngrequest_purge(struct repdev *dev, uint8_t hash_type, const uint512_t *nhid,
 	uint64_t hi_version, uint64_t low_version, uint64_t version_uvid_timestamp,
-	uint8_t is_trlog_obj)
+	uint8_t flags)
 {
 	int err;
 	if (unlikely((lg->level <= LOG_LEVEL_TRACE))) {
@@ -326,7 +326,7 @@ ngrequest_purge(struct repdev *dev, uint8_t hash_type, const uint512_t *nhid,
 	call->args[3] = (void *)hi_version;
 	call->args[4] = (void *)low_version;
 	call->args[5] = (void *)version_uvid_timestamp;
-	call->args[6] = (void *)(uint64_t)is_trlog_obj;
+	call->args[6] = (void *)(uint64_t)flags;
 
 	QUEUE_INIT(&call->item);
 	repdev_status_t status = reptrans_dev_get_status(dev);
