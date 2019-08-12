@@ -179,6 +179,7 @@ struct mcjoin_queue_entry {
 #define DEV_ELRU_HIT_COUNTER			2
 #define DEV_ELRU_TOUCH_RATIO			1 /* 0.1% */
 #define DEV_VBR_REPLICATION_ENA			1
+#define DEV_GC_BATCH_DEFER_TIMEOUT		(30UL*1000UL*1000UL)
 
 /*
  * control flags for reptrans_flush()

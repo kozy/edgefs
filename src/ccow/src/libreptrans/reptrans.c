@@ -4128,6 +4128,7 @@ struct gc_work_arg {
 	struct bg_job_entry* job;
 	struct deferred_delete_entry* tail;
 	size_t qsize;
+	uint64_t qts; /* Last deferred queue append timestamp */
 	struct chunk_info last_info; /* Last CHID processed by the GC */
 	int vbr_replication_required; /* Non-zero if VBRs for the last CHID require replication */
 };
@@ -4291,6 +4292,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 			arg->tail = del_arg;
 			arg->qsize++;
 			work->n_vers_purged++;
+			arg->qts = get_timestamp_us();
 			goto _exit;
 		}
 	} else {
@@ -4311,6 +4313,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 			del_arg->vbr_hash_type = vbr_hash_type;
 			del_arg->rep_cnt = vbr->rep_count;
 			work->n_garbage_chunks++;
+			arg->qts = get_timestamp_us();
 			goto _exit;
 		}
 	}
@@ -4416,10 +4419,10 @@ _replicate_vbrs:;
 	}
 
 _exit:
-	if (arg->qsize > 100) {
+	if ((arg->qsize && arg->qts && (arg->qts + DEV_GC_BATCH_DEFER_TIMEOUT < get_timestamp_us())) || arg->qsize > 100) {
 		gc_deferred_delete(dev, arg->tail);
 		arg->tail = NULL;
-		arg->qsize = 0;
+		arg->qsize = arg->qts = 0;
 		log_debug(lg, "Dev(%s) submitted a deferred delete work", dev->name);
 	}
 	if (rb)
