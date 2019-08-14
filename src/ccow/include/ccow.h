@@ -558,6 +558,21 @@ int ccow_snapview_create(ccow_t tctx, ccow_snapview_t *sv_hdl,
     size_t sv_oid_size);
 
 /**
+ * Creates a new handle for existing snapview
+ *
+ * @param sv_hdl snapview handle
+ * @param sv_bid snapview bucket object name
+ * @param sv_bid_size snapview bucket object name size
+ * @param sv_oid snapview object name
+ * @param sv_oid_size snapview object name size
+ * Return zero on success, error otherwise.
+ *
+ */
+int
+ccow_snapview_new(ccow_snapview_t *sv_hdl, const char *sv_bid, size_t sv_bid_size,
+	const char *sv_oid, size_t sv_oid_size);
+
+/**
  * Delete a snapview object, and all snapshots within it.
  *
  * @param tctx tenant context handle
