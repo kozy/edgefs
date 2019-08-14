@@ -920,6 +920,8 @@ reptrans_verify_queue__callback(struct repdev *dev, type_tag_t ttag,
 			/* Remove "stable version" entry if a version has passed
 			 * the quarantine */
 			reptrans_stable_version_delete(dev, &vbreq->nhid);
+			err = ngrequest_purge(dev, HASH_TYPE_DEFAULT, &vbreq->nhid,
+				0,0,0, NGREQUEST_PURGE_FLAG_DROP_STABLE_VERSION);
 			log_info(lg, "Dev(%s) object NHID %lX "
 				" gen %lu has passed quarantine", dev->name,
 				vbreq->vbr.name_hash_id.u.u.u, vbreq->generation);

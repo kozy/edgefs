@@ -178,6 +178,8 @@ struct mcjoin_queue_entry {
 #define DEV_MDONLY_TOUCH_TABLE_SIZE_EMBEDDED	(2UL*1024UL*1024UL)
 #define DEV_ELRU_HIT_COUNTER			2
 #define DEV_ELRU_TOUCH_RATIO			1 /* 0.1% */
+#define DEV_VBR_REPLICATION_ENA			1
+#define DEV_GC_BATCH_DEFER_TIMEOUT		(30UL*1000UL*1000UL)
 
 /*
  * control flags for reptrans_flush()
@@ -275,6 +277,7 @@ struct repdev_bg_config {
 	uint32_t tp_hi_resiliency;
 	uint32_t elru_touch_ratio; /* %*10 of speculative_backref_timeout_min */
 	uint32_t elru_hits_count; /* Number of chunk hits prior first touch */
+	uint32_t vbr_replication; /* Enable or disable a VBR replication feature */
 };
 
 #define REPDEV_CAPACITY_LIMIT			0.87
@@ -1009,8 +1012,7 @@ int reptrans_put_version(struct repdev *dev, struct vmmetadata *md,
 
 int reptrans_purge_versions(struct repdev *dev, const uint512_t *nhid,
 	uint64_t from_version, uint64_t to_version,
-	uint64_t version_uvid_timestamp, crypto_hash_t hash_type,
-	int trlog_object);
+	uint64_t version_uvid_timestamp, crypto_hash_t hash_type);
 
 /*
  * @internal
@@ -1179,6 +1181,9 @@ int
 ngcount_generations(struct repdev *dev, const uint512_t *nhid,
     uint64_t *generation_max);
 
+
+#define NGREQUEST_PURGE_FLAG_DROP_STABLE_VERSION (1<<1) /* Drop a cached stable version */
+
 /*
  * Tell all devices in negotiation group to purge old versions
  *
@@ -1187,7 +1192,7 @@ ngcount_generations(struct repdev *dev, const uint512_t *nhid,
 int
 ngrequest_purge(struct repdev *dev, uint8_t hash_type, const uint512_t *nhid,
 	uint64_t from_version, uint64_t to_version, uint64_t version_uvid_timestamp,
-	uint8_t is_trlog_obj);
+	uint8_t flags);
 
 /*
  * Remove a manifest along with its parity manifest

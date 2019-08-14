@@ -507,7 +507,7 @@ struct repmsg_ngrequest_purge {
 	uint64_t hi_version;
 	uint64_t low_version;
 	uint64_t version_uvid_timestamp;
-	uint8_t is_trlog_obj;
+	uint8_t flags;
 	uint8_t hash_type;
 	int32_t status;
 };

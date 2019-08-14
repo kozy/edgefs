@@ -4128,6 +4128,7 @@ struct gc_work_arg {
 	struct bg_job_entry* job;
 	struct deferred_delete_entry* tail;
 	size_t qsize;
+	uint64_t qts; /* Last deferred queue append timestamp */
 	struct chunk_info last_info; /* Last CHID processed by the GC */
 	int vbr_replication_required; /* Non-zero if VBRs for the last CHID require replication */
 };
@@ -4291,6 +4292,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 			arg->tail = del_arg;
 			arg->qsize++;
 			work->n_vers_purged++;
+			arg->qts = get_timestamp_us();
 			goto _exit;
 		}
 	} else {
@@ -4311,6 +4313,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 			del_arg->vbr_hash_type = vbr_hash_type;
 			del_arg->rep_cnt = vbr->rep_count;
 			work->n_garbage_chunks++;
+			arg->qts = get_timestamp_us();
 			goto _exit;
 		}
 	}
@@ -4318,7 +4321,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 _replicate_vbrs:;
 
 	type_tag_t chunk_ttag = reptrans_backref_attr2ttag(vbr->attr);
-	if (chunk_ttag == TT_INVALID) {
+	if (!dev->bg_config->vbr_replication || chunk_ttag == TT_INVALID) {
 		/*
 		 * Previous VBR version (prior nedge 2.2) didn't keep chunk ttag
 		 * in VBR and such VBRs cannot be replicated
@@ -4416,10 +4419,10 @@ _replicate_vbrs:;
 	}
 
 _exit:
-	if (arg->qsize > 100) {
+	if ((arg->qsize && arg->qts && (arg->qts + DEV_GC_BATCH_DEFER_TIMEOUT < get_timestamp_us())) || arg->qsize > 100) {
 		gc_deferred_delete(dev, arg->tail);
 		arg->tail = NULL;
-		arg->qsize = 0;
+		arg->qsize = arg->qts = 0;
 		log_debug(lg, "Dev(%s) submitted a deferred delete work", dev->name);
 	}
 	if (rb)
@@ -9306,7 +9309,7 @@ _exit:
 int
 reptrans_purge_versions(struct repdev *dev, const uint512_t *nhid,
 	uint64_t hi_version, uint64_t low_version, uint64_t version_uvid_timestamp,
-	crypto_hash_t hash_type, int trlog_object)
+	crypto_hash_t hash_type)
 {
 	/*
 	 * 1. Read all the object versions, add version_uvid_timestamp to query if required
@@ -10643,6 +10646,13 @@ reptrans_parse_bg_jobs_config(const json_value* obj, struct repdev_bg_config* cf
 				return -EINVAL;
 			}
 			cfg->elru_hits_count = v->u.integer;
+		}  else if (strncmp(namekey, "vbr_replication", 15) == 0) {
+			if (v->type != json_integer || v->u.integer < 0) {
+				log_error(lg, "Syntax error: a VBR replication feature enable "
+					"flag has to be 0 or 1");
+				return -EINVAL;
+			}
+			cfg->vbr_replication = v->u.integer;
 		}
 	}
 	return 0;
