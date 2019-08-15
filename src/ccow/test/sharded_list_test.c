@@ -34,6 +34,7 @@
 #include "replicast.h"
 
 #define TEST_BUCKET_NAME	"sharded-list-bucket-test"
+#define TRLOG_BUCKET_NAME	"TRLOG"
 #define TEST_SHARD_COUNT	4
 
 #define MAX_THREADS       512
@@ -48,6 +49,7 @@ int get_count = 0;
 char shard_name[64];
 char shard_attrs[64];
 char shard_event[64];
+char shard_trlog[64];
 ccow_t tn[MAX_THREADS];
 int64_t event_size = 0;
 int64_t event_objs = 0;
@@ -60,6 +62,7 @@ int dd = 0;
 ccow_shard_context_t list_shard_context;
 ccow_shard_context_t attributes_shard_context;
 ccow_shard_context_t event_shard_context;
+ccow_shard_context_t trlog_shard_context;
 
 char *TEST_ENV = NULL;
 
@@ -73,7 +76,7 @@ static void libccowd_setup(void **state) {
 	}
 }
 
-static void get_tenant(ccow_t *tn) {
+static void get_tenant(ccow_t *tn, char *cid, char *tid) {
 	char path[PATH_MAX];
 	snprintf(path, sizeof(path), "%s/etc/ccow/ccow.json", nedge_path());
 	int fd = open(path, O_RDONLY);
@@ -82,15 +85,29 @@ static void get_tenant(ccow_t *tn) {
 	assert_non_null(buf);
 	assert_true(read(fd, buf, 16383) != -1);
 	assert_int_equal(close(fd), 0);
-	assert_int_equal(ccow_tenant_init(buf, "cltest", 7, "test", 5, tn), 0);
+	assert_int_equal(ccow_tenant_init(buf, cid, strlen(cid) + 1, tid, strlen(tid) + 1, tn), 0);
+	je_free(buf);
+}
+
+static void get_admin(ccow_t *tn) {
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "%s/etc/ccow/ccow.json", nedge_path());
+	int fd = open(path, O_RDONLY);
+	assert_true(fd >= 0);
+	char *buf = je_calloc(1, 16384);
+	assert_non_null(buf);
+	assert_true(read(fd, buf, 16383) != -1);
+	assert_int_equal(close(fd), 0);
+	assert_int_equal(ccow_admin_init(buf, "", strlen("") + 1, tn), 0);
 	je_free(buf);
 }
 
 static void libccow_setup(void **state) {
-	get_tenant(&cl);
+	get_tenant(&cl, "cltest", "test");
 	for (int i=0; i<thread_count; i++) {
-		get_tenant(&tn[i]);
+		get_tenant(&tn[i], "cltest", "test");
 	}
+	get_admin(&tc);
 }
 
 static void libccowd_teardown(void **state) {
@@ -124,7 +141,6 @@ static void bucket_delete(void **state) {
  * =======================================================================
  */
 static void shard_context_create(void **state) {
-	assert_non_null(cl);
 	int err = ccow_shard_context_create(shard_name,
 	    strlen(shard_name) + 1,
 	    TEST_SHARD_COUNT, &list_shard_context);
@@ -139,6 +155,11 @@ static void shard_context_create(void **state) {
 	    strlen(shard_event) + 1,
 	    TEST_SHARD_COUNT, &event_shard_context);
 	assert_int_equal(err, 0);
+
+	err = ccow_shard_context_create(shard_trlog,
+	    strlen(shard_trlog) + 1,
+	    TEST_SHARD_COUNT, &trlog_shard_context);
+	assert_int_equal(err, 0);
 }
 
 
@@ -148,10 +169,10 @@ static void shard_context_create(void **state) {
  * =======================================================================
  */
 static void shard_context_destroy(void **state) {
-	assert_non_null(cl);
 	ccow_shard_context_destroy(&list_shard_context);
 	ccow_shard_context_destroy(&attributes_shard_context);
 	ccow_shard_context_destroy(&event_shard_context);
+	ccow_shard_context_destroy(&trlog_shard_context);
 }
 
 
@@ -190,6 +211,7 @@ static void sharded_event_create(void **state) {
 	    strlen(TEST_BUCKET_NAME) + 1, event_shard_context);
 	assert_int_equal(err, 0);
 }
+
 
 static void sharded_list_destroy(void **state) {
 	assert_non_null(cl);
@@ -305,6 +327,60 @@ static void sharded_list_demand(void **state) {
 	ccow_shard_context_destroy(&shard_context);
 }
 
+/*
+ * =======================================================================
+ *      Shared list trlog
+ * =======================================================================
+ */
+static void sharded_list_trlog(void **state) {
+	assert_non_null(tc);
+	char shard[64];
+	char key[64];
+	char value[64];
+	struct iovec iov[1];
+	int err = 0;
+	int rec_count = 10;
+
+	for (int i=0; i<rec_count; i++) {
+		create_key(key, i);
+		if (verbose)
+			printf("sharded_list_demand put key: %s\n", key);
+		iov[0].iov_base = key;
+		iov[0].iov_len = strlen(key) + 1;
+
+		err = ccow_sharded_list_put(tc, TRLOG_BUCKET_NAME,
+			strlen(TRLOG_BUCKET_NAME) + 1, trlog_shard_context, iov, 1);
+		assert_int_equal(err, 0);
+	}
+
+	size_t value_size;
+	char marker[64] = "";
+
+	ccow_lookup_t iter;
+
+	err = ccow_sharded_get_list(tc, TRLOG_BUCKET_NAME,
+	    strlen(TRLOG_BUCKET_NAME) + 1, trlog_shard_context,
+		marker, strlen(marker) + 1,  NULL, rec_count + 10, &iter);
+	assert_int_equal(err, 0);
+
+	struct ccow_metadata_kv *kv;
+	int n = 0;
+	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, -1))) {
+		if (verbose)
+		    printf("test trlog list kv->key: %s\n", kv->key);
+		create_key(key, n);
+		assert_int_equal(strcmp(key, kv->key), 0);
+		n++;
+	}
+
+	if (verbose)
+		printf("list_get_list_trlog total: %d\n", n);
+
+	ccow_lookup_release(iter);
+
+	assert_int_equal(rec_count, n);
+
+}
 
 /*
  * =======================================================================
@@ -653,7 +729,7 @@ static void sharded_put_with_md_eventual(void **state) {
 
 	int i = event_count;
 
-	ccow_shard_context_set_eventual(event_shard_context, 1);
+	ccow_shard_context_set_eventual(event_shard_context, 1, 1);
 
 	uint64_t before = uv_hrtime();
 	for (int j = 0; j < event_count; j++) {
@@ -923,6 +999,7 @@ static void libccow_teardown(void **state) {
 	for (int i=0; i<thread_count; i++) {
 		ccow_tenant_term(tn[i]);
 	}
+	ccow_tenant_term(tc);
 }
 
 int main(int argc, char **argv) {
@@ -969,13 +1046,16 @@ int main(int argc, char **argv) {
 	}
 
 	time_t seconds= time(NULL);
+	long ts = ((long)seconds / 10) * 10000000UL;
 	sprintf(shard_name,"shard_name.%ld", (long) seconds);
 	sprintf(shard_attrs,"shard_attrs.%ld", (long) seconds);
 	sprintf(shard_event,"shard_event.%ld", (long) seconds);
+	sprintf(shard_trlog, "%023ld", ts);
 
 	printf("Shard name: %s/%s\n", TEST_BUCKET_NAME, shard_name);
 	printf("Shard attributes name: %s/%s\n", TEST_BUCKET_NAME, shard_attrs);
 	printf("Shard eventual name: %s/%s\n", TEST_BUCKET_NAME, shard_event);
+	printf("Shard  trlog name: %s/%s\n", TRLOG_BUCKET_NAME, shard_trlog);
 
 
 	printf("Object count: %d\n", object_count);
@@ -1017,6 +1097,9 @@ int main(int argc, char **argv) {
 			unit_test(sharded_attributes_get),
 
 			unit_test(sharded_list_demand),
+
+			unit_test(sharded_list_trlog),
+
 			unit_test(sharded_list_destroy),
 			unit_test(sharded_attributes_destroy),
 			unit_test(sharded_event_destroy),
@@ -1027,4 +1110,3 @@ int main(int argc, char **argv) {
 	};
 	return run_tests(tests);
 }
-

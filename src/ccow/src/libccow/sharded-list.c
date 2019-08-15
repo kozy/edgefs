@@ -41,9 +41,10 @@ ccow_shard_context_set_overwrite(ccow_shard_context_t shard_context,
 
 int
 ccow_shard_context_set_eventual(ccow_shard_context_t shard_context,
-    int eventual)
+    int eventual, int eventual_cache)
 {
 	shard_context->eventual = eventual;
+	shard_context->eventual_cache = eventual_cache;
 	return 0;
 }
 
@@ -74,6 +75,7 @@ ccow_shard_context_create(char *shard_name, size_t shard_name_size,
 	sc->shard_count = shard_count;
 	sc->encryption = 0;
 	sc->eventual = 0;
+	sc->eventual_cache = 0;
 	sc->overwrite = CCOW_CONT_F_INSERT_LIST_OVERWRITE;
 	sc->inline_data_flag = 0;
 	*shard_context = sc;
@@ -296,6 +298,28 @@ ccow_sharded_flush(ccow_t tctx, const char *bid, size_t bid_size,
 
 	return err;
 }
+
+int
+ccow_sharded_list_flush(ccow_t tctx, const char *bid, size_t bid_size,
+    ccow_shard_context_t shard_context) {
+
+	uint64_t genid;
+	int err = 0, e;
+	struct ccow *tc = tctx;
+
+	for (int i = 0; i < shard_context->shard_count; i++) {
+		char oid[1024] = "";
+		get_shard_name(oid, shard_context, i);
+		log_debug(lg, "Flushing shard %s", oid);
+		e = ccow_sharded_flush(tc, bid, bid_size,	shard_context, &genid, i);
+		if (e) {
+			log_error(lg, "Shard %s flush error: %d", oid, e);
+			err = e;
+		}
+	}
+	return err;
+}
+
 
 int
 ccow_sharded_list_destroy(ccow_t tctx, const char *bid, size_t bid_size,
@@ -674,7 +698,7 @@ _local_retry:
 	}
 
 	// Add to cache
-	if (shard_context->eventual) {
+	if (shard_context->eventual_cache) {
 		int err = add_cache_record(tc, bid, shard_context->shard_name, iov, iovcnt, 0, 0, 0,
 		    i, shard_context->shard_count, SOP_CACHE_INSERT, genid);
 
@@ -897,7 +921,7 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 	}
 
 	// Add to cache
-	if (shard_context->eventual) {
+	if (shard_context->eventual_cache) {
 		int o = SOP_CACHE_MD;
 		switch (optype) {
 			case CCOW_INSERT_LIST_WITH_MD:
@@ -1070,7 +1094,7 @@ ccow_sharded_list_delete(ccow_t tctx, const char *bid, size_t bid_size,
 	}
 
 	// Add to cache
-	if (shard_context->eventual) {
+	if (shard_context->eventual_cache) {
 		int err = add_cache_record(tc, bid, shard_context->shard_name, iov, 1, 0, 0, 0,
 		    i, shard_context->shard_count, SOP_CACHE_DELETE, genid);
 		if (err) {

@@ -5063,132 +5063,15 @@ bg_scrub_progress(struct bg_job_entry* job) {
 }
 
 static void
-trlog_setids(struct repdev *dev, char *tid, size_t tid_size,
-    char *bid, size_t bid_size)
+trlog_setids(struct repdev *dev, char *bid, size_t bid_size)
 {
-	char serverid[UINT128_STR_BYTES], vdevid[UINT128_STR_BYTES];
-	struct server_stat *stat = server_get();
-	uint128_dump(&stat->id, serverid, UINT128_STR_BYTES);
-	uint128_dump(&dev->vdevid, vdevid, UINT128_STR_BYTES);
-	snprintf(tid, tid_size, "%s%s", TRLOG_TID_PREFIX, serverid);
-	snprintf(bid, bid_size, "%s", vdevid);
-}
+    char serverid[UINT128_STR_BYTES], vdevid[UINT128_STR_BYTES];
+    struct server_stat *stat = server_get();
+    uint128_dump(&stat->id, serverid, UINT128_STR_BYTES);
+    uint128_dump(&dev->vdevid, vdevid, UINT128_STR_BYTES);
+    snprintf(bid, bid_size, "%s", vdevid);
+ }
 
-static int
-trlog_bucket_create(ccow_t tc, const char *tid, size_t tid_size,
-    const char *bid, size_t bid_size)
-{
-	ccow_completion_t c;
-	int err = ccow_create_completion(tc, NULL, NULL, 1, &c);
-	if (err)
-		return err;
-
-	uint16_t num_vers = 1;
-	err = ccow_attr_modify_default(c, CCOW_ATTR_NUMBER_OF_VERSIONS,
-	    (void *)&num_vers, NULL);
-	if (err) {
-		ccow_release(c);
-		return err;
-	}
-
-	err = ccow_attr_modify_default(c, CCOW_ATTR_CHUNKMAP_TYPE,
-	    RT_SYSVAL_CHUNKMAP_BTREE_NAME_INDEX, NULL);
-	if (err) {
-		ccow_release(c);
-		return err;
-	}
-
-	/* TSObj length is 24c, we can handle up to 64K per CM, so
-	 * optimal maximum order will be ~ 64000/(82+24)/2 = 256 */
-	uint16_t order = RT_SYSVAL_CHUNKMAP_BTREE_ORDER_TSOBJ;
-	err = ccow_attr_modify_default(c, CCOW_ATTR_BTREE_ORDER, &order, NULL);
-	if (err) {
-		ccow_release(c);
-		return err;
-	}
-
-	err = ccow_admin_pseudo_put("", 1, tid, tid_size, bid, bid_size,
-		"", 1, NULL, 0, 0, CCOW_PUT, NULL, c);
-	if (err) {
-		ccow_release(c);
-		return err;
-	}
-
-	err = ccow_wait(c, 0);
-	if (err) {
-		return err;
-	}
-
-	struct iovec iov = { .iov_base = (char *)bid, .iov_len = strlen(bid) + 1 };
-	err = ccow_create_completion(tc, NULL, NULL, 2, &c);
-	if (err)
-		return err;
-	// Add the bucket to the BTN of the tenant, since we've bypassed normal
-	// ccow_bucket_create()
-	ccow_lookup_t iter;
-	err = ccow_admin_pseudo_get("", 1, tid, tid_size,
-	    "", 1, "", 1, NULL, 0, 0, CCOW_GET, c, &iter);
-	if (err) {
-		ccow_drop(c);
-		return err;
-	}
-	err = ccow_wait(c, 0);
-	if (err) {
-		ccow_drop(c);
-		goto _err;
-	}
-	err = ccow_admin_pseudo_put("", 1, tid, tid_size,
-	    "", 1, "", 1, &iov, 1, 0, CCOW_INSERT_LIST, 0, c);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-	err = ccow_wait(c, 1);
-_err:
-	if (iter)
-		ccow_lookup_release(iter);
-	return err;
-}
-
-static int
-trlog_hierarhy_create(struct repdev *dev)
-{
-	int err;
-
-	ccow_t tc = reptrans_get_tenant_context(dev->rt, 0);
-	if (!tc) {
-		log_error(lg, "Dev(%s): Failed to get tenant context", dev->name);
-		return -EPERM;
-	}
-
-	char bid[UINT128_STR_BYTES], tid[UINT128_STR_BYTES + 10];
-	trlog_setids(dev, tid, UINT128_STR_BYTES + 10, bid, UINT128_STR_BYTES);
-
-	err = ccow_tenant_create(tc, tid, strlen(tid) + 1, NULL);
-	if (err == -EEXIST) {
-		log_debug(lg, "Dev(%s): Tenant %s already exists.", dev->name, tid);
-	} else if (err) {
-		log_error(lg, "Dev(%s): Failed to create tenant %s err %d",
-			dev->name, tid, err);
-		goto _err;
-	}
-
-	err = trlog_bucket_create(tc, tid, strlen(tid) + 1, bid, strlen(bid) + 1);
-	if (err == -EEXIST) {
-		log_debug(lg, "Dev(%s): Bucket %s already exists.", dev->name, bid);
-		err = 0;
-	} else if (err) {
-		log_error(lg, "Dev(%s): Failed to create bucket %s err %d",
-			dev->name, bid, err);
-		goto _err;
-	}
-
-	log_debug(lg, "Dev(%s): trlog tenant %s bucket %s ready",
-		dev->name, tid, bid);
-_err:
-	reptrans_put_tenant_context(dev->rt, tc);
-	return err;
-}
 
 static void
 trlog_format_key(struct trlog_data *data, char *key, int len)
@@ -5227,7 +5110,7 @@ bg_trlog_cb(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	assert(ttag == TT_TRANSACTION_LOG);
 	assert(work);
 	assert(work->oid);
-	assert(work->c);
+	assert(work->tc);
 
 	/* The job has to be terminated as soon as possible */
 	if (bg_job_is_term_forced(job))
@@ -5276,24 +5159,19 @@ bg_trlog_cb(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	iov.iov_base = key;
 	iov.iov_len = strlen(key) + 1;
 
-	if (unlikely(LOG_LEVEL_DEBUG >= lg->level)) {
-		char tid[UINT128_STR_BYTES + 10], bid[UINT128_STR_BYTES];
-		trlog_setids(dev, tid, UINT128_STR_BYTES + 10, bid, UINT128_STR_BYTES);
-		log_debug(lg, "Dev(%s): TRLOG TSObj insert /%s/%s/ <= %s/%s/%s/%s %ld",
-		    dev->name, tid, bid, data.cid, data.tid, data.bid, data.oid,
-		    data.size);
-	} else
-		log_debug(lg, "Dev(%s): TRLOG TSObj insert %s/%s/%s/%s %ld",
-		    dev->name, data.cid, data.tid, data.bid, data.oid, data.size);
+	log_debug(lg, "Dev(%s): TRLOG TSObj %s/%s/%s insert %s/%s/%s/%s %ld",
+		dev->name, work->tc->cid, work->tc->tid, work->oid,
+		data.cid, data.tid, data.bid, data.oid, data.size);
 
-	err = ccow_insert_list_cont(work->c, &iov, 1, 1, &work->index);
+	ccow_shard_context_set_eventual(work->trlog_shard_context, 1, 0);
+
+	err = ccow_sharded_list_put(work->tc, RT_SYSVAL_PSEVDO_BUCKET_TRLOG,
+			strlen(RT_SYSVAL_PSEVDO_BUCKET_TRLOG) + 1, work->trlog_shard_context, &iov, 1);
 	if (err) {
-		ccow_release(work->c);
 		goto _local_memfree_trlog_data;
 	}
-	err = ccow_wait(work->c, work->index);
 	if (!err) {
-		assert(work->index > 0);
+		work->index++;
 		work->processed_vmchids[work->index - 1] = *chid;
 	}
 	if (work->index > TRLOG_TSOBJ_MAX_ENTRIES - 1)
@@ -5336,8 +5214,6 @@ bg_trlog_work(struct bg_job_entry *job, void* data)
 	trlog_work_t *work = data;
 	assert(work != NULL);
 	struct repdev *dev = work->dev;
-	ccow_completion_t c_check;
-	ccow_completion_t c;
 	struct iovec iov;
 	uint64_t batch_seq_ts = 0, batch_seq_prev_ts = 0;
 
@@ -5361,8 +5237,8 @@ _restart_behind:
 	if (!ccow_daemon->leader_coordinated_ts)
 		return;
 
-	char tid[UINT128_STR_BYTES + 10], bid[UINT128_STR_BYTES];
-	trlog_setids(dev, tid, UINT128_STR_BYTES + 10, bid, UINT128_STR_BYTES);
+	char bid[UINT128_STR_BYTES];
+	trlog_setids(dev, bid, UINT128_STR_BYTES);
 
 	char shardbuf[128];
 	sprintf(shardbuf, SHARD_VDEV_PREFIX "%s", bid);
@@ -5373,45 +5249,6 @@ _restart_behind:
 		return;
 	}
 
-	if (!dev->trlog_bucket_ready) {
-		/* serialize insertions across vdev threads */
-		uv_mutex_lock(&dev->rt->trlog_mutex);
-		err = ccow_create_completion(tc, NULL, NULL, 2, &c_check);
-		if (err)
-			goto _err;
-		/* check if /// - root object exists */
-		err = ccow_admin_pseudo_get("", 1, "", 1, "", 1, "", 1, NULL, 0,
-		    0, CCOW_GET, c_check, NULL);
-		if (err) {
-			ccow_drop(c_check);
-			goto _err;
-		}
-		err = ccow_wait(c_check, 0);
-		if (err) {
-			ccow_drop(c_check);
-			err = 0;
-			goto _err;
-		}
-		/* check if /tid/bid exists */
-		err = ccow_admin_pseudo_get("", 1, tid, strlen(tid) + 1,
-		    bid, strlen(bid) + 1, "", 1, NULL, 0, 0, CCOW_GET_LIST,
-		    c_check, NULL);
-		if (err) {
-			ccow_release(c_check);
-			goto _err;
-		}
-		err = ccow_wait(c_check, 1);
-		if (err && err == -ENOENT) {
-			err = trlog_hierarhy_create(dev);
-			if (err)
-				goto _err;
-			dev->trlog_bucket_ready = 1;
-		} else if (err) {
-			goto _err;
-		} else
-			dev->trlog_bucket_ready = 1;
-		uv_mutex_unlock(&dev->rt->trlog_mutex);
-	}
 
 	char msg_prefix[PATH_MAX];
 	snprintf(msg_prefix, sizeof(msg_prefix), "Dev(%s): ", dev->name);
@@ -5457,101 +5294,22 @@ _restart_behind:
 	uint64_t genid = 0;
 	snprintf(oid, 24, "%023lu", batch_seq_ts);
 
-	/* check if /tid/bid/oid exists */
-	err = ccow_create_completion(tc, NULL, NULL, 1, &c_check);
-	if (err)
-		goto _err;
-	err = ccow_admin_pseudo_get("", 1, tid, strlen(tid) + 1,
-	    bid, strlen(bid) + 1, oid, strlen(oid) + 1, NULL, 0, 0,
-	    CCOW_GET_LIST, c_check, NULL);
-	if (err) {
-		ccow_release(c_check);
-		goto _err;
-	}
-	err = ccow_wait(c_check, 0);
-	if (err == -EEXIST) {
-		/* case - work is already done */
-		log_warn(lg, "Dev(%s): TRLOG found %s/%s/%s/%s - skip",
-		    dev->name, "", tid, bid, oid);
-		err = 0;
-		goto _final;
-	}
-
 	int part = 0;
 
+	err = ccow_shard_context_create(oid, strlen(oid) + 1,
+	    TRLOG_SHARD_COUNT, &work->trlog_shard_context);
+	if (err) {
+		log_error(lg, "Dev(%s): Failed to craete trlog %s shard context err: %d",
+		    dev->name, oid, err);
+		goto _err;
+	}
+
 _append:
-	log_debug(lg, "Dev(%s): TRLOG working on %s/%s/%s/%s part=%d",
-	    dev->name, "", tid, bid, oid, part);
-
-	err = ccow_create_completion(tc, NULL, NULL, TRLOG_TSOBJ_MAX_ENTRIES + 1, &c);
-	if (err)
-		goto _err;
-
-	err = ccow_attr_modify_default(c, CCOW_ATTR_CHUNKMAP_TYPE,
-	    RT_SYSVAL_CHUNKMAP_BTREE_NAME_INDEX, NULL);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-
-	uint16_t dis = 1;
-	err = ccow_attr_modify_default(c, CCOW_ATTR_TRACK_STATISTICS,
-	    (void *)&dis, NULL);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-
-	/* with this each entry has to fit in ~ 4730c, we need very large CMs */
-	uint16_t order = RT_SYSVAL_CHUNKMAP_BTREE_ORDER_MAX;
-	err = ccow_attr_modify_default(c, CCOW_ATTR_BTREE_ORDER, &order, NULL);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-
-	uint16_t num_vers = 1;
-	err = ccow_attr_modify_default(c, CCOW_ATTR_NUMBER_OF_VERSIONS,
-	    (void *)&num_vers, NULL);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-
-	uint64_t delete_after = get_timestamp_us() / 1000000 +
-		dev->bg_config->trlog_delete_after_hours * 3600;
-	err = ccow_attr_modify_default(c, CCOW_ATTR_OBJECT_DELETE_AFTER,
-		    (void *)&delete_after, NULL);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-
-	int c_flags = CCOW_CONT_F_INSERT_LIST_OVERWRITE;
-	ccow_stream_flags(c, &c_flags);
-
-	c->cont = 1;
-	c->cont_flags = CCOW_CONT_F_EXIST;
-	c->cont_generation = &genid;
-	c->chunkmap_flags = CCOW_STREAM;
-	c->chunkmap_ctx = NULL;
-	err = ccow_admin_pseudo_put("", 1, tid, strlen(tid) + 1,
-	    bid, strlen(bid) + 1, oid, strlen(oid) + 1,
-	    NULL, 0, 0, CCOW_CONT, NULL, c);
-	if (err) {
-		ccow_release(c);
-		goto _err;
-	}
-	err = ccow_wait(c, 0);
-	if (err)
-		goto _err;
-
-	c->init_op->completed = 0;
-	c->init_op->namedput_io->attributes |= RD_ATTR_NO_TRLOG;
+	log_debug(lg, "Dev(%s): TRLOG working on %s",  dev->name, oid);
 
 	work->batch_seq_ts = batch_seq_ts;
 	work->batch_seq_prev_ts = batch_seq_prev_ts;
-	work->c = c;
+	work->tc = tc;
 	work->oid = oid;
 	work->index = work->stale = 0;
 	for (int i = 0; i < TRLOG_TSOBJ_MAX_ENTRIES; i++) {
@@ -5565,11 +5323,6 @@ _append:
 
 	int nospc = err == -ENOSPC;
 	if (work->index > 0) {
-
-		err = ccow_finalize(c, NULL);
-		if (err)
-			goto _err;
-
 		for (int i = 0; i < work->index; i++) {
 			err = reptrans_delete_blob(dev, TT_TRANSACTION_LOG,
 				HASH_TYPE_DEFAULT, &work->processed_vmchids[i]);
@@ -5604,11 +5357,6 @@ _append:
 			}
 		}
 		int do_final = !err;
-		err = ccow_cancel(c);
-		if (err) {
-			log_warn(lg, "Dev(%s): Failed to cancel TRLOG flush",
-			    dev->name);
-		}
 		if (do_final) {
 			/* empty TRLOG type tag case - no work done */
 			log_info(lg, "Dev(%s): TRLOG is empty, sending finish signal",
@@ -5644,11 +5392,20 @@ _final:
 	bg_trlog_batch_finished(batch_seq_ts, bid);
 
 _err:
-	if (!dev->trlog_bucket_ready)
-		uv_mutex_unlock(&dev->rt->trlog_mutex);
 	if (err)
 		log_warn(lg, "Dev(%s): unknown error while TRLOG flush: %d, "
 		    "will try to recover next time", dev->name, err);
+	if (work->trlog_shard_context) {
+		if (work->index > 0) {
+			int e = ccow_sharded_list_flush(work->tc, RT_SYSVAL_PSEVDO_BUCKET_TRLOG,
+				strlen(RT_SYSVAL_PSEVDO_BUCKET_TRLOG) + 1, work->trlog_shard_context);
+			if (e)
+				log_warn(lg, "Dev(%s): sharded list error while TRLOG flush: %d, ", dev->name, e);
+		}
+
+		ccow_shard_context_destroy(&work->trlog_shard_context);
+		work->trlog_shard_context = NULL;
+	}
 	reptrans_put_tenant_context(dev->rt, tc);
 
 	/* need to keep 2 x trlog_interval_us window to avoid stale entries */
@@ -11024,4 +10781,3 @@ reptrans_get_fd_targets_number(int domain) {
 	ccowd_fhready_unlock(FH_LOCK_READ);
 	return fd_item_count;
 }
-

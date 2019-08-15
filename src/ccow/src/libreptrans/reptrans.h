@@ -208,6 +208,7 @@ struct mcjoin_queue_entry {
 #define COMPOUND_MAX_CHUNKS	5*1024
 #define COMPOUND_SIZE_MAX	(REPLICAST_CHUNK_SIZE_MAX-COMPOUND_HDR_SIZE) /* TODO: figure out why 8Mb+65536 bytes doesn't work */
 
+
 struct repdev_bg_config {
 	int64_t backref_verify_timer_ms;
 	int64_t backref_verify_start_ms;
@@ -510,7 +511,6 @@ struct repdev {
 	int joined_rows[FH_MAX_JOINED_ROWS];
 	QUEUE mcjoin_queue;
 	uint32_t mcjoin_size;
-	int trlog_bucket_ready;
 
 	/* Hashtable for locks */
 	hashtable_t *lock_tbl;
@@ -1325,10 +1325,10 @@ typedef struct trlog_work {
 	struct ccow_daemon *ccowd;
 	uint64_t batch_seq_prev_ts;
 	uint64_t batch_seq_ts;
-	ccow_completion_t c;
 	int index;
 	int stale;
 	char *oid;
+	ccow_shard_context_t trlog_shard_context;
 	uint512_t* processed_vmchids;
 	uint512_t* stale_vmchids;
 } trlog_work_t;
