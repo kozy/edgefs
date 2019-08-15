@@ -56,7 +56,7 @@ func objectClone(srcpath string, dstpath string, flags []efsutil.FlagValue) erro
 
 	bucket, errb := efsutil.GetMDPat(d[0], d[1], d[2], "", "")
 	if errb != nil {
-		return errb
+		return fmt.Errorf("GetMDPat error for %v/%v/%v: %v", d[0], d[1], d[2], errb)
 	}
 
 	c_cluster_s := C.CString(s[0])
@@ -177,8 +177,6 @@ func objectClone(srcpath string, dstpath string, flags []efsutil.FlagValue) erro
 	opts.oid = c_object_d
 	opts.oid_size = C.strlen(c_object_d) + 1
 	opts.genid = nil
-	opts.version_vm_content_hash_id = nil
-	opts.vm_chid = nil
 	opts.md_override = 1;
 
 	ret = C.ccow_clone(c, c_tenant_s, C.strlen(c_tenant_s)+1, c_bucket_s,
@@ -204,6 +202,12 @@ func objectClone(srcpath string, dstpath string, flags []efsutil.FlagValue) erro
 var (
 	flagsClone []efsutil.FlagValue
 
+	flagNamesClone = []string {
+		"ec-data-mode",
+		"ec-trigger-policy-timeout",
+		"options",
+	}
+
 	cloneCmd = &cobra.Command{
 		Use:   "clone  <cluster>/<tenant>/<bucket>/<object> <cluster>/<tenant>/<bucket>/<object>",
 		Short: "clone an object",
@@ -220,8 +224,8 @@ var (
 )
 
 func init() {
-	flagsClone = make([]efsutil.FlagValue, len(flagNames))
-	efsutil.ReadAttributes(cloneCmd, flagNames, flagsClone)
+	flagsClone = make([]efsutil.FlagValue, len(flagNamesClone))
+	efsutil.ReadAttributes(cloneCmd, flagNamesClone, flagsClone)
 	ObjectCmd.AddCommand(cloneCmd)
 }
 

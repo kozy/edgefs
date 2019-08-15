@@ -239,7 +239,7 @@ unnamedget_process_payload(struct state *st)
 		} else
 			tmp = rtbuf_init_mapped(&r->payload[0], r->nbufs);
 		if (!tmp) {
-			log_error(lg, "Get: out of memory while get blob");
+			log_error(lg, "Get: out of memory while get VM");
 			ccow_fail_io(st->io, -ENOMEM);
 			state_next(st, EV_ERR);
 			return;
@@ -272,23 +272,148 @@ unnamedget_process_payload(struct state *st)
 			}
 		}
 		r->rb = rtbuf_clone_bufs(tmp);
+		rtbuf_destroy(tmp);
 		if (!r->rb) {
-			rtbuf_destroy(tmp);
 			log_error(lg, "Get: out of memory while get blob");
 			ccow_fail_io(st->io, -ENOMEM);
 			state_next(st, EV_ERR);
 			return;
 		}
+
 		if (!r->rb_cached)
 			io->network_payload_len = r->rb->bufs[0].len;
-		rtbuf_destroy(tmp);
+		else
+			io->network_payload_len = 0;
+
+
+		/* Copy the vm_content_hash_id, etc. to completion */
+		comp->vm_content_hash_id = r->chid;
+		comp->vm_txid_generation = op->txid_generation;
+
+		/*
+		 * Read Version Mainifest metadata
+		 */
 		err = replicast_get_metadata(r->rb, &op->metadata);
 		if (err) {
-			log_error(lg, "UNNAMED GET VM metadata error: %d", err);
+			log_error(lg, "NAMED GET metadata error: %d", err);
 			ccow_fail_io(st->io, err);
 			state_next(st, EV_ERR);
 			return;
 		}
+		comp->was_object_deleted = op->metadata.object_deleted;
+
+		if (r->rb != comp->ver_rb && !r->rb_cached) {
+			/* add VM to ucache */
+			assert(r->rb->nbufs == 1);
+			ccow_ucache_put(tc->ucache, &r->chid, &r->rb->bufs[0], 1);
+		}
+
+		if (op->metadata.object_deleted) {
+			log_debug(lg, "L-Deleted object received at generation: %ld "
+			    "attr %lu", r->max_generation, io->attributes);
+			if (io->attributes & RD_ATTR_QUERY) {
+				if (io->attributes & RD_ATTR_LOGICAL_DELETE &&
+					!(io->attributes & RD_ATTR_EXPUNGE_OBJECT_VERSION)) {
+					ccow_fail_io(st->io, -ENOENT);
+					state_next(st, EV_ERR);
+					return;
+				}
+				repctx_drop(r->ctx); // Should we?
+				comp->cont_flags &= ~CCOW_CONT_F_EXIST;
+				state_next(st, EV_DONE);
+				return;
+			} else if (!(io->attributes & RD_ATTR_PSEUDO_GET)) {
+				ccow_fail_io(st->io, -ENOENT);
+				state_next(st, EV_ERR);
+				return;
+			}
+			log_debug(lg, "Continue processing L-Deleted object");
+		}
+
+		if (io->attributes & RD_ATTR_NO_OVERWRITE && op->txid_generation > 1) {
+			ccow_fail_io(st->io, -EEXIST);
+			state_next(st, EV_ERR);
+			return;
+		}
+
+		/*
+		 * Read Chunk Reference list (Payload CHID + Offset + Length)
+		 */
+		err = replicast_get_refs(r->rb, &op->vm_reflist, 0);
+		if (err) {
+			log_error(lg, "UNNAMED GET chunk reference list error: %d", err);
+			ccow_fail_io(st->io, err);
+			state_next(st, EV_ERR);
+			return;
+		}
+
+		if (op->iter) {
+			struct ccow_lookup *iter = op->iter;
+
+			iter->metadata = je_malloc(sizeof (struct vmmetadata));
+			if (!iter->metadata) {
+				err = -ENOMEM;
+				log_error(lg, "UNNAMED GET metadata error: %d", err);
+				ccow_fail_io(st->io, err);
+				state_next(st, EV_ERR);
+				return;
+			}
+			memcpy(iter->metadata, &op->metadata, sizeof (struct vmmetadata));
+			iter->metadata->cid = je_memdup(op->metadata.cid, op->metadata.cid_size);
+			iter->metadata->cid_size = op->metadata.cid_size;
+			iter->metadata->tid = je_memdup(op->metadata.tid, op->metadata.tid_size);
+			iter->metadata->tid_size = op->metadata.tid_size;
+			iter->metadata->bid = je_memdup(op->metadata.bid, op->metadata.bid_size);
+			iter->metadata->bid_size = op->metadata.bid_size;
+			iter->metadata->oid = je_memdup(op->metadata.oid, op->metadata.oid_size);
+			iter->metadata->oid_size = op->metadata.oid_size;
+
+			err = replicast_get_custom_metadata(r->rb, &iter->custom_md);
+			if (err) {
+				log_error(lg, "NAMED GET custom metadata error: %d",
+				    err);
+				je_free(iter->metadata->cid);
+				je_free(iter->metadata->tid);
+				je_free(iter->metadata->bid);
+				je_free(iter->metadata);
+				iter->metadata = NULL;
+				ccow_fail_io(st->io, err);
+				state_next(st, EV_ERR);
+				return;
+			}
+			/*
+			 * When supplying custom md attrs to a new object or an object
+			 * w/o MD, its rtbuf_t* will not have been allocated because it
+			 * does not contain any custom md, copy the new attrs from the
+			 * iter.
+			 */
+			if (op->comp->custom_md == NULL)
+				op->comp->custom_md = rtbuf_clone_bufs(iter->custom_md);
+		}
+		/*
+		 * A standalone unnamed get operation doesn't have an object context often
+		 */
+		if (op->tid) {
+			/**
+			* For ISGW and MDOnly buckets. If the dynamic fetch enabled,
+			* then just allocate data structure. Its content will be filled upon
+			* payload fetch request
+			*/
+			const char *bid = op->comp->isgw_bid ? op->comp->isgw_bid : op->bid;
+			if (strcmp(op->tid, RT_SYSVAL_TENANT_SVCS) && !op->isgw_dfetch &&
+				ccow_bucket_isgw_lookup(op->cid, op->tid, bid, NULL) == 0)
+				op->isgw_dfetch = 1;
+		}
+		/*
+		 * Preset some of completion defaults for comp-hash while
+		 * doing stream or normal (below) PUTs
+		 */
+		if (op->copy_opts && op->copy_opts->md_override) {
+			ccow_copy_inheritable_comp_to_md(op->comp, &op->metadata);
+		} else
+			ccow_copy_inheritable_md_to_comp(&op->metadata, op->comp);
+
+		op->coordinated_uvid_timestamp = op->metadata.uvid_timestamp;
 
 		/* transition to ST_TERM */
 		state_next(st, EV_DONE);
@@ -698,7 +823,7 @@ unnamedget__init(struct state *st)
 			return;
 		}
 	}
-	if (op->isgw_dfetch && RT_ONDEMAND_GET(op->metadata.inline_data_flags) != ondemandPolicyLocal) {
+	if (op->isgw_dfetch && (op->comp->isgw_bid || RT_ONDEMAND_GET(op->metadata.inline_data_flags) != ondemandPolicyLocal)) {
 		io->attributes |= RD_ATTR_ISGW_ONDEMAND;
 		if (op->comp && (op->comp->cont_flags & CCOW_CONT_F_PREFETCH_TOUCH))
 			io->attributes |= RD_ATTR_ONDEMAND_PREFETCH;
@@ -913,18 +1038,26 @@ unnamedget_dynfetch_request(struct state *st) {
 
 	char mchidstr[UINT512_BYTES*2+1];
 	uint512_dump(&r->chid, mchidstr, UINT512_BYTES*2+1);
+	const char *bid = op->comp->isgw_bid ? op->comp->isgw_bid : op->bid;
 
 	if (!strlen(op->isgw_addr_last)) {
 		uint16_t mdonly_policy = ondemandPolicyLocal;
 		if (op)
 			mdonly_policy = RT_ONDEMAND_GET(op->metadata.inline_data_flags);
+
+		if (op->comp->isgw_bid && mdonly_policy == ondemandPolicyLocal) {
+			/*
+			 * op->comp->isgw_bid is a marker of mdonly snapshot clone operation
+			 */
+			mdonly_policy = ondemandPolicyUnpin;
+		}
 		/*
 		 * The ISGW for dynamic fetch isn't chosen or failed.
 		 * Trying to find another
 		 */
 		int found = 0;
 		if (QUEUE_EMPTY(&op->isgw_srv_list)) {
-			(void)ccow_bucket_isgw_lookup(op->cid, op->tid, op->bid,
+			(void)ccow_bucket_isgw_lookup(op->cid, op->tid, bid,
 				&op->isgw_srv_list);
 			if (QUEUE_EMPTY(&op->isgw_srv_list)) {
 				log_error(lg,"Payload %s Get error, MDOnly attribute set, but ISGW list is empty", mchidstr);
@@ -1016,7 +1149,7 @@ unnamedget_dynfetch_request(struct state *st) {
 	log_debug(lg, "Payload %s: a dynamic fetch  request to ISGW %s SegUID %016lX",
 		mchidstr, op->isgw_addr_last, op->metadata.uvid_src_guid.l);
 	snprintf(d->obj_path, sizeof(d->obj_path), "%s/%s/%s/%s",
-		op->cid, op->tid, op->bid,op->oid);
+		op->cid, op->tid, bid, op->oid);
 	r->inexec++;
 	int err = ccow_isgw_dynamic_fetch_init(op->isgw_addr_last, d,
 		unnamedget_dynfetch_request_cb, r, &r->isgw_fsm_hanlde);

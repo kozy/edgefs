@@ -1243,6 +1243,58 @@ ccow_prefetch(ccow_t tc, const char *bid, size_t bid_size, const char *oid,
 	return err;
 }
 
+static int
+ccow_prefetch_version(ccow_t tc, const char *bid, size_t bid_size, const char *oid,
+	size_t oid_size, const uint512_t* vmchid, const uint512_t* nhid, size_t len, size_t chunk_size,
+	int comp_flags, const char* isgw_bid) {
+
+	struct iovec iov[64];
+	size_t batch_len = sizeof(iov)/sizeof(iov[0]);
+	char* buf = je_malloc(batch_len*chunk_size);
+	for (size_t i = 0; i < batch_len; i++) {
+		iov[i].iov_base = buf + i*chunk_size;
+		iov[i].iov_len = chunk_size;
+	}
+
+	size_t n_chunks = len/chunk_size + !!(len % chunk_size);
+
+	if (!n_chunks)
+		return 0;
+
+	ccow_completion_t c;
+
+	int err = ccow_create_completion(tc, NULL, NULL, n_chunks, &c);
+	uint32_t bs = chunk_size;
+	err = ccow_attr_modify_default(c, CCOW_ATTR_CHUNKMAP_CHUNK_SIZE,
+		(void *)&bs, NULL);
+	assert(!err);
+	c->isgw_bid = isgw_bid;
+	int cnt = 0;
+	size_t pos = 0;
+	while (pos < n_chunks) {
+		size_t iolen = batch_len;
+		if (pos + iolen > n_chunks)
+			iolen = n_chunks - pos;
+
+		err = ccow_tenant_get_version(tc->cid, tc->cid_size, tc->tid,
+			tc->tid_size, bid, bid_size, oid, oid_size, c, iov,
+			iolen, pos*chunk_size, CCOW_GET, NULL,
+			vmchid, nhid);
+
+		if (!err)
+			err = ccow_wait(c, cnt++);
+
+		if (err) {
+			log_error(lg, "ccow_prefetch failed: ccow_wait error %d", err);
+			break;
+		}
+		pos += iolen;
+	}
+	ccow_release(c);
+	je_free(buf);
+	return err;
+}
+
 void
 ccow_namedget_query_done(struct getcommon_client_req *r)
 {
@@ -1846,11 +1898,12 @@ ccow_put_type_cont(struct ccow_completion *c, struct iovec *iov,
  * Scope: PRIVATE
  */
 int
-ccow_tenant_put(const char *cid, size_t cid_size, const char *tid,
+ccow_tenant_put_version(const char *cid, size_t cid_size, const char *tid,
     size_t tid_size, const char *bid, size_t bid_size, const char *oid,
     size_t oid_size, struct ccow_completion *c, struct iovec *iov,
     size_t iovcnt, uint64_t off, ccow_op_t optype,
-    struct ccow_copy_opts *copy_opts, int64_t get_io_attributes)
+    struct ccow_copy_opts *copy_opts, int64_t get_io_attributes,
+    const uint512_t* vmchid, const uint512_t* nhid)
 {
 	int err;
 
@@ -1920,9 +1973,48 @@ ccow_tenant_put(const char *cid, size_t cid_size, const char *tid,
 
 	// RTBUF custom_md needs to be add_alloc()'d from completion into op
 	// so it can be freed
-	err = ccow_namedget_create(cid, cid_size, tid, tid_size, bid, bid_size,
-	    oid, oid_size, c, ccow_namedget_query_done, optype, &put_op,
-	    &get_io);
+	if (vmchid) {
+		assert(nhid);
+		err = ccow_operation_create(c, optype, &put_op);
+		if (err) {
+			log_error(lg, "Cannot create operation: %d", err);
+			return err;
+		}
+		put_op->cid = je_memdup(cid, cid_size);
+		if (!put_op->cid)
+			return -ENOMEM;
+
+		put_op->tid = je_memdup(tid, tid_size);
+		if (!put_op->cid)
+			return -ENOMEM;
+
+		put_op->bid = je_memdup(bid, bid_size);
+		if (!put_op->cid)
+			return -ENOMEM;
+
+		put_op->oid = je_memdup(oid, oid_size);
+		if (!put_op->cid)
+			return -ENOMEM;
+
+		put_op->cid_size = cid_size;
+		put_op->tid_size = tid_size;
+		put_op->bid_size = bid_size;
+		put_op->oid_size = oid_size;
+		put_op->uvid_timestamp = get_timestamp_us();
+
+		put_op->shard_index = c->shard_index;
+
+		err = ccow_unnamedget_create(c, ccow_namedget_query_done, put_op, &get_io, NULL);
+		if (!err) {
+			struct getcommon_client_req *req = CCOW_IO_REQ(get_io);
+			req->ng_chid = *nhid;
+			req->chid = *vmchid;
+			get_io->attributes |= RD_ATTR_VERSION_MANIFEST;
+		}
+	} else
+		err = ccow_namedget_create(cid, cid_size, tid, tid_size, bid, bid_size,
+			oid, oid_size, c, ccow_namedget_query_done, optype, &put_op,
+			&get_io);
 	if (err)
 		return err;
 	get_io->attributes |= get_io_attributes | RD_ATTR_QUERY;
@@ -2025,19 +2117,53 @@ ccow_tenant_put(const char *cid, size_t cid_size, const char *tid,
 	return err;
 }
 
+/*
+ * Initiate CCOW PUT/INIT
+ *
+ * Scope: PRIVATE
+ */
 
+int
+ccow_tenant_put(const char *cid, size_t cid_size, const char *tid,
+    size_t tid_size, const char *bid, size_t bid_size, const char *oid,
+    size_t oid_size, struct ccow_completion *c, struct iovec *iov,
+    size_t iovcnt, uint64_t off, ccow_op_t optype,
+    struct ccow_copy_opts *copy_opts, int64_t get_io_attributes)
+{
+	return ccow_tenant_put_version(cid, cid_size, tid, tid_size, bid,
+		bid_size, oid, oid_size, c ,iov, iovcnt, off, optype,
+		copy_opts, get_io_attributes, NULL, NULL);
+}
+
+/**
+ * Asynchronously trigger a cacheable object's policy change.
+ *  Object version is determined by VMCHID
+ *
+ * @param bid bucket name id of the bucket
+ * @param bid_size of bucket name ID
+ * @param oid object ID string
+ * @param oid_size sizeof of the object ID
+ * @param generation object version ID
+ * @param pol policy change value
+ * @param comp operation completion to wait on
+ */
+int
+ccow_ondemand_policy_change_request_version(const char *bid, size_t bid_size, const char *oid,
+	size_t oid_size, const uint512_t* vmchid, const uint512_t* nhid, ondemand_policy_t pol,
+	ccow_completion_t comp);
 /*
  * Copy a Tenant/Bucket/Object, creating a new object with same md.
  *
  * Scope: PUBLIC
  */
 int
-ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
+ccow_clone_version(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
     const char *bid_src, size_t bid_src_size, const char *oid_src,
-    size_t oid_src_size, struct ccow_copy_opts *copy_opts)
+    size_t oid_src_size, struct ccow_copy_opts *copy_opts,
+    const uint512_t* vmchid, const uint512_t* nhid)
 {
 	int err = 0;
-	int exists = 0, copy_to_self = 0;
+	int exists = 0;
 	struct ccow_completion *c = comp;
 	struct ccow *tc = c->tc;
 	uint64_t ioattr = 0;
@@ -2051,20 +2177,6 @@ ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
 		c->cont_generation = copy_opts->genid;
 		c->version_uvid_timestamp = (*copy_opts->genid > 0 ? copy_opts->version_uvid_timestamp : 0);
 	}
-
-	if (copy_opts->version_vm_content_hash_id) {
-		c->version_vm_content_hash_id = (uint512_t *) je_malloc(sizeof(uint512_t));
-		if (!c->version_vm_content_hash_id) {
-			err = -ENOMEM;
-			log_error(lg, "ccow_clone returned error %d", err);
-			ccow_release(c);
-			return err;
-		}
-		uint512_fromhex(copy_opts->version_vm_content_hash_id, (UINT512_BYTES * 2 + 1), c->version_vm_content_hash_id);
-	} else {
-		c->version_vm_content_hash_id = NULL;
-	}
-
 
 	char *tid_dst = copy_opts->tid;
 	size_t tid_dst_size = copy_opts->tid_size;
@@ -2106,11 +2218,6 @@ ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
 	if (!(*bid_src && *bid_dst && *oid_src && *oid_dst))
 		return -EBADF;
 
-	/* Copy of Object onto itself. */
-	if (memcmp_quick(bid_src, bid_src_size, bid_dst, bid_dst_size) == 0 &&
-	    memcmp_quick(oid_src, oid_src_size, oid_dst, oid_dst_size) == 0)
-		copy_to_self = 1;
-
 	if (memcmp_quick(tid_src, tid_src_size, tid_dst, tid_dst_size) != 0 &&
 	    memcmp_quick(tc->tid, tc->tid_size, RT_SYSVAL_TENANT_ADMIN,
 		    strlen(RT_SYSVAL_TENANT_ADMIN) + 1) != 0)
@@ -2147,9 +2254,9 @@ ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
 			return err;
 
 		ccow_lookup_t iter;
-		err = ccow_tenant_get(tc->cid, tc->cid_size, tid_src, tid_src_size,
+		err = ccow_tenant_get_version(tc->cid, tc->cid_size, tid_src, tid_src_size,
 		    bid_src, bid_src_size, oid_src, oid_src_size, check_c, NULL, 0, 0,
-		    CCOW_GET, &iter);
+		    CCOW_GET, &iter, vmchid, nhid);
 		if (err) {
 			ccow_release(check_c);
 			return err;
@@ -2176,36 +2283,52 @@ ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
 			}
 		}
 		ccow_lookup_release(iter);
-		uint16_t mdoonly_policy = RT_ONDEMAND_GET(inl);
-		if (mdoonly_policy != ondemandPolicyLocal) {
-			/* Reset on-demand attribute of the dst object */
-			ioattr |= RD_ATTR_ONDEMAND_CLONE;
-			if (mdoonly_policy != ondemandPolicyPersist) {
-				/* Source object needs to be converted to persistent */
-				uint64_t gen = copy_opts->genid ? *copy_opts->genid : 0;
-				if (mdoonly_policy == ondemandPolicyUnpin) {
-					/* The object is cacheable, but not pinned. Doing pre-fetch */
-					err = ccow_prefetch(tc, bid_src, bid_src_size, oid_src,
-						oid_src_size, gen, size, chunk_size, CCOW_CONT_F_PREFETCH_TOUCH);
-					if (err)
+		if (comp->isgw_bid) {
+			/*
+			 * Looks like ondmeand snapshot clone, doing object prefetch
+			 * We don't need to change ondemand policy here because
+			 * the cloned object will be local
+			 *
+			 **/
+			err = ccow_prefetch_version(tc, bid_src, bid_src_size, oid_src,
+				oid_src_size, vmchid, nhid, size, chunk_size,
+				CCOW_CONT_F_PREFETCH_TOUCH, c->isgw_bid);
+			if (err) {
+				log_error(lg, "ccow_prefetch_version error %d", err);
+				return err;
+			}
+		} else {
+			uint16_t mdoonly_policy = RT_ONDEMAND_GET(inl);
+			if (mdoonly_policy != ondemandPolicyLocal) {
+				/* Reset on-demand attribute of the dst object */
+				ioattr |= RD_ATTR_ONDEMAND_CLONE;
+				if (mdoonly_policy != ondemandPolicyPersist) {
+					/* Source object needs to be converted to persistent */
+					if (mdoonly_policy == ondemandPolicyUnpin) {
+						/* The object is cacheable, but not pinned. Doing pre-fetch */
+						err = ccow_prefetch_version(tc, bid_src, bid_src_size, oid_src,
+							oid_src_size, vmchid, nhid, size, chunk_size,
+							CCOW_CONT_F_PREFETCH_TOUCH, NULL);
+						if (err)
+							return err;
+					}
+					err = ccow_create_completion(tc, NULL, NULL, 1, &check_c);
+					if (err) {
+						log_error(lg, "ccow_pin failed: Completion create error %d", err);
 						return err;
-				}
-				err = ccow_create_completion(tc, NULL, NULL, 1, &check_c);
-				if (err) {
-					log_error(lg, "ccow_pin failed: Completion create error %d", err);
-					return err;
-				}
-				err = ccow_ondemand_policy_change_request(bid_src, bid_src_size, oid_src, oid_src_size,
-					gen, ondemandPolicyPersist, check_c);
-				if (err) {
-					ccow_release(check_c);
-					log_error(lg, "ccow_clone failed: ccow_mdonly_policy_change_request error %d", err);
-					return err;
-				}
-				err = ccow_wait(check_c, -1);
-				if (err) {
-					log_error(lg, "ccow_clone failed: ccow_wait error %d", err);
-					return err;
+					}
+					err = ccow_ondemand_policy_change_request_version(bid_src, bid_src_size, oid_src, oid_src_size,
+						 vmchid, nhid, ondemandPolicyPersist, check_c);
+					if (err) {
+						ccow_release(check_c);
+						log_error(lg, "ccow_clone failed: ccow_mdonly_policy_change_request error %d", err);
+						return err;
+					}
+					err = ccow_wait(check_c, -1);
+					if (err) {
+						log_error(lg, "ccow_clone failed: ccow_wait error %d", err);
+						return err;
+					}
 				}
 			}
 		}
@@ -2237,13 +2360,12 @@ ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
 	opts->tid_size = tid_dst_size;
 	opts->bid_size = bid_dst_size;
 	opts->oid_size = oid_dst_size;
-	opts->md_override = 1;
+	opts->md_override = copy_opts->md_override;
 
-	err = ccow_tenant_put(tc->cid, tc->cid_size, tid_src, tid_src_size,
+	err = ccow_tenant_put_version(tc->cid, tc->cid_size, tid_src, tid_src_size,
 	    bid_src, bid_src_size, oid_src, oid_src_size, c, NULL,
-	    0, 0, (copy_to_self && exists) ? CCOW_PUT : CCOW_CLONE,
-	    (copy_to_self && exists) ? NULL : opts, ioattr);
-	if ((err && err != -EEXIST) || (copy_to_self && exists)) {
+	    0, 0, CCOW_CLONE, opts, ioattr, vmchid, nhid);
+	if (err && err != -EEXIST) {
 		je_free(opts->tid);
 		je_free(opts->bid);
 		je_free(opts->oid);
@@ -2253,6 +2375,15 @@ ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
 
 	return 0;
 }
+
+int
+ccow_clone(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
+    const char *bid_src, size_t bid_src_size, const char *oid_src,
+    size_t oid_src_size, struct ccow_copy_opts *copy_opts) {
+	return ccow_clone_version(comp, tid_src, tid_src_size, bid_src,
+		bid_src_size, oid_src, oid_src_size, copy_opts, NULL, NULL);
+}
+
 
 /*
  * Initiate CCOW PUT
@@ -2387,7 +2518,7 @@ ccow_insert_chid(const char *bid, size_t bid_size, const char *oid,
 	/* Add the object to the snapview */
 	int err = ccow_tenant_put(tc->cid, tc->cid_size, tc->tid,
 	    tc->tid_size, bid, bid_size, oid, oid_size, c, iov, iovcnt, 0,
-	    CCOW_INSERT_LIST, NULL, RD_ATTR_CHUNK_MANIFEST);
+	    CCOW_INSERT_LIST, NULL, RD_ATTR_CHUNK_MANIFEST | RD_ATTR_SNAPSHOT);
 	return err;
 }
 
@@ -3001,6 +3132,23 @@ ccow_ondemand_policy_change_request(const char *bid, size_t bid_size, const char
 	return ccow_tenant_put(tc->cid, tc->cid_size, tc->tid,
 	    tc->tid_size, bid, bid_size, oid, oid_size, comp, NULL, 0, 0,
 	    CCOW_PUT, NULL, attr);
+}
+
+int
+ccow_ondemand_policy_change_request_version(const char *bid, size_t bid_size, const char *oid,
+	size_t oid_size, const uint512_t* vmchid, const uint512_t* nhid, ondemand_policy_t pol,
+	ccow_completion_t comp) {
+
+	struct ccow *tc = comp->tc;
+	assert(pol < ondemandPolicyTotal);
+	assert(pol >= 0);
+	uint64_t attr = pol == ondemandPolicyPin ? RD_ATTR_ONDEMAMD_PIN :
+			pol == ondemandPolicyUnpin ? RD_ATTR_ONDEMAND_UNPIN :
+				RD_ATTR_ONDEMAND_PERSIST;
+
+	return ccow_tenant_put_version(tc->cid, tc->cid_size, tc->tid,
+	    tc->tid_size, bid, bid_size, oid, oid_size, comp, NULL, 0, 0,
+	    CCOW_PUT, NULL, attr, vmchid, nhid);
 }
 
 int

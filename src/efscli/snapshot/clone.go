@@ -21,7 +21,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package object
+package snapshot
 
 /*
 #include "ccow.h"
@@ -36,7 +36,6 @@ import (
 	"strings"
 
 	"github.com/Nexenta/edgefs/src/efscli/efsutil"
-	//"github.com/Nexenta/edgefs/src/efscli/validate"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +73,10 @@ func snapshotClone(snapViewPath, snapshotName, cloneObjectPath string, flags []e
 	c_cloneBucket := C.CString(cloneObjectParts[2])
 	defer C.free(unsafe.Pointer(c_cloneBucket))
 
-	c_cloneObject := C.CString(cloneObjectParts[3])
+	c_cloneObject := C.CString("")
+	if len (cloneObjectParts) > 3 {
+		c_cloneObject = C.CString(cloneObjectParts[3])
+	}
 	defer C.free(unsafe.Pointer(c_cloneObject))
 
 	// Libccow Init
@@ -159,15 +161,14 @@ var (
 	flagsSnapshotClone []efsutil.FlagValue
 
 	snapshotCloneCmd = &cobra.Command{
-		Use:   "snapshot-clone object.snapview snapshot cloneDestinationObject",
+		Use:   "clone object.snapview snapshot cloneDestinationObject",
 		Long:  "clone existing snapview's snapshot to a new destination object",
 		Short: "clone snapshot to object",
 		//Args:  validate.Object,
 		Run: func(cmd *cobra.Command, args []string) {
 
-			/*edgefs object snapshot-add cl/tn/bk/ob@snapshotName cl/tn/bk/ob.snapview */
 			if len(args) != 3 {
-				fmt.Printf("Wrong parameters: Should be 'edgefs object snapshot-clone object.snapview snapshotPath cloneDestination'\n")
+				fmt.Printf("Wrong parameters: Should be 'efscli snapshot clone object.snapview snapshotPath cloneDestination'\n")
 				return
 			}
 
@@ -184,18 +185,18 @@ var (
 
 			snapshotParts := strings.Split(args[1], "@")
 			if len(snapshotParts) != 2 {
-				fmt.Printf("Wrong object snapshot format %s. Should be <cluster>/<tenant>/<bucket>/<object>@<name>\n", args[1])
+				fmt.Printf("Wrong object snapshot format %s. Should be <cluster>/<tenant>/<bucket>[/<object>]@<name>\n", args[1])
 				return
 			}
 
 			snapshotPathParts := strings.Split(snapshotParts[0], "/")
-			if len(snapshotPathParts) != 4 {
+			if len(snapshotPathParts) < 3 {
 				fmt.Printf("Wrong object snapshot path: %s", snapshotPathParts[0])
 				return
 			}
 
 			clonePathParts := strings.Split(args[2], "/")
-			if len(clonePathParts) != 4 {
+			if len(clonePathParts) < 3 {
 				fmt.Printf("Wrong clone destinaion path: %s", args[2])
 				return
 			}
@@ -210,7 +211,5 @@ var (
 )
 
 func init() {
-	//flagsSnapshotClone = make([]efsutil.FlagValue, len(flagNames))
-	//efsutil.ReadAttributes(snapshotCloneCmd, flagNames, flagsSnapshotClone)
-	ObjectCmd.AddCommand(snapshotCloneCmd)
+	SnapshotCmd.AddCommand(snapshotCloneCmd)
 }

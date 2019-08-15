@@ -163,7 +163,7 @@ is_mdcache_tt(struct repdev* dev, type_tag_t ttag)
 }
 
 int
-reptrans_pack_vbr(msgpack_p *p, struct backref *vbr)
+reptrans_pack_vbr(msgpack_p *p, const struct backref *vbr)
 {
 	int err;
 
@@ -421,7 +421,13 @@ pack_batch_entry(msgpack_p *p, struct verification_request *vbreq)
 {
 	int err;
 
-	err = msgpack_pack_array(p, 15);
+	err = msgpack_pack_array(p, 16);
+	if (err)
+		return err;
+
+	uint8_t ver = 1;
+
+	err = msgpack_pack_uint8(p, ver);
 	if (err)
 		return err;
 
@@ -453,8 +459,8 @@ pack_batch_entry(msgpack_p *p, struct verification_request *vbreq)
 	if (err)
 		return err;
 
-	uint8_t vtype = (uint8_t)vbreq->vtype;
-	err = msgpack_pack_uint8(p, vtype);
+	uint64_t vtype = (uint64_t)vbreq->vtype;
+	err = msgpack_pack_uint64(p, vtype);
 	if (err)
 		return err;
 
@@ -494,13 +500,25 @@ unpack_batch_entry(msgpack_u *u, struct verification_request *vbreq, uint64_t* t
 {
 	int err = 0;
 	uint32_t n;
+	uint8_t ver = 0;
 
 	assert(u);
 	assert(vbreq);
 
 	err = msgpack_unpack_array(u, &n);
-	if (err || n != 15)
-		return -EBADF;
+	if (err)
+		return err;
+	if (n == 16) {
+		/* 16-entries array introduced by https://github.com/Nexenta/edgefs/issues/222
+		 * - Introduced versioning. The oldest 15-entries version is 0th version.
+		 * - Extended size of a vtype field from uint8 to uint64.
+		 */
+		err = msgpack_unpack_uint8(u, &ver);
+		if (err)
+			return -ENXIO;
+		if (ver == 0)
+			return -ENOTBLK;
+	}
 	err = replicast_unpack_uint512(u, &vbreq->nhid);
 	if (err)
 		return err;
@@ -525,9 +543,17 @@ unpack_batch_entry(msgpack_u *u, struct verification_request *vbreq, uint64_t* t
 	err = replicast_unpack_uint512(u, &vbreq->vbr.ref_chid);
 	if (err)
 		return err;
-	err = msgpack_unpack_uint8(u, &vbreq->vtype);
-	if (err)
-		return err;
+	if (ver == 0) {
+		uint8_t aux = 0;
+		err = msgpack_unpack_uint8(u, &aux);
+		if (err)
+			return err;
+		vbreq->vtype = aux;
+	} else {
+		err = msgpack_unpack_uint64(u, &vbreq->vtype);
+		if (err)
+			return err;
+	}
 	err = msgpack_unpack_uint8(u, &vbreq->ttag);
 	if (err)
 		return err;
@@ -625,14 +651,20 @@ int batch_chk(const void *a_data, const size_t a_size, uint64_t* ts)
 	if (a_size > 2 * sizeof(struct verification_request))
 		return -1;
 	msgpack_u ua;
+	uint32_t n = 0;
+	uint8_t ver = 0;
 	msgpack_unpack_init_b(&ua, a_data, a_size, 0);
 
-	uint32_t n;
 	err = msgpack_unpack_array(&ua, &n);
 	if (err)
 		return err;
-	if (n < 6)
-		return -1;
+	if (n == 16) {
+		err = msgpack_unpack_uint8(&ua, &ver);
+		if (err)
+			return -ENXIO;
+		if (ver == 0)
+			return -ENOTBLK;
+	}
 
 	/* 1. NHID of object we protecting */
 	uint512_t nhid_a;

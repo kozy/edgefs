@@ -377,6 +377,7 @@ struct ccow_completion {
 	ccow_callback_t seq_cb;
 
 	int shard_index;       /* shard index */
+	const char* isgw_bid;		/* Optional bucket name for ISGW selection code */
 
 	uint64_t vmm_gen_id;		/* version manifest marker gen id */
 	struct ccow_io vmm_io;
@@ -743,6 +744,18 @@ ccow_admin_init_override(const char *jsonstr, const char *clname, size_t cl_len,
     ccow_t *ptctx, void (*opts_override)(struct ccow *));
 
 /*
+ * Internal. Optionally put (clone) object version if the previous version
+ * doesn't have a version entry (referenced by snapshot-only)
+ */
+int
+ccow_tenant_put_version(const char *cid, size_t cid_size, const char *tid,
+    size_t tid_size, const char *bid, size_t bid_size, const char *oid,
+    size_t oid_size, struct ccow_completion *c, struct iovec *iov,
+    size_t iovcnt, uint64_t off, ccow_op_t optype,
+    struct ccow_copy_opts *copy_opts, int64_t get_io_attributes,
+    const uint512_t* vmchid, const uint512_t* nhid);
+
+/*
  * Internal per-tenant put
  */
 int
@@ -752,12 +765,31 @@ ccow_tenant_put(const char *cid, size_t cid_size, const char *tid, size_t tid_si
     ccow_op_t optype, struct ccow_copy_opts *copy_opts, int64_t get_io_attributes);
 
 /*
+ * Internal. Clone of a hidden object version by its VM CHID
+ */
+int
+ccow_clone_version(ccow_completion_t comp, const char *tid_src, size_t tid_src_size,
+    const char *bid_src, size_t bid_src_size, const char *oid_src,
+    size_t oid_src_size, struct ccow_copy_opts *copy_opts,
+    const uint512_t* vmchid, const uint512_t* nhid);
+
+/*
  * Internal per-tenant get
  */
 int ccow_tenant_get(const char *cid, size_t cid_size, const char *tid,
     size_t tid_size, const char *bid, size_t bid_size, const char *oid,
     size_t oid_size, struct ccow_completion *c, struct iovec *iov,
     size_t iovcnt, uint64_t off, ccow_op_t optype, ccow_lookup_t *iter);
+
+/*
+ * Internal per-tenant get by object's VMCHID/NHID. Can be used to fetch object
+ * which has gone from the version db, but still referenced by a snapview
+ */
+int ccow_tenant_get_version(const char *cid, size_t cid_size, const char *tid,
+    size_t tid_size, const char *bid, size_t bid_size, const char *oid,
+    size_t oid_size, struct ccow_completion *c, struct iovec *iov,
+    size_t iovcnt, uint64_t off, ccow_op_t optype, ccow_lookup_t *iter,
+    const uint512_t* vmchid, const uint512_t* nhid);
 
 /*
  * Internal per-tenant get by nhid_str
@@ -1424,6 +1456,10 @@ void ccow_copy_inheritable_md_to_comp(struct vmmetadata *md_from,
     struct ccow_completion *comp_to);
 
 void ccow_copy_inheritable_comp_to_md(struct ccow_completion *comp_from,
+    struct vmmetadata *md_to);
+
+void
+ccow_copy_inheritable_comp_to_md_clone(struct ccow_completion *comp_from,
     struct vmmetadata *md_to);
 
 void ccow_copy_inheritable_tc_to_comp(struct ccow *tc_from,

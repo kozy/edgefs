@@ -175,18 +175,33 @@ typedef struct backref {
 } backref_t;
 
 typedef enum verification_type {
-	RT_VERIFY_NORMAL    = 0x01, /* Just verify back reference */
-	RT_VERIFY_DELETE    = 0x02, /* Delete back reference for
-				       deleted version (expunge/purge/tgt delete
-				       case)*/
-	RT_VERIFY_REPLICATE = 0x04, /* Verify and start replication for
-				       delegated put of a version */
-	RT_VERIFY_SKIP_UNVERIFIED = 0x08, /* Verify only if there are some VBR(s) already */
-	RT_VERIFY_PARITY    = 0x10, /* Propagation of EC encoding request */
-	RT_VERIFY_NO_QUARANTINE = 0x20, /* Current version has to be verified immediately */
-	/* Bits 6 and 7 are reserved for ONDEMAND propagation type */
-} verification_type_t;
-
+	/* Just verify back reference */
+	RT_VERIFY_NORMAL    = (1<<0),
+	/*
+	 * Delete back reference for deleted version
+	 * (expunge/purge/tgt delete case)
+	 */
+	RT_VERIFY_DELETE    = (1<<1),
+	/* Verify and start replication
+	 * for delegated put of a version
+	 */
+	RT_VERIFY_REPLICATE = (1<<2),
+	 /*
+	  * Verify only if there are some VBR(s) already
+	  */
+	RT_VERIFY_SKIP_UNVERIFIED = (1<<3),
+	/*
+	 * Propagation of an EC encoding request
+	 */
+	RT_VERIFY_PARITY    = (1<<4),
+	 /*
+	  * Current version has to be verified immediately
+	  */
+	RT_VERIFY_NO_QUARANTINE = (1<<5),
+	/*
+	 *  Bits 6 and 7 are reserved for
+	 *  ONDEMAND propagation type
+	 */
 #define VTYPE_ONDEMAND_LOCAL    0
 #define VTYPE_ONDEMAND_MDONLY   1
 #define VTYPE_ONDEMAND_VMONLY   2
@@ -195,6 +210,18 @@ typedef enum verification_type {
 #define VTYPE_GET_ONDEMAND(vtype) (((vtype)>>6) & 3)
 #define VTYPE_SET_ONDEMAND(vtype, mode) ((vtype) = (vtype & 0x3F) | ((mode & 3)<<6))
 
+	/**
+	 * The fields below were added by implementation of a bucket snapshot feature
+	 */
+
+	/*
+	 * A bucket object verification. Used to skip verification of inline manifests
+	 */
+	RT_VERIFY_BUCKET = (1<<8),
+	RT_VERIFY_SNAPSHOT = (1<<9),
+} verification_type_t;
+
+
 typedef struct verification_request {
 	uint512_t chid;
 	uint512_t nhid;
@@ -202,7 +229,7 @@ typedef struct verification_request {
 	uint64_t uvid_timestamp;
 	uint64_t generation;
 	struct backref vbr;
-	uint8_t vtype;
+	uint64_t vtype;
 	uint8_t ttag;
 	uint8_t htype;
 	uint8_t width;
@@ -211,12 +238,13 @@ typedef struct verification_request {
 	uint8_t algorithm;
 } verification_request_t;
 
+
 int is_dupsort_tt(type_tag_t ttag);
 int is_data_type_tag(type_tag_t ttag);
 int is_hashcount_data_type_tag(type_tag_t ttag);
 int is_rowusage_data_type_tag(type_tag_t ttag);
 
-int reptrans_pack_vbr(msgpack_p *p, struct backref *vbr);
+int reptrans_pack_vbr(msgpack_p *p, const struct backref *vbr);
 int reptrans_unpack_vbr(msgpack_u *u, struct backref *vbr);
 
 /** Compare two backref-like items */

@@ -43,6 +43,7 @@
 #include "auditd.h"
 #include "skiplist.h"
 #include "erasure-coding.h"
+#include "compat.h"
 
 static int
 backref_blob_filter(void *arg, void **data, size_t *size, int set);
@@ -152,6 +153,15 @@ reptrans_put_batch_request(struct repdev *dev, struct refentry *e,
 	if (uint512_cmp(&e->content_hash_id, &uint512_null) == 0)
 		return 0;
 
+	uint512_t *nhid = NULL;
+	if (RT_REF_TYPE(e) == RT_REF_TYPE_INLINE_VERSION) {
+		/* Skip verification of objects referenced by a bucket */
+		if (vreq->vtype & RT_VERIFY_BUCKET)
+			return 0;
+
+		nhid = &e->name_hash_id;
+	}
+
 	vreq->chid = e->content_hash_id;
 	vreq->ttag = ref_ttag;
 	vreq->htype = RT_REF_HASH_TYPE(e);
@@ -159,16 +169,13 @@ reptrans_put_batch_request(struct repdev *dev, struct refentry *e,
 	uint64_t attr = reptrans_backref_ttag2attr(ref_ttag);
 	BACKREF_SET_TTAG(&vreq->vbr, attr);
 
-	uint512_t *nhid = NULL;
-	if (RT_REF_TYPE(e) == RT_REF_TYPE_INLINE_VERSION)
-		nhid = &e->name_hash_id;
 
 	return reptrans_enqueue_batch_request(dev, nhid, vreq);
 }
 
 static int
 reptrans_propagate_verification_request(struct repdev *dev,
-	struct verification_request *vreq, uint64_t cts)
+	struct verification_request *vreq, int snapshot, uint64_t cts)
 {
 	rtbuf_t *refs = NULL;
 	rtbuf_t *rbc = NULL;
@@ -284,6 +291,11 @@ reptrans_propagate_verification_request(struct repdev *dev,
 
 		struct refentry *e =
 		    (struct refentry *)rtbuf(refs, i).base;
+
+		uint8_t ref_ttag = ref_to_ttag[RT_REF_TYPE(e)];
+
+		if (snapshot && ref_ttag == TT_CHUNK_PAYLOAD)
+			continue;
 
 		uint512_dump(&e->content_hash_id, chidstr,
 			UINT512_BYTES * 2 + 1);
@@ -489,6 +501,7 @@ reptrans_verify_one_request(struct repdev *dev, struct verification_request *vbr
 		vbreq->vtype &= ~RT_VERIFY_PARITY;
 	}
 
+
 	/*
 	 * TODO: Consider moving pre/post count down to the driver.
 	 * Ideally, an atomic put/delete operation should return them.
@@ -590,7 +603,7 @@ reptrans_verify_one_request(struct repdev *dev, struct verification_request *vbr
 		if (err) {
 			if (err != -EEXIST || pre_ref_count == 0) {
 				log_error(lg,
-			    		"Dev(%s): gen %lu put VBR %s -> %s, vtype %x, pre_ref_count %lu, err %d",
+			    		"Dev(%s): gen %lu put VBR %s -> %s, vtype %lx, pre_ref_count %lu, err %d",
 			    		dev->name, vbreq->generation, chidstr,
 					ref_chidstr, vbreq->vtype, pre_ref_count, err);
 				return err;
@@ -604,17 +617,24 @@ reptrans_verify_one_request(struct repdev *dev, struct verification_request *vbr
 		}
 	}
 
-_propagate:
-	/* Propagating only manifest and only if number of theirs VBRs
+_propagate:;
+	/*
+	 * Propagating only manifest and only if number of theirs VBRs
 	 * has been changed. Always propagate PERSIST/UNPERSIST requests
+	 * Also, if this is a snapshot verification, then get a verification request
+	 * through any manifest-to-manifest links
 	 */
+	int snapshpot = 0;
+	if (pre_ref_count && ((vbreq->vtype & (RT_VERIFY_SNAPSHOT | RT_VERIFY_DELETE)) == RT_VERIFY_SNAPSHOT))
+		snapshpot = 1;
+
 	if ((vbreq->ttag == TT_VERSION_MANIFEST || vbreq->ttag == TT_CHUNK_MANIFEST) &&
 		(((vbreq->vtype & RT_VERIFY_DELETE) && pre_ref_count == 1
 			&& post_ref_count == 0) ||
 			(pre_ref_count == 0 && post_ref_count == 1) ||
 			ondemand_vtype == VTYPE_ONDEMAND_PIN ||
 			ondemand_vtype == VTYPE_ONDEMAND_MDONLY ||
-			ondemand_vtype == VTYPE_ONDEMAND_VMONLY)) {
+			ondemand_vtype == VTYPE_ONDEMAND_VMONLY || snapshpot)) {
 		const char* act = "put";
 		if (vbreq->vtype & RT_VERIFY_DELETE)
 			act = "del";
@@ -633,7 +653,7 @@ _propagate:
 		if (!preq)
 			return -ENOMEM;
 		*preq = *vbreq;
-		err = reptrans_propagate_verification_request(dev, preq, cts);
+		err = reptrans_propagate_verification_request(dev, preq, snapshpot, cts);
 		je_free(preq);
 		if (vbreq->vtype & RT_VERIFY_REPLICATE) {
 			assert(!(vbreq->vtype & RT_VERIFY_DELETE));
@@ -840,6 +860,7 @@ int reptrans_request_encoding(struct repdev *dev,
 	return err;
 }
 
+
 static int
 reptrans_verify_queue__callback(struct repdev *dev, type_tag_t ttag,
 	crypto_hash_t hash_type, uint512_t *key, uv_buf_t *val, void *param)
@@ -878,6 +899,17 @@ reptrans_verify_queue__callback(struct repdev *dev, type_tag_t ttag,
 	assert(rb);
 	work->verify_queue_items++;
 	vbreq = (struct verification_request *)rb->bufs->base;
+
+	if (vbreq->ttag != TT_VERSION_MANIFEST && vbreq->ttag != TT_CHUNK_MANIFEST) {
+		/* Must be entries from previous version */
+		err = vbreq_convert_compat(rb->bufs->base, &vbreq);
+		if (err) {
+			log_error(lg, "Dev(%s) incompatible or corrupted verification "
+				"entry for key %016lX%106lX, skipping",
+				dev->name, key->u.u.u, key->u.u.l);
+			goto _del_entry;
+		}
+	}
 
 	char chidstr[UINT512_BYTES * 2 + 1];
 	char ref_chidstr[UINT512_BYTES * 2 + 1];
@@ -957,6 +989,8 @@ _del_entry:
 	    chidstr, ref_chidstr);
 
 _skip:
+	if (vbreq && rb->bufs->base != (char*)vbreq)
+		je_free(vbreq);
 	if (rb)
 		rtbuf_destroy(rb);
 

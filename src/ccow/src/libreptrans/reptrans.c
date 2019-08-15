@@ -4167,7 +4167,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 		size_t n_vbrs = 0;
 		err = reptrans_get_chunk_count_limited(dev, HASH_TYPE_DEFAULT,
 			TT_VERIFIED_BACKREF, (uint512_t*)chid, 2, &n_vbrs);
-		if (err || n_vbrs > 1) {
+		if (err) {
 			if (err) {
 				if (err == -ENOENT)
 					log_warn(lg, "Dev(%s) error getting VBRs count: %d",
@@ -4255,14 +4255,16 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 
 		char nhidstr[UINT512_BYTES*2+1];
 		uint512_dump(&vbr->name_hash_id, nhidstr, UINT512_BYTES*2+1);
-		log_debug(lg, "Dev(%s) top-down lookup %s gen %lu\n",
-			dev->name, nhidstr, md.txid_generation);
 
 		uint64_t gen_max = 0;
 		int stable_version = 0;
 		int32_t actual_count = ngcount_chunks(dev, TT_NAMEINDEX,
 			HASH_TYPE_DEFAULT, NULL, &vbr->name_hash_id, 1,
 			NULL, md.txid_generation, &gen_max, &stable_version);
+
+		log_info(lg, "Dev(%s) top-down lookup %s gen %lu, VM %016lX%016lX, actual_count %d, stable_version %d",
+			dev->name, nhidstr, md.txid_generation, chid->u.u.u, chid->u.u.l, actual_count, stable_version);
+
 
 		/* VBR removal may lead to data loss. So we need to be sure that
 		 * parent manifest/version has been removed and
@@ -4281,14 +4283,22 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 				log_error(lg, "Dev(%s) out of memory", dev->name);
 				goto _exit;
 			}
-			del_arg->nameindex = 1;
+
 			del_arg->chid = *chid;
 			del_arg->nhid = vbr->name_hash_id;
-			del_arg->version = version;
+
 			del_arg->next = arg->tail;
 			del_arg->vbr_hash_type = vbr_hash_type;
 			del_arg->rep_cnt = vbr->rep_count;
 			del_arg->number_of_versions = md.number_of_versions;
+			/* A VM with multiple VBRs cannot be purged. Just remove a VBR */
+			if (n_vbrs == 1) {
+				del_arg->nameindex = 1;
+				del_arg->version = version;
+			} else {
+				del_arg->nameindex = 2;
+				del_arg->vbr = *vbr;
+			}
 			arg->tail = del_arg;
 			arg->qsize++;
 			work->n_vers_purged++;
@@ -4474,6 +4484,7 @@ gc_iterator_cb(struct repdev *dev, type_tag_t ttag,
 		    dev->path, chidstr, err);
 		return err;
 	}
+	log_info(lg, "Dev(%s) iterating %s VBR, ref_type %s, gen %lu", dev->name, chidstr, type_tag_name[br.ref_type], br.generation);
 	if (br.ref_type == TT_PARITY_MANIFEST) {
 		/* Parity chunk is a special case. The parity manifest
 		 * is put after parity chunk(s). We need a room after a chunk is put
@@ -4515,6 +4526,35 @@ gc_iterator_cb(struct repdev *dev, type_tag_t ttag,
 	return 0;
 }
 
+static int
+reptrans_delete_backref(struct repdev* dev, const uint512_t* chid, crypto_hash_t ht,
+	const struct backref* vbr) {
+	uint8_t buf[1024];
+	uv_buf_t ub_p = { .base = (char*)buf, .len = sizeof(buf) };
+	uv_buf_t ub;
+	msgpack_p p;
+	msgpack_pack_init_p(&p, ub_p);
+	int err = reptrans_pack_vbr(&p, vbr);
+	if (!err) {
+		char chidstr[UINT512_BYTES*2+1];
+		uint512_dump(chid, chidstr, UINT512_BYTES*2 + 1);
+		log_debug_vbr(lg, "Dev(%s): del VBR %lX -> %lX", dev->name,
+			chid->u.u.u, vbr->ref_chid.u.u.u);
+		msgpack_get_buffer(&p, &ub);
+		repdev_status_t status = reptrans_dev_get_status(dev);
+		if(status == REPDEV_STATUS_UNAVAILABLE)
+			err = -EACCES;
+		else
+			err = reptrans_delete_blob_value(dev, TT_VERIFIED_BACKREF,
+				ht, chid, &ub, 1);
+		if (err) {
+			log_error(lg, "Dev(%s): cannot delete blob %s value: %d",
+				dev->name, chidstr, err);
+		}
+	}
+	return err;
+}
+
 struct gc_deferred_arg {
 	struct repdev* dev;
 	uv_timer_t* tmr;
@@ -4549,6 +4589,13 @@ gc_deferred_work(void* arg) {
 			if (stable_version || (!outdated_version && actual_count) ||
 				!is_cluster_healthy(dev->rt, 1))
 				continue;
+
+			if (tail->nameindex == 2) {
+				/* More than 1 VBR. Don't purge, just remove a VBR */
+				reptrans_delete_backref(dev, &tail->chid, tail->vbr_hash_type, &tail->vbr);
+				continue;
+			}
+
 			if (outdated_version) {
 				log_debug(lg, "Dev(%s) found an outdated object version NHID %lX gen %lu",
 					dev->name, tail->nhid.u.u.u, tail->version.generation);
@@ -4573,30 +4620,7 @@ gc_deferred_work(void* arg) {
 				&tail->vbr.ref_chid, &tail->vbr.name_hash_id, 1, NULL, 0, NULL, NULL);
 			if (actual_count || !is_cluster_healthy(dev->rt, 1))
 				continue;
-			uint8_t buf[1024];
-			uv_buf_t ub_p = { .base = (char*)buf, .len = sizeof(buf) };
-			uv_buf_t ub;
-			msgpack_p p;
-			msgpack_pack_init_p(&p, ub_p);
-			int err = reptrans_pack_vbr(&p, &tail->vbr);
-			if (!err) {
-				char chidstr[UINT512_BYTES*2+1];
-				uint512_dump(&tail->chid, chidstr, UINT512_BYTES*2 + 1);
-				log_debug_vbr(lg, "Dev(%s): del stale VBR %lX -> %lX", dev->name,
-					tail->chid.u.u.u, tail->vbr.ref_chid.u.u.u);
-				msgpack_get_buffer(&p, &ub);
-				repdev_status_t status = reptrans_dev_get_status(dev);
-				if(status == REPDEV_STATUS_UNAVAILABLE)
-					err = -EACCES;
-				else
-					err = reptrans_delete_blob_value(dev,
-						TT_VERIFIED_BACKREF, tail->vbr_hash_type,
-						&tail->chid, &ub, 1);
-				if (err) {
-					log_error(lg, "Dev(%s): cannot delete blob %s value: %d",
-						dev->name, chidstr, err);
-				}
-			}
+			reptrans_delete_backref(dev, &tail->chid, tail->vbr_hash_type, &tail->vbr);
 		}
 	}
 	log_debug(lg, "Dev(%s) GC deferred work done", dev->name);

@@ -21,7 +21,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package object
+package snapshot
 
 /*
 #include "ccow.h"
@@ -36,14 +36,14 @@ import (
 	"strings"
 
 	"github.com/Nexenta/edgefs/src/efscli/efsutil"
-	//"github.com/Nexenta/edgefs/src/efscli/validate"
 	"github.com/spf13/cobra"
 )
 
-func snapshotRm(snapViewPath, sourceSnapshotPath string, flags []efsutil.FlagValue) error {
+func snapshotAdd(snapViewPath, sourceSnapshotPath string,  flags []efsutil.FlagValue) error {
 
 	c_svPath := C.CString(snapViewPath)
 	defer C.free(unsafe.Pointer(c_svPath))
+
 
 	// SnapView path parts
 	snapPathParts := strings.SplitN(snapViewPath, "/", 4)
@@ -76,7 +76,10 @@ func snapshotRm(snapViewPath, sourceSnapshotPath string, flags []efsutil.FlagVal
 	c_ssBucket := C.CString(snapshotObjectPath[2])
 	defer C.free(unsafe.Pointer(c_ssBucket))
 
-	c_ssObject := C.CString(snapshotObjectPath[3])
+	c_ssObject := C.CString("")
+	if  len(snapshotObjectPath) > 3 {
+		c_ssObject = C.CString(snapshotObjectPath[3])
+	}
 	defer C.free(unsafe.Pointer(c_ssObject))
 
 	// Libccow Init
@@ -97,17 +100,12 @@ func snapshotRm(snapViewPath, sourceSnapshotPath string, flags []efsutil.FlagVal
 	}
 	defer C.ccow_tenant_term(svtc)
 
-	var svc C.ccow_completion_t
-	ret = C.ccow_create_completion(svtc, nil, nil, 1, &svc)
-	if ret != 0 {
-		return fmt.Errorf("%s: snapview ccow_create_completion err=%d\n", efsutil.GetFUNC(), ret)
-	}
-
 	var snapview_t C.ccow_snapview_t
 	ret = C.ccow_snapview_create(svtc, &snapview_t, c_svBucket, C.strlen(c_svBucket)+1, c_svObject, C.strlen(c_svObject)+1)
 	if ret != 0 && ret != -C.EEXIST {
 		return fmt.Errorf("%s: snapView ccow_snapview_create err=%d\n", efsutil.GetFUNC(), ret)
 	}
+	defer C.ccow_snapview_destroy(svtc, snapview_t)
 
 	//Snapshot ccow_t
 	var sstc C.ccow_t
@@ -118,70 +116,61 @@ func snapshotRm(snapViewPath, sourceSnapshotPath string, flags []efsutil.FlagVal
 	}
 	defer C.ccow_tenant_term(sstc)
 
-	//Snapshot completion
-	var ssc C.ccow_completion_t
-	ret = C.ccow_create_completion(sstc, nil, nil, 1, &ssc)
+	ret = C.ccow_snapshot_create(sstc, snapview_t, c_ssBucket, C.strlen(c_ssBucket) + 1, c_ssObject, C.strlen(c_ssObject) + 1, c_snapshot, C.strlen(c_snapshot) + 1)
 	if ret != 0 {
-		return fmt.Errorf("%s: snapshot ccow_create_completion err=%d\n", efsutil.GetFUNC(), ret)
-	}
-
-	ret = C.ccow_snapshot_delete(sstc, snapview_t, c_snapshot, C.strlen(c_snapshot)+1)
-	if ret != 0 {
-		if ret == -C.ENOENT {
-			C.ccow_snapview_destroy(svtc, snapview_t)
-			fmt.Printf("Snapshot %s not exists in the snapview %s\n", sourceSnapshotPath, snapViewPath)
+		if ret == -C.EEXIST {
+			fmt.Printf("Snapshot %s already exists in the snapview %s\n", sourceSnapshotPath, snapViewPath)
 			return nil
 		}
 
-		return fmt.Errorf("%s: snapshot ccow_snapshot_create=%d\n", efsutil.GetFUNC(), ret)
+		return fmt.Errorf("%s: snapshot ccow_snapshot_create=%d\n", efsutil.GetFUNC(),  ret)
 	}
 
-	fmt.Printf("Snapshot %s has been removed from %s\n", sourceSnapshotPath, snapViewPath)
-	defer C.ccow_snapview_destroy(svtc, snapview_t)
+	fmt.Printf("Snapshot %s has been added to %s\n", sourceSnapshotPath, snapViewPath)
 
 	return nil
 }
 
 var (
-	flagsSnapshotRm []efsutil.FlagValue
+	flagsSnapshotAdd []efsutil.FlagValue
 
-	snapshotRmCmd = &cobra.Command{
-		Use:   "snapshot-rm <snapViewPath> <snapshotPath>",
-		Short: "remove snapshot from snapview",
-		Long:  "remove snapshot from specified snapview object",
+	snapshotAddCmd = &cobra.Command{
+		Use:   "add object.snapview object-path@snapshot-name",
+		Short: "add a new object's snapshot to snapview",
+		Long:  "create a new object's snapshot and add it to existing snapview object",
 		//Args:  validate.Object,
 		Run: func(cmd *cobra.Command, args []string) {
 
-			/*edgefs object snapshot-rm cl/tn/bk/ob@snapshotName cl/tn/bk/ob.snapview */
+			/*edgefs object snapshot-add cl/tn/bk/ob@snapshotName cl/tn/bk/ob.snapview */
 			if len(args) != 2 {
-				fmt.Printf("Wrong parameters: Should be 'edgefs object snapshot-rm <snapViewPath> <snapshotPath>'\n")
+				fmt.Printf("Wrong parameters: Should be 'efscli snpashot add <snapViewPath> <snapshot>'\n")
 				return
 			}
 
 			snapViewPathParts := strings.Split(args[0], "/")
 			if len(snapViewPathParts) != 4 {
-				fmt.Printf("Wrong snapview path: %s\n", args[1])
+				fmt.Printf("Wrong snapview path: %s\n", args[0])
 				return
 			}
 
 			if !strings.HasSuffix(args[0], EDGEFS_SNAPVIEW_SUFFIX) {
-				fmt.Printf("Not a snapview path: %s\n", args[1])
+				fmt.Printf("Not a snapview path: %s\n", args[0])
 				return
 			}
 
 			srcPathParts := strings.Split(args[1], "@")
 			if len(srcPathParts) != 2 {
-				fmt.Printf("Wrong object snapshot format %s. Should be <cluster>/<tenant>/<bucket>/<object>@<snapshotName>\n", args[0])
+				fmt.Printf("Wrong object snapshot format %s. Should be <cluster>/<tenant>/<bucket>[/<object>]@<snapshotName>\n", args[1])
 				return
 			}
 
 			pathParts := strings.Split(srcPathParts[0], "/")
-			if len(pathParts) != 4 {
-				fmt.Printf("Wrong object snapshot path: %s\n", srcPathParts[0])
+			if len(pathParts) < 3 {
+				fmt.Printf("Wrong object snapshot path: %s. You can create snapshot of a bucket or an object\n", srcPathParts[0])
 				return
 			}
 
-			err := snapshotRm(args[0], args[1], flagsSnapshotRm)
+			err := snapshotAdd(args[0], args[1], flagsSnapshotAdd)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -191,7 +180,5 @@ var (
 )
 
 func init() {
-	//flagsSnapshotRm = make([]efsutil.FlagValue, len(flagNames))
-	//efsutil.ReadAttributes(snapshotRmCmd, flagNames, flagsSnapshotRm)
-	ObjectCmd.AddCommand(snapshotRmCmd)
+	SnapshotCmd.AddCommand(snapshotAddCmd)
 }

@@ -468,7 +468,14 @@ clone_test_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
 
 get_test_SOURCES = get_test.c cmocka.c common.c
 get_test_LDFLAGS = $(AM_LDFLAGS) -luv -lcrypto -lccow
-get_test_CFLAGS = -fPIC -g -std=gnu99
+get_test_CFLAGS = -fPIC -g -std=gnu99 \
+		-I$(top_srcdir)/src/libflexhash \
+		-I$(top_srcdir)/src/libreptrans \
+		-I$(top_srcdir)/src/libreplicast \
+		-I$(top_srcdir)/src/libtrlog \
+		-I$(top_srcdir)/src/libccowd \
+		-I$(top_srcdir)/src/libccow
+
 get_test_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
 		 $(top_srcdir)/src/libccowd/libccowd.la -luv -lcrypto $(ASAN_LIB)
 

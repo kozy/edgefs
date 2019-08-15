@@ -629,18 +629,19 @@ namedget_process_payload(struct state *st)
 	* then just allocate data structure. Its content will be filled upon
 	* payload fetch request. Do not try dynamic fetch for buckets.
 	*/
+	const char *bid = op->comp->isgw_bid ? op->comp->isgw_bid : op->bid;
 	if (strcmp(op->tid, RT_SYSVAL_TENANT_ADMIN) &&
 		strcmp(op->tid, RT_SYSVAL_TENANT_SVCS) &&
 		op->oid_size > 1 &&
 		!op->isgw_dfetch &&
-		ccow_bucket_isgw_lookup(op->cid, op->tid, op->bid, NULL) == 0)
+		ccow_bucket_isgw_lookup(op->cid, op->tid, bid, NULL) == 0)
 		op->isgw_dfetch = 1;
 	/*
 	 * Preset some of completion defaults for comp-hash while
 	 * doing stream or normal (below) PUTs
 	 */
 	if (op->copy_opts && op->copy_opts->md_override) {
-		ccow_copy_inheritable_comp_to_md(op->comp, &op->metadata);
+		ccow_copy_inheritable_comp_to_md_clone(op->comp, &op->metadata);
 	} else
 		ccow_copy_inheritable_md_to_comp(&op->metadata, op->comp);
 	if (rb != comp->ver_rb)
