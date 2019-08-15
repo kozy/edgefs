@@ -1,7 +1,10 @@
-# EdgeFS - a multi-cloud scalable distributed storage system
+# EdgeFS - decentralized data storage layer for Edge/IoT, Edge/Fog and Cloud Computing
 
-EdgeFS is high-performance and low-latency object storage system released under Apache License v2.0 developed in C/Go.
-It provides Kubernetes integrated Multi-Head Scale-Out NFS (POSIX compliant, Distributed RW access to files), Amazon S3 compatible API with AI/ML S3X enhancements, iSCSI and NBD block interfaces, advanced global versioning with file-level granularity unlimited snapshots, global data deduplication and geo-transparent access to data from on-prem, private/public clouds or small footprint edge (IoT) devices.
+EdgeFS is high-performance, low-latency, small memory footprint, decentralized object storage system released under Apache License v2.0 developed in C/Go.
+
+EdgeFS advanced globally immutable versioning with file-level granularity unlimited snapshots, global (LAN/WAN) data deduplication and geo-transparent data access enables variety of decentralized Edge/Fog/Cloud Computing use cases.
+
+It integrates with Kubernetes and Docker Compose. Enables Edge/Fog/Cloud applications to use Amazon S3 compatible API with AI/ML [S3X](https://rook.io/docs/rook/master/edgefs-s3x-crd.html) enhancements, built-in NoSQL Database, scale-out File via NFS, scale-out block via iSCSI/NBD.
 
 <p align="center">
   <img src="https://github.com/Nexenta/edge-dev/raw/master/images/edgefs-multicloud.png?raw=true" alt="edgefs-multicloud.png"  width="75%" height="75%"/>
