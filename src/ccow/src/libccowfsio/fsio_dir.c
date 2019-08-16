@@ -526,7 +526,7 @@ ccow_fsio_dir_context_create(ccowfs_inode * inode)
 	 */
 	if (ccow_mh_immdir == 0) {
 		log_trace(fsio_lg, "%s context set eventual", __func__);
-		ccow_shard_context_set_eventual(inode->dir_list_context, 1);
+		ccow_shard_context_set_eventual(inode->dir_list_context, 1, 1);
 	}
 
 out:

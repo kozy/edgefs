@@ -861,41 +861,46 @@ _exit:
 #define X_KEY_DATA	"X-data-"
 
 static void
-namedput_journal_close(ccow_completion_t j_inprog, ccow_lookup_t j_iter)
+namedput_journal_close(ccow_completion_t j_inprog, ccow_lookup_t j_iter, char *nhidstr, char *oid)
 {
 	int err;
 
-	log_trace(lg, "close %p lp %p", j_inprog, j_iter);
+	log_trace(lg, "close journal %s.%s %p lp %p %lu", oid, nhidstr, j_inprog, j_iter, j_inprog->vm_txid_generation);
 
 	/* delete all custom metadata */
 	int pos = 0;
+	int count = 0;
 	struct ccow_metadata_kv *kv;
 	while ((kv = ccow_lookup_iter(j_iter, CCOW_MDTYPE_CUSTOM, pos++))) {
 		if (memcmp_quick(kv->key, kv->key_size, X_KEY_COUNT, sizeof(X_KEY_COUNT)) == 0) {
 			err = ccow_attr_modify_custom(j_inprog, CCOW_KVTYPE_UINT64,
 			    X_KEY_COUNT, sizeof(X_KEY_COUNT), NULL, 0, j_iter);
+			count++;
 		} else if (memcmp_safe(kv->key, kv->key_size, X_KEY_DATA, sizeof(X_KEY_DATA)-1) == 0) {
 			err = ccow_attr_modify_custom(j_inprog, CCOW_KVTYPE_RAW, kv->key, kv->key_size,
 			    NULL, 0, j_iter);
+			count++;
 		}
 	}
 
+
 	ccow_lookup_t itfinal;
 	err = ccow_finalize(j_inprog, &itfinal);
+	log_trace(lg, "close journal %s.%s %p lp %p count: %d genid: %lu", oid, nhidstr, j_inprog, j_iter, count, j_inprog->vmm_gen_id);
 	if (err) {
-		log_warn(lg, "Cannot finalize SOP journal, err=%d", err);
+		log_error(lg, "Cannot finalize SOP journal %s.%s, err=%d", oid, nhidstr, err);
 	} else
 		ccow_lookup_release(itfinal);
 	j_iter = NULL;
 }
 
 static void
-namedput_journal_cancel(ccow_completion_t j_inprog)
+namedput_journal_cancel(ccow_completion_t j_inprog, char *nhidstr, char *oid)
 {
-	log_trace(lg, "cancel %p", j_inprog);
+	log_trace(lg, "cancel journal %s.%s %p",  oid, nhidstr, j_inprog);
 	int err = ccow_cancel(j_inprog);
 	if (err) {
-		log_warn(lg, "Cannot cancel SOP journal, err=%d", err);
+		log_error(lg, "Cannot cancel SOP journal %s.%s, err=%d", oid, nhidstr, err);
 	}
 }
 
@@ -1020,12 +1025,12 @@ _reopen:;
 	}
 
 	/* close and delete all custom metadata */
-	namedput_journal_close(jc, ji);
+	namedput_journal_close(jc, ji, nhidstr, oid);
 
 	*flushed = rec_count;
 
 	if (rec_count)
-		log_notice(lg, "Dev(%s): SOP list %s/%s/%s/%s recovered, flushed %ld records",
+		log_trace(lg, "Dev(%s): SOP list %s/%s/%s/%s recovered, flushed %ld records",
 		    dev->name, cid, tid, bid, oid, rec_count);
 
 	goto _reopen;
@@ -1187,6 +1192,53 @@ namedput_list_run(void *arg) {
 					namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), 0);
 					break;
 				}
+
+				// TRLOG case, setup more options
+				if (*cid == 0 && !strcmp(tid, RT_SYSVAL_TENANT_SVCS) &&
+				    !strcmp(bid, RT_SYSVAL_PSEVDO_BUCKET_TRLOG)  && oid_size > 0) {
+
+					uint16_t dis = 1;
+					err = ccow_attr_modify_default(c_inprog, CCOW_ATTR_TRACK_STATISTICS,
+						(void *)&dis, NULL);
+					if (err) {
+						c_inprog = NULL;
+						log_error(lg, "Dev(%s) List batch create error2: %d", dev->name, err);
+						namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), 0);
+						break;
+					}
+
+					/* with this each entry has to fit in ~ 4730c, we need very large CMs */
+					uint16_t order = RT_SYSVAL_CHUNKMAP_BTREE_ORDER_MAX;
+					err = ccow_attr_modify_default(c_inprog, CCOW_ATTR_BTREE_ORDER, &order, NULL);
+					if (err) {
+						c_inprog = NULL;
+						log_error(lg, "Dev(%s) List batch create error3: %d", dev->name, err);
+						namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), 0);
+						break;
+					}
+
+					uint16_t num_vers = 1;
+					err = ccow_attr_modify_default(c_inprog, CCOW_ATTR_NUMBER_OF_VERSIONS,
+						(void *)&num_vers, NULL);
+					if (err) {
+						c_inprog = NULL;
+						log_error(lg, "Dev(%s) List batch create error4: %d", dev->name, err);
+						namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), 0);
+						break;
+					}
+
+					uint64_t delete_after = get_timestamp_us() / 1000000 +
+						TRLOG_DELETE_AFTER_HOURS * 3600;
+					err = ccow_attr_modify_default(c_inprog, CCOW_ATTR_OBJECT_DELETE_AFTER,
+							(void *)&delete_after, NULL);
+					if (err) {
+						c_inprog = NULL;
+						log_error(lg, "Dev(%s) List batch create error5: %d", dev->name, err);
+						namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), 0);
+						break;
+					}
+				}
+
 				ccow_lookup_t itfinal;
 				err = ccow_finalize(c_inprog, &itfinal);
 				if (err) {
@@ -1196,7 +1248,7 @@ namedput_list_run(void *arg) {
 				}
 				ccow_lookup_release(itfinal);
 
-				log_debug(lg, "Dev(%s) SOP bid/oid: %s/%s created", dev->name, bid, oid);
+				log_debug(lg, "Dev(%s) SOP cid/tid/bid/oid: %s/%s/%s/%s created ", dev->name, cid, tid, bid, oid);
 
 				iter = NULL;
 				c_inprog = NULL;
@@ -1234,7 +1286,7 @@ namedput_list_run(void *arg) {
 					namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), 0);
 					break;
 				}
-				log_debug(lg, "Dev(%s) SOP flushed: %d", dev->name, flushed);
+				log_trace(lg, "Dev(%s) SOP journal flushed: %d", dev->name, flushed);
 
 				if (flushed) {
 					// re-open
@@ -1289,10 +1341,13 @@ namedput_list_run(void *arg) {
 				c_inprog = NULL;
 				log_debug(lg, "Dev(%s) SOP finalize oid: %s, flush: %d, genid: %lu", dev->name, oid, isFlush(minor), sop_list->genid);
 				if (j_inprog) {
-					if (err)
-						namedput_journal_cancel(j_inprog);
-					else
-						namedput_journal_close(j_inprog, j_iter);
+					if (err) {
+						log_error(lg, "Dev(%s) SOP finalize journal cancel err: %d %s.%s genid: %lu", dev->name, err, oid, nhidstr, sop_list->genid);
+						namedput_journal_cancel(j_inprog, nhidstr, oid);
+					} else {
+						log_debug(lg, "Dev(%s) SOP finalize journal close err: %d %s.%s genid: %lu", dev->name, err, oid, nhidstr, sop_list->genid);
+						namedput_journal_close(j_inprog, j_iter, nhidstr, oid);
+					}
 				}
 			}
 			namedput_srv_done_wqe(dev, wqe, (err ? err : err_one), sop_list->genid);
@@ -1320,13 +1375,16 @@ namedput_list_run(void *arg) {
 			if (!err)
 				ccow_lookup_release(itfinal);
 			iter = NULL;
-			log_debug(lg, "Dev(%s) List batch finalize oid: %s, genid: %lu", dev->name, oid, sop_list->genid);
+			log_debug(lg, "Dev(%s) List batch finalize nhidstr: %s, genid: %lu", dev->name, nhidstr, sop_list->genid);
 
 			if (j_inprog) {
-				if (err)
-					namedput_journal_cancel(j_inprog);
-				else
-					namedput_journal_close(j_inprog, j_iter);
+				if (err) {
+					log_error(lg, "Dev(%s) List batch finalize, journal_cancel err: %d, %s.%s, genid: %lu", dev->name, err, oid, nhidstr, sop_list->genid);
+					namedput_journal_cancel(j_inprog, nhidstr, oid);
+				} else {
+					log_debug(lg, "Dev(%s) List batch finalize, journal_close err: %d, %s.%s, genid: %lu", dev->name, err, oid, nhidstr, sop_list->genid);
+					namedput_journal_close(j_inprog, j_iter, nhidstr, oid);
+				}
 			}
 		}
 	}
@@ -1335,7 +1393,7 @@ namedput_list_run(void *arg) {
 
 	reptrans_put_tenant_context(dev->rt, tc);
 
-	log_debug(lg, "Finished SOP2 %p, released lock %s, nhid: %s\n",sop_list, dev->name, nhidstr);
+	log_trace(lg, "Finished SOP2 %p, released lock %s, %s.%s\n",sop_list, dev->name, oid, nhidstr);
 	pthread_mutex_unlock(sop_list->run_lock);
 }
 

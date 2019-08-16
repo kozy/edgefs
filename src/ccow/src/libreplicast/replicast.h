@@ -68,6 +68,7 @@ extern "C" {
 /* reserved system values */
 #define RT_SYSVAL_TENANT_ADMIN			"root"
 #define RT_SYSVAL_TENANT_SVCS			"svcs"
+#define RT_SYSVAL_PSEVDO_BUCKET_TRLOG	"TRLOG"
 #define RT_SYSVAL_REPLICATION_COUNT		3
 #define RT_SYSVAL_SYNC_PUT			0
 #define RT_SYSVAL_SYNC_PUT_NAMED		3
@@ -409,6 +410,8 @@ struct replicast_datagram_hdr {
 #define REPLICAST_UNICAST_UDP_MCPROXY	3
 
 #define REPLICAST_TCP_KEEPALIVE		10 /* in secs */
+
+#define TRLOG_SHARD_COUNT	8
 
 struct replicast_rendezvous_proposal {
 	uint64_t start_time;		/* time when the client can start */

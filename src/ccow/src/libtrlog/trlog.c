@@ -108,168 +108,7 @@ _err:
 	return err;
 }
 
-static int
-trlog_fetch_buckets(ccow_t tc, char *tid, char ***bid_arr, int *bid_arr_len)
-{
-	int err = 0, pos = 0;
-	char **arr = NULL;
-	struct iovec iov = { .iov_base = "", .iov_len = 1 };
-	ccow_lookup_t bkt_iter;
 
-	*bid_arr = NULL;
-	*bid_arr_len = 0;
-
-        ccow_completion_t c;
-	err = ccow_create_completion(tc, NULL, NULL, 1, &c);
-	if (err) {
-		log_error(lg, "Unable to create completion for trlog processing "
-		    "while fetching tenants: %d", err);
-		return err;
-	}
-
-	// Fetch the list of buckets (vdevs) for the node
-        err = ccow_admin_pseudo_get("", 1, tid, strlen(tid) + 1, "", 1, "", 1,
-	    &iov, 1, FLEXHASH_MAX_VDEVS, CCOW_GET_LIST, c, &bkt_iter);
-	if (err) {
-		ccow_release(c);
-		return err;
-	}
-	err = ccow_wait(c, 0);
-	if (err) {
-		if (bkt_iter)
-			ccow_lookup_release(bkt_iter);
-		if (err != -ENOENT)
-			log_error(lg, "Cannot list TRLOG vdev buckets under "
-			    "serverid %s error %d", tid, err);
-		return err;
-	}
-
-	arr = je_malloc(FLEXHASH_MAX_VDEVS * sizeof(char *));
-	if (!arr) {
-		err = -ENOMEM;
-		log_error(lg, "%s: out of memory", __func__);
-		goto _err;
-	}
-
-	struct ccow_metadata_kv *kv = NULL;
-	while ((kv = ccow_lookup_iter(bkt_iter, CCOW_MDTYPE_NAME_INDEX, pos))) {
-		arr[pos] = je_strdup(kv->key);
-		if (!arr[pos]) {
-			err = -ENOMEM;
-			log_error(lg, "%s: out of memory", __func__);
-			goto _err;
-		}
-		pos++;
-	}
-	if (pos == 0) {
-		je_free(arr);
-		arr = NULL;
-	}
-
-	*bid_arr = arr;
-	*bid_arr_len = pos;
-_err:
-	if (err && arr) {
-		for (int j = 0; j < pos; j++)
-			je_free(arr[j]);
-		je_free(arr);
-	}
-	if (bkt_iter)
-		ccow_lookup_release(bkt_iter);
-	return err;
-}
-
-//
-// /TRLOG-ABC/vdev1/tsobj1
-// /TRLOG-DEF/vdev1/tsobj2
-//
-// We will search for /TRLOG-DEF/vdev1/ and the marker will be "tsobj2"
-// This will find the last processed tsobj within vdev1/ bucket and will be then
-// used as the PREFIX for the search of the next object (returns next larger/newer)
-//
-static int
-trlog_find_marker(ccow_t tc, char **marker_arr, int marker_arr_len,
-    char *tid, char *bid, char **prev_marker, int *prev_marker_pos)
-{
-	char buf[1024];
-	int i;
-
-	*prev_marker = NULL;
-	*prev_marker_pos = -1;
-
-	sprintf(buf, "%s/%s/", tid, bid);
-	for (i = 0; i < marker_arr_len; i++) {
-		uint32_t pos = strlen(buf);
-		if (memcmp(marker_arr[i], buf, pos) == 0) {
-			*prev_marker = je_strdup(marker_arr[i] + pos);
-			if (!*prev_marker)
-				return -ENOMEM;
-			*prev_marker_pos = i;
-			return 0;
-		}
-	}
-	return -ENOENT;
-}
-
-static int
-trlog_fetch_tenants(ccow_t tc, char ***tid_arr, int *tid_arr_len)
-{
-	int err = 0;
-	char **arr = NULL;
-	int idx = 0, pos = 0;
-	struct ccow_metadata_kv *kv = NULL;
-	ccow_lookup_t iter = NULL;
-
-	*tid_arr = NULL;
-	*tid_arr_len = 0;
-
-
-	err = ccow_tenant_lookup(tc, "", 1, TRLOG_TID_PREFIX,
-		strlen(TRLOG_TID_PREFIX) + 1, FLEXHASH_MAX_SERVERS, &iter);
-	if (err) {
-		log_error(lg, "Tenant lookup error: %d", err);
-		return err;
-	} else if (iter == 0) {
-		log_warn(lg, "Tenant lookup error: %d (invalid param)", -EINVAL);
-		return -EINVAL;
-	}
-
-	arr = je_calloc(FLEXHASH_MAX_SERVERS, sizeof(char *));
-	if (!arr) {
-		log_error(lg, "%s: out of memory", __func__);
-		goto _err;
-	}
-
-	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, idx))) {
-		if (strspn(kv->key, TRLOG_TID_PREFIX) != strlen(TRLOG_TID_PREFIX)) {
-			idx++;
-			continue;
-		}
-		arr[pos] = je_strdup(kv->key);
-		if (!arr[pos]) {
-			log_error(lg, "%s: out of memory", __func__);
-			goto _err;
-		}
-		pos++;idx++;
-	}
-	if (pos == 0) {
-		je_free(arr);
-		arr = NULL;
-	}
-
-	*tid_arr = arr;
-	*tid_arr_len = pos;
-
-_err:
-	if (err && arr) {
-		for (int i = 0; i < pos; i++)
-			je_free(arr[i]);
-		je_free(arr);
-	}
-	if (iter)
-		ccow_lookup_release(iter);
-	return err;
-}
 
 int
 trlog_write_marker(ccow_t tc, char *name, char **marker_arr, int marker_arr_len)
@@ -445,52 +284,50 @@ _err:
 }
 
 static int
-trlog_read_tsobj(ccow_t tc, char *tid, char *bid, char *tsobj,
+trlog_read_tsobj(ccow_t tc, char *tsobj,
     struct mlist_node **tsobj_head, int *nread,
     trlog_phid_check_cb_t check_func, void *check_func_phid)
 {
 	int err = 0, pos = 0, added = 0;
 	ccow_lookup_t iter;
 	struct mlist_node *head = NULL, *tail = NULL;
+	ccow_shard_context_t trlog_shard_context;
 
 	*tsobj_head = NULL;
 	*nread = 0;
 
-	log_debug(lg, "Reading TSOBJ: %s/%s/%s", tid, bid, tsobj);
+	log_debug(lg, "Reading TSOBJ: %s", tsobj);
 
-        ccow_completion_t c;
-	err = ccow_create_completion(tc, NULL, NULL, 1, &c);
+	err = ccow_shard_context_create(tsobj, strlen(tsobj) + 1,
+	    TRLOG_SHARD_COUNT, &trlog_shard_context);
 	if (err) {
-		log_error(lg, "Unable to create completion for trlog processing "
-		    "while retrieving tsobj %s/%s/%s: %d", tid, bid, tsobj, err);
-		return err;
+		log_error(lg, "Failed to craete trlog %s shard context err: %d", tsobj, err);
+		goto _err;
 	}
+
 
 	// Fetch TRLOG contents for this tsobj epoch
 	// Use check_func PHID filter if supplied to speed up index lookups
 	char phidstr[UINT512_BYTES*2+1];
-	struct iovec iov = { .iov_base = "", .iov_len = 1 };
+	char marker[1024] = "";
+	size_t marker_size = 1;
 	if (check_func_phid) {
 		uint512_t *phid_filter = check_func_phid;
 		uint512_dump(phid_filter, phidstr, UINT512_BYTES*2+1);
-		iov.iov_base = phidstr;
-		iov.iov_len = strlen(phidstr);
+		strcpy(marker, phidstr);
+		marker_size = strlen(phidstr);
 	}
 
-	err = ccow_admin_pseudo_get("", 1, tid, strlen(tid) + 1,
-	    bid, strlen(bid) + 1, tsobj, strlen(tsobj) + 1,
-	    &iov, 1, 10*TRLOG_TSOBJ_MAX_ENTRIES, CCOW_GET_LIST, c, &iter);
-	if (err) {
-		ccow_release(c);
-		return err;
-	}
-	err = ccow_wait(c, 0);
+	err = ccow_sharded_get_list(tc, RT_SYSVAL_PSEVDO_BUCKET_TRLOG,
+	    strlen(RT_SYSVAL_PSEVDO_BUCKET_TRLOG) + 1, trlog_shard_context,
+		marker, marker_size,  NULL, 10*TRLOG_TSOBJ_MAX_ENTRIES, &iter);
+
+	ccow_shard_context_destroy(&trlog_shard_context);
 	if (err) {
 		if (iter)
 			ccow_lookup_release(iter);
 		if (err != -ENOENT)
-			log_error(lg, "Cannot list TRLOG vdev buckets under "
-			    "serverid %s error %d", tid, err);
+			log_error(lg, "Cannot read TRLOG entries from %s error %d", tsobj, err);
 		return err;
 	}
 
@@ -774,60 +611,25 @@ trlog_mlist_get_all(ccow_t tc, uint64_t batch_seq_ts,
 	struct mlist_node *result_head = NULL;
 
 	*tsobj_added = 0;
-	err = trlog_fetch_tenants(tc, &tid_arr, &tid_arr_len);
-	if (err)
-		goto _err;
 
 	//
 	// Lookup for specific TSObj
 	//
 	snprintf(tsobj, 24, "%023lu", batch_seq_ts);
 
-	bid_arr = NULL;
-	bid_arr_len = 0;
-	for (int i = 0; i < tid_arr_len; i++) {
-		//
-		//  We have a list of TRLOG-serverid, fetch the vdevs into bid_arr
-		//
-		bid_arr_len = 0;
-		bid_arr = NULL;
-		err = trlog_fetch_buckets(tc, tid_arr[i], &bid_arr, &bid_arr_len);
-		if (err == -ENOENT) {
-			continue;
-		} else if (err) {
-			goto _err;
-		}
-
-		for (int j = 0; j < bid_arr_len; j++) {
-			//
-			// Read this new TSobj and add its btn contents to mlist_node
-			//
-			struct mlist_node *tsobj_head;
-			int nread;
-			err = trlog_read_tsobj(tc, tid_arr[i], bid_arr[j], tsobj,
-			    &tsobj_head, &nread, check_func, check_func_phid);
-			if (err || nread == 0)
-				continue;
-
-			//
-			// Merge the tsobj entries into our running sorted mlist
-			//
-			assert(result_head != NULL || tsobj_head != NULL);
-			result_head = msort_merge_lists(result_head,
-			    tsobj_head, trlog_mlist_compare);
-			assert(result_head);
-
-			(*tsobj_added)++;
-		}
-
-		for (int i = 0; i < bid_arr_len; i++) {
-			assert(bid_arr[i]);
-			je_free(bid_arr[i]);
-			bid_arr[i] = NULL;
-		}
-		je_free(bid_arr);
-		bid_arr = NULL;
+	//
+	// Read this new TSobj into mlist_node
+	//
+	int nread;
+	err = trlog_read_tsobj(tc, tsobj,
+		&result_head, &nread, check_func, check_func_phid);
+	log_error(lg, "Read transaction log %s added: %d, err: %d", tsobj, nread, err);
+	if (err && err != -ENOENT) {
+		log_error(lg, "Failed to read transaction log %s err: %d", tsobj, err);
+		goto _err;
 	}
+
+	(*tsobj_added)++;
 
 	err = 0;
 	*all_result_head = result_head;
@@ -835,21 +637,6 @@ trlog_mlist_get_all(ccow_t tc, uint64_t batch_seq_ts,
 _err:
 	if (err)
 		msort_free_list(result_head, je_free);
-
-	if (bid_arr) {
-		for (int i = 0; i < bid_arr_len; i++) {
-			assert(bid_arr[i]);
-			je_free(bid_arr[i]);
-		}
-		je_free(bid_arr);
-	}
-	if (tid_arr) {
-		for (int i = 0; i < tid_arr_len; i++) {
-			assert(tid_arr[i]);
-			je_free(tid_arr[i]);
-		}
-		je_free(tid_arr);
-	}
 
 	return err;
 }
@@ -867,15 +654,12 @@ trlog_mlist_get(struct trlog_handle *hdl, ccow_t tc, uint64_t batch_seq_ts,
 	err = trlog_mlist_get_all(tc, batch_seq_ts, &result_head, &tsobj_added,
 	    check_func, check_func_phid);
 	if (err && err != -ENOENT) {
-		log_warn(lg, "Failed to read transaction logs");
+		log_error(lg, "Failed to read transaction logs");
 		return err;
 	}
 	if (tsobj_added == 0 || !result_head) {
 		return -ENOENT;
 	}
-
-	/* remove duplicate records */
-	trlog_mlist_remove_dup(result_head);
 
 	/* remove overlaping records vs. previous timer runs */
 	if (hdl->old_result_head) {

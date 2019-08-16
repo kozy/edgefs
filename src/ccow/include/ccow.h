@@ -1590,9 +1590,13 @@ ccow_shard_context_set_overwrite(ccow_shard_context_t shard_context, int overwri
 
 /**
  * Set eventual flag for shard_context.
+ *
+ * @param shard_context - shard context pointer
+ * @param eventual - eventual flag: 1 on, 0 off
+ * @param eventual_cache - keep eventual cache flag: 1 on, 0 off
  */
 int
-ccow_shard_context_set_eventual(ccow_shard_context_t shard_context, int eventual);
+ccow_shard_context_set_eventual(ccow_shard_context_t shard_context, int eventual, int eventual_cache);
 
 /**
  * Set inline data flag for shard_context.
@@ -1636,13 +1640,24 @@ ccow_sharded_attributes_create(ccow_t tctx, const char *bid, size_t bid_size,
  * @param tctx the tenant cluster context
  * @param bid the NULL terminated string of name id of the bucket
  * @param bid_size bucket id size
- * @param shard_name the NULL terminated string of shard name id
- * @param shard_name_size shard name size
- * @param shard_count shard count should be 2^n
+ * @param shard_context sharded list context
  * @returns 0 on success, negative error code on failure
  */
 int
 ccow_sharded_list_destroy(ccow_t tctx, const char *bid, size_t bid_size,
+		ccow_shard_context_t shard_context);
+
+/**
+ * Flush sharded list
+ *
+ * @param tctx the tenant cluster context
+ * @param bid the NULL terminated string of name id of the bucket
+ * @param bid_size bucket id size
+ * @param shard_context sharded list context
+ * @returns 0 on success, negative error code on failure
+ */
+int
+ccow_sharded_list_flush(ccow_t tctx, const char *bid, size_t bid_size,
 		ccow_shard_context_t shard_context);
 
 /**

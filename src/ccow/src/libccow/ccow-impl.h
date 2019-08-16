@@ -700,6 +700,7 @@ struct ccow_shard_context {
 	int encryption;
 	int overwrite;
 	int eventual;
+	int eventual_cache;
 	uint16_t inline_data_flag;
 };
 
