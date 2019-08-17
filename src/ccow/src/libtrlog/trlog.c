@@ -623,7 +623,7 @@ trlog_mlist_get_all(ccow_t tc, uint64_t batch_seq_ts,
 	int nread;
 	err = trlog_read_tsobj(tc, tsobj,
 		&result_head, &nread, check_func, check_func_phid);
-	log_error(lg, "Read transaction log %s added: %d, err: %d", tsobj, nread, err);
+	log_debug(lg, "Read transaction log %s added: %d, err: %d", tsobj, nread, err);
 	if (err && err != -ENOENT) {
 		log_error(lg, "Failed to read transaction log %s err: %d", tsobj, err);
 		goto _err;
