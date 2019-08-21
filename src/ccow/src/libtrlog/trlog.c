@@ -314,9 +314,12 @@ trlog_read_tsobj(ccow_t tc, char *tsobj,
 	if (check_func_phid) {
 		uint512_t *phid_filter = check_func_phid;
 		uint512_dump(phid_filter, phidstr, UINT512_BYTES*2+1);
-		strcpy(marker, phidstr);
-		marker_size = strlen(phidstr);
+		memcpy(marker, phidstr, UINT512_BYTES*2);
+		marker[UINT512_BYTES*2] = 0;
+		marker_size = UINT512_BYTES*2;
+		marker[marker_size-1]--;
 	}
+	log_debug(lg, "Marker: %s", marker);
 
 	err = ccow_sharded_get_list(tc, RT_SYSVAL_PSEVDO_BUCKET_TRLOG,
 	    strlen(RT_SYSVAL_PSEVDO_BUCKET_TRLOG) + 1, trlog_shard_context,
@@ -362,6 +365,7 @@ trlog_read_tsobj(ccow_t tc, char *tsobj,
 				prev_ok = 1;
 			}
 		}
+
 		struct mlist_node *mn = je_malloc(sizeof (*mn));
 		if (!mn) {
 			err = -ENOMEM;
