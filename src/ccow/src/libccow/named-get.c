@@ -627,9 +627,12 @@ namedget_process_payload(struct state *st)
 	/**
 	* For ISGW and MDOnly buckets. If the dynamic fetch enabled,
 	* then just allocate data structure. Its content will be filled upon
-	* payload fetch request
+	* payload fetch request. Do not try dynamic fetch for buckets.
 	*/
-	if (strcmp(op->tid, RT_SYSVAL_TENANT_SVCS) && !op->isgw_dfetch &&
+	if (strcmp(op->tid, RT_SYSVAL_TENANT_ADMIN) &&
+		strcmp(op->tid, RT_SYSVAL_TENANT_SVCS) &&
+		op->oid_size > 1 &&
+		!op->isgw_dfetch &&
 		ccow_bucket_isgw_lookup(op->cid, op->tid, op->bid, NULL) == 0)
 		op->isgw_dfetch = 1;
 	/*
