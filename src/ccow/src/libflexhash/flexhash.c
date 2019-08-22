@@ -3473,7 +3473,7 @@ flexhash_check_inprog_seqid(volatile struct flexhash *fhtable, uint64_t inprog_s
 		return -EINVAL;
 	}
 
-	if (total == 0 || bad > 1 || bad == total) {
+	if (total == 0 || bad > 0 || bad == total) {
 		return -ENODEV;
 	}
 
