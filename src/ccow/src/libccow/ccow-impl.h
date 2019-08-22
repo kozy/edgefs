@@ -56,13 +56,13 @@ extern "C" {
  * How many API I/O requests can be scheduled for submission in
  * parallel.
  */
-#define CCOW_API_DEPTH		2048
+#define CCOW_API_DEPTH		1536
 
 /*
  * How many API Completions requests can be scheduled for submission
  * in parallel. Each completion tracks N number of PUT/GETs in flight.
  */
-#define CCOW_COMPL_LFQ_DEPTH	256
+#define CCOW_COMPL_LFQ_DEPTH	192
 
 /**
  * An embedded usage puts a strict limit on RAM utilization

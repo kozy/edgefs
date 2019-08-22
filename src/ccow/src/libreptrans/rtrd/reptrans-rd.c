@@ -53,7 +53,8 @@
 #define DEV_RD_SMARTCTL_CMD_SELFTEST "%s/sbin/smartctl -t %s /dev/disk/by-id/%s >/dev/null 2>/dev/null"
 #define DEV_RD_SMARTCTL_CMD_EN "%s/sbin/smartctl -s on -S on -o on /dev/disk/by-id/%s >/dev/null 2>/dev/null"
 #define DEV_RD_SMART_READ_INTERVAL (1800 * 1000000)
-#define DEV_RD_COMMIT_SIZE_MAX (64*1024UL*1024UL)
+#define DEV_RD_COMMIT_SIZE_MAX_EMBEDDED (64*1024UL*1024UL)
+#define DEV_RD_COMMIT_SIZE_MAX (4*1024UL*1024UL*1024UL)
 
 #define CMD_DROP_OUTDATED_SIGNATURE "mdofDropOutdated"
 #define CMD_VALIDATE_RDKEYS_SIGNATURE "validateRdKeys"
@@ -474,9 +475,9 @@ rd_track_commit_size(long amount) {
 		char* ms_str = getenv("CCOWD_MAX_COMMIT_ALLOC");
 		if (!ms_str) {
 			if (is_embedded())
-				max_size = DEV_RD_COMMIT_SIZE_MAX;
+				max_size = DEV_RD_COMMIT_SIZE_MAX_EMBEDDED;
 			else
-				max_size = 0;
+				max_size = DEV_RD_COMMIT_SIZE_MAX;
 		} else
 			max_size = strtol(ms_str, NULL, 10);
 		if (max_size)
@@ -12753,4 +12754,3 @@ struct reptrans rtrd = {
 	.dev_enum	= rd_dev_enum,
 	.erase		= rd_erase
 };
-
