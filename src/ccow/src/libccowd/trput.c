@@ -381,12 +381,16 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 				ccow_stream_flags(c_inprog, &c_flags);
 				err = ccow_delete_list_cont(c_inprog, iov, 1, 1, index);
 			}
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: insert/delete list error: %d", err);
 				goto _err;
+			}
 
 			err = ccow_wait(c, *index);
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: bucket insert/delete wait error: %d", err);
 				goto _err;
+			}
 			(*one_bucket_updates)++;
 			op = c->operations[*index];
 		}
@@ -424,8 +428,10 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			log_debug(lg, "TRLOG FOT: add");
 			// Pack inode data
 			err = pack_inode_value(p_fot, data);
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: pack inode error: %d", err);
 				goto _err;
+			}
 
 			uv_buf_t uv_b_fot;
 			msgpack_get_buffer(p_fot, &uv_b_fot);
@@ -447,12 +453,16 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			} else {
 				err = ccow_delete_list_cont(c_fot, iov, 1, 1, index_fot);
 			}
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: FOT insert/delete list error: %d", err);
 				goto _err;
+			}
 
 			err = ccow_wait(c_fot, *index_fot);
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: FOT insert/delete wait error: %d", err);
 				goto _err;
+			}
 			(*one_bucket_updates)++;
 		}
 	} else {
@@ -463,12 +473,16 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			c_flags = CCOW_CONT_F_INSERT_LIST_OVERWRITE;
 			ccow_stream_flags(c_inprog, &c_flags);
 			err = ccow_insert_list_cont(c_inprog, iov, 2, 1, index);
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: update insert list error: %d", err);
 				goto _err;
+			}
 
 			err = ccow_wait(c, *index);
-			if (err)
+			if (err) {
+				log_error(lg, "TRLOG: update wait error: %d", err);
 				goto _err;
+			}
 			(*one_bucket_updates)++;
 		}
 
@@ -496,7 +510,7 @@ _err:
 	if (p_fot)
 		msgpack_pack_free(p_fot);
 	if (err)
-		log_error(lg, "Failed to update stats - err: %d", err);
+		log_error(lg, "Failed to process object - err: %d", err);
 	return err;
 }
 
