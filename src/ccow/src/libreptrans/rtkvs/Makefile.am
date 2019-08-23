@@ -23,7 +23,7 @@
 ##
 lib_LTLIBRARIES = librtkvs.la
 
-SUBDIRS=backend/kvsfs backend/kvslmdb
+SUBDIRS=backend/kvsfs backend/kvslmdb backend/kvssd
 
 librtkvs_la_SOURCES = reptrans-kvs.c
 

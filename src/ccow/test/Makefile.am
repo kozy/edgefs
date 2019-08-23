@@ -46,13 +46,23 @@ bin_PROGRAMS = daemon_test client_test libcrypto_test \
         pseudo_delete simple_wait sharded_list_test user_list_test \
         gwlru_api_test  acl_list_test ec_unencode_test bucket_list_objects \
         ccowtp_test reptrans_pattern_test fs_verify_dentry ccow_isgw_test \
-        ccow_lookup_test kvs_backend_perf
+        ccow_lookup_test kvs_backend_perf kvssd_backend_test
 
 DISABLED=libflexhash_test flexhash_sim fhzone_test
 
 install-exec-hook:
 	cp -f reptrans_bg_test $(DESTDIR)$(bindir)/
-       
+
+
+kvssd_backend_test_SOURCE = kvssd_test.c
+
+kvssd_backend_test_CFLAGS = -I$(top_srcdir)/src/libreplicast -I$(top_srcdir)/src/libccow \
+	-I$(top_srcdir)/src/libflexhash \
+	-I$(top_srcdir)/src/libtrlog \
+	-I$(top_srcdir)/src/libreptrans/rtkvs
+
+kvssd_backend_test_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la -ldl
+
        
 kvs_backend_perf_SOURCES = kvs_backend_perf.c
 kvs_backend_perf_CFLAGS = -I$(top_srcdir)/src/libreplicast
