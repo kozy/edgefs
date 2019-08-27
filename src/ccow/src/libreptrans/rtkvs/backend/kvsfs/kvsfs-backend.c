@@ -238,6 +238,8 @@ kvsfs_exit(kvs_backend_handle_t handle) {
 static int
 kvsfs_info(kvs_backend_handle_t handle, kvs_backend_info_t* info) {
 	kvsfs_handle_t h = handle;
+	info->flags = 0;
+	info->value_aligment = 0;
 	info->capacity = h->capacity;
 	info->del_bulk_size = KVSFS_DEL_BULK_SIZE;
 	info->put_bulk_size = KVSFS_PUT_BULK_SIZE;

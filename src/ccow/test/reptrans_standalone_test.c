@@ -1756,6 +1756,70 @@ vm_override_test(void **state) {
 		rtbuf_destroy(arg.rb);
 }
 
+static void
+put_perf_test(void **state) {
+	size_t entries = 100*1024;
+	size_t chunk_size = 16*1024;
+
+	int err =  reptrans_init(0, NULL, NULL,
+		RT_FLAG_STANDALONE | RT_FLAG_CREATE, 1, (char**)transport, NULL);
+
+	assert_true(err > 0);
+	if (err <= 0)
+		return;
+
+	err = libreptrans_enum();
+	assert_true(err > 0);
+
+	if (err <= 0)
+		return;
+	struct repdev* dev = devices[1];
+
+	char* buffer = je_malloc(chunk_size + entries);
+	uv_buf_t ub = {.base = buffer, .len = chunk_size + entries};
+	random_buffer(ub);
+	rtbuf_t* rb = rtbuf_init_mapped(&ub, 1);
+
+	struct backref br = {
+		.name_hash_id = { { {34, 23}, {0x45, 13} }, { {14, 15}, {1, 0} } },
+		.ref_chid = { { {10, 11}, {12, 13} }, { {14, 15}, {16, 17} } },
+		.generation = 0,
+		.uvid_timestamp = 0,
+		.ref_type = TT_CHUNK_MANIFEST,
+		.ref_hash = HASH_TYPE_DEFAULT,
+		.rep_count = 1,
+		.attr = VBR_ATTR_CP
+	};
+
+	srand(clock());
+	uint64_t dur_max = 0, dur_min = 0, dur_avg = 0;
+	/* Put required number of blobs */
+	for(size_t i=0; i < entries; i++) {
+		uint512_t chid = uint512_null;
+		chid.u.u.u = rand();
+		rb->bufs->base = buffer + i;
+		rb->bufs->len = chunk_size;
+		br.uvid_timestamp = get_timestamp_us();
+		uint64_t ts = get_timestamp_us();
+		err = reptrans_put_blob_with_attr(dev, TT_CHUNK_PAYLOAD, HASH_TYPE_DEFAULT, rb, &chid, 0, ts);
+		assert_int_equal(err, 0);
+		err = reptrans_put_backref(dev, &chid, HASH_TYPE_DEFAULT, &br);
+		assert_int_equal(err, 0);
+		uint64_t dur = get_timestamp_us() - ts;
+		if (dur > dur_max)
+			dur_max= dur;
+		if (dur < dur_min)
+			dur_min = dur;
+		dur_avg += dur;
+		assert_int_equal(err, 0);
+	}
+	dur_avg /= entries;
+	printf("Inserted %lu chunk, duration min/max/avg(uS): %lu/%lu/%lu\n",
+		entries, dur_min, dur_max, dur_avg);
+	rtbuf_destroy(rb);
+	je_free(buffer);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -1777,6 +1841,10 @@ main(int argc, char *argv[])
 
 
 	const UnitTest tests[] = {
+#if 0
+		unit_test(put_perf_test),
+		unit_test(reptrans_teardown),
+#endif
 		unit_test(vm_override_test),
 		unit_test(reptrans_teardown),
 		unit_test(batch_trlog_queue_test),

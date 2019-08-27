@@ -43,6 +43,12 @@ typedef struct {
 
 /* Backend information required by rtkvs */
 typedef struct kvs_backend_info {
+
+/* Backend requires a value to be allocated in heap/stack, not in a device-mapped region */
+#define KVS_FLAG_NO_MMAP_VALUE (1<<0)
+
+	uint64_t flags; /* Different backend flags */
+	size_t value_aligment; /* Value size needs to be aligned to it */
 	size_t capacity; /* Backend instance capacity, bytes */
 	size_t put_bulk_size; /*( Maximum size of a put bulk */
 	size_t del_bulk_size; /* Maximum size of a delete bulk */
