@@ -1602,6 +1602,7 @@ int objio_kvget(objio_info_t *ci, char *key, void *arg, char *(*alloc_buf)(void 
 	int err = 0;
 	uv_buf_t uv_b;
 	msgpack_u *u = NULL;
+	unsigned int n = 0;
 
 	if (ci->oid_size == 0 || ci->oid[0] == '\0' || key == NULL || key[0] == '\0') {
 		return -EINVAL;
@@ -1640,7 +1641,6 @@ int objio_kvget(objio_info_t *ci, char *key, void *arg, char *(*alloc_buf)(void 
 
 	struct ccow_metadata_kv *kv;
 	void *t;
-	unsigned int n = 0;
 	int value_len;
 	do {
 		t = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX | CCOW_MDTYPE_CUSTOM, -1);
@@ -1657,8 +1657,7 @@ int objio_kvget(objio_info_t *ci, char *key, void *arg, char *(*alloc_buf)(void 
 			continue;
 		}
 
-		int l = (klength < kv->key_size ? klength : kv->key_size);
-		if (strncmp(kv->key, key, l) < 0) {
+		if (klength != kv->key_size || strncmp(kv->key, key, kv->key_size) != 0) {
 			continue;
 		}
 
