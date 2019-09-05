@@ -174,7 +174,7 @@ typedef struct ccow_shard_context *ccow_shard_context_t;
  * Prefix of tenant ID used to keep track of server's global transaction log
  */
 #define	TRLOG_TID_PREFIX	"TRLOG-"
-#define TRLOG_DELETE_AFTER_HOURS		(24*7)
+#define TRLOG_DELETE_AFTER_HOURS		(24*3)
 
 #define RT_EXABYTE 1024LU * 1024 * 1024 * 1024* 1024 * 1024
 #define RT_PETABYTE 1024LU * 1024 * 1024* 1024 * 1024

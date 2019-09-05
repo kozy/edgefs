@@ -9,6 +9,7 @@ type RTDevice struct {
 	Name              string `json:"name,omitempty"`
 	Device            string `json:"device,omitempty"`
 	Psize             int    `json:"psize,omitempty"`
+	MdPsize           int    `json:"mdpsize,omitempty"`
 	MdcacheReserved   int    `json:"mdcache_reserved,omitempty"`
 	HddReadahead      int    `json:"hdd_readahead,omitempty"`
 	VerifyChid        int    `json:"verify_chid"`
@@ -32,6 +33,7 @@ type RTDeviceParams struct {
 	NoSync             bool   // force Sync be 0
 	RtVerifyChid       int    // 0 (disabled), 1 (verify on write) or 2(verify on read/write)
 	LmdbPageSize       int    // 4096, 8192, 16384 or 32768
+	LmdbMdPageSize     int    // 4096, 8192, 16384 or 32768
 	MaxSizeGB          uint64 // 0 (use all available capacity), in gigabytes
 	UseBcache          bool   // enable bcache
 	UseBcacheWB        bool   // enable write back cache
@@ -50,6 +52,7 @@ func DefaultRTParams() (params *RTDeviceParams) {
 		NoSync:             false,
 		RtVerifyChid:       1,
 		LmdbPageSize:       16384,
+		LmdbMdPageSize:     8192,
 		MaxSizeGB:          0,
 		UseBcache:          false,
 		UseBcacheWB:        false,
@@ -186,6 +189,7 @@ func GetRTDevices(nodeDisks []LocalDisk, rtParams *RTDeviceParams) (rtDevices []
 				Name:       getIdDevLinkName(hdds_divided[i][j].DevLinks),
 				Device:     "/dev/" + hdds_divided[i][j].Name,
 				Psize:      rtParams.LmdbPageSize,
+				MdPsize:    rtParams.LmdbMdPageSize,
 				VerifyChid: rtParams.RtVerifyChid,
 				Journal:    getIdDevLinkName(ssds[i].DevLinks),
 				Metadata:   getIdDevLinkName(ssds[i].DevLinks) + "," + rtParams.UseMetadataMask,
