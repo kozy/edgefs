@@ -49,7 +49,6 @@ var (
 	diskopts       string
 	trlogKeepDays  int
 	trlogInterval  int
-	chunkHoldHours int
 )
 
 func ConfigNodeFnc(cmd *cobra.Command, args []string) {
@@ -82,8 +81,8 @@ func ConfigNodeFnc(cmd *cobra.Command, args []string) {
 		},
 		Ccowd: CcowdConf{
 			BgConfig: CcowdBgConfig{
-				TrlogDeleteAfterHours: 24*7,
-				SpeculativeBackrefTimeout: 24*3600*1000,
+				TrlogDeleteAfterHours: 24*3,
+				SpeculativeBackrefTimeout: 3*24*3600*1000,
 			},
 			Network: CcowdNetwork{
 				ServerInterfaces: serverIfName,
@@ -136,12 +135,8 @@ func ConfigNodeFnc(cmd *cobra.Command, args []string) {
 
 	if trlogKeepDays > 0 {
 		nodeConfig.Ccowd.BgConfig.TrlogDeleteAfterHours = trlogKeepDays * 24
+		nodeConfig.Ccowd.BgConfig.SpeculativeBackrefTimeout = trlogKeepDays * 24 * 3600 * 1000
 		fmt.Printf("  - will set to keep transaction log entries for up to %d days\n", trlogKeepDays)
-	}
-
-	if chunkHoldHours > 0 {
-		nodeConfig.Ccowd.BgConfig.SpeculativeBackrefTimeout = chunkHoldHours * 3600 * 1000
-		fmt.Printf("  - will set chunk hold interval to %d hours\n", chunkHoldHours)
 	}
 
 	fmt.Printf("\n")
@@ -304,6 +299,10 @@ func ConfigNodeFnc(cmd *cobra.Command, args []string) {
 				params.LmdbPageSize = rtrdOpts.LmdbPageSize
 				fmt.Printf("  - will use LMDB PageSize=%d\n", params.LmdbPageSize)
 			}
+			if rtrdOpts.LmdbMdPageSize > 0 {
+				params.LmdbMdPageSize = rtrdOpts.LmdbMdPageSize
+				fmt.Printf("  - will use LMDB Metadata PageSize=%d\n", params.LmdbMdPageSize)
+			}
 			if rtrdOpts.UseBcache {
 				params.UseBcache = rtrdOpts.UseBcache
 				fmt.Printf("  - will enable Read Cache\n")
@@ -382,6 +381,7 @@ var (
 		       "  MDReserved         (rtrd)(int) override default reserved 60% Metadata of Offload SSD/NVMe capacity\n" +
 		       "  HDDReadAhead       (rtrd)(int) override default 256KB read-ahead for HDD\n" +
 		       "  LmdbPageSize       (both)(int) 4096, 8192, 16384 (default) or 32768\n" +
+		       "  LmdbMdPageSize     (both)(int) 4096, 8192, 16384 (default) or 32768\n" +
 		       "  UseBcache          (rtrd)(bool) enable use of read cache\n" +
 		       "  UseBcacheWB        (rtrd)(bool) enable use of write back cache (needs UseBcache)\n" +
 		       "  UseMetadataMask    (rtrd)(string) what guts needs to go to SSD and what not. See extended doc\n" +
@@ -405,8 +405,7 @@ func init() {
 
 	ConfigCmd.AddCommand(NodeCmd)
 	NodeCmd.Flags().IntVarP(&trlogInterval, "trlogInterval", "t", 10, "Transaction log processing interval in seconds")
-	NodeCmd.Flags().IntVarP(&trlogKeepDays, "trlogKeepDays", "T", 7, "Number of days to keep transaction log records")
-	NodeCmd.Flags().IntVarP(&chunkHoldHours, "chunkHoldHours", "H", 24, "Number of hours to hold metadata and data chunks, a.k.a MDOnly cache hold")
+	NodeCmd.Flags().IntVarP(&trlogKeepDays, "trlogKeepDays", "T", 3, "Number of days to keep transaction log records")
 	NodeCmd.Flags().BoolVarP(&skipConfirm, "force-confirm", "f", false, "Force operation and skip confirmation dialog")
 	NodeCmd.Flags().BoolVarP(&isGateway, "gateway", "g", false, "Makes this node behave as a gateway")
 	NodeCmd.Flags().StringSliceVarP(&nodelist, "nodelist", "l", []string{}, "Resolvable node names for FlexHash ring communication")

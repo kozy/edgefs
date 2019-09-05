@@ -1228,7 +1228,7 @@ namedput_list_run(void *arg) {
 					}
 
 					uint64_t delete_after = get_timestamp_us() / 1000000 +
-						TRLOG_DELETE_AFTER_HOURS * 3600;
+						dev->bg_config->trlog_delete_after_hours * 3600;
 					err = ccow_attr_modify_default(c_inprog, CCOW_ATTR_OBJECT_DELETE_AFTER,
 							(void *)&delete_after, NULL);
 					if (err) {
