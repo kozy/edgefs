@@ -4274,7 +4274,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 		 */
 		int outdated_version = (gen_max > md.number_of_versions) &&
 			(gen_max - md.number_of_versions >= md.txid_generation);
-		if ((!stable_version && (!actual_count || outdated_version)) && is_cluster_healthy(dev->rt, vbr->rep_count)) {
+		if ((!stable_version && (!actual_count || outdated_version)) && is_cluster_healthy(dev->rt, 1)) {
 			err = 0;
 			struct deferred_delete_entry* del_arg = je_calloc(1, sizeof(*del_arg));
 			if (!del_arg) {
@@ -4298,7 +4298,7 @@ reptrans_validate_verified_br(struct repdev *dev, const uint512_t* chid,
 	} else {
 		int actual_count = ngcount_chunks(dev, vbr->ref_type, vbr->ref_hash,
 			&vbr->ref_chid, &vbr->name_hash_id, 1, NULL, 0, NULL, NULL);
-		if (!actual_count && is_cluster_healthy(dev->rt, vbr->rep_count)) {
+		if (!actual_count && is_cluster_healthy(dev->rt, 1)) {
 			err = 0;
 			struct deferred_delete_entry* del_arg = je_calloc(1, sizeof(*del_arg));
 			if (!del_arg) {
@@ -4547,7 +4547,7 @@ gc_deferred_work(void* arg) {
 				(gen_max - tail->number_of_versions >= tail->version.generation);
 
 			if (stable_version || (!outdated_version && actual_count) ||
-				!is_cluster_healthy(dev->rt, tail->rep_cnt))
+				!is_cluster_healthy(dev->rt, 1))
 				continue;
 			if (outdated_version) {
 				log_debug(lg, "Dev(%s) found an outdated object version NHID %lX gen %lu",
@@ -4571,7 +4571,7 @@ gc_deferred_work(void* arg) {
 		} else {
 			int actual_count = ngcount_chunks(dev, tail->vbr.ref_type, tail->vbr.ref_hash,
 				&tail->vbr.ref_chid, &tail->vbr.name_hash_id, 1, NULL, 0, NULL, NULL);
-			if (actual_count || !is_cluster_healthy(dev->rt, tail->rep_cnt))
+			if (actual_count || !is_cluster_healthy(dev->rt, 1))
 				continue;
 			uint8_t buf[1024];
 			uv_buf_t ub_p = { .base = (char*)buf, .len = sizeof(buf) };
