@@ -370,6 +370,14 @@ __inherit_bucket_attrs(ci_t * ci, ccow_completion_t c)
 		return err;
 	}
 
+	err = ccow_attr_modify_default(c, CCOW_ATTR_SELECT_POLICY,
+	    (void *) &(ci->bk_attrs.select_policy), NULL);
+	if (err) {
+		log_error(fsio_lg,
+		    "ccow_attr_modify_default return %d", err);
+		return err;
+	}
+
 	err = ccow_attr_modify_default(c, CCOW_ATTR_EC_ENABLE,
 	    (void *) &(ci->bk_attrs.ec_enabled), NULL);
 	if (err) {

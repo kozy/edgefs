@@ -47,6 +47,7 @@ typedef struct __bucket_attrs__
 	uint8_t     chunkmap_btree_marker;
 	uint8_t     replication_count;
 	uint8_t     sync_put;
+	uint8_t		select_policy;
 	uint8_t     file_object_transparency;
 	uint8_t     ec_enabled;
 	uint32_t    ec_data_mode;
