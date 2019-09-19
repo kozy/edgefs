@@ -36,7 +36,7 @@
 
 #define UNCOMP_ALLOC_SIZE	(512*1024)
 #define PP_WEIGHT_PAUSE		32
-#define PP_WEIGHT_PAUSE_MS	64
+#define PP_WEIGHT_PAUSE_MS	32
 #define PP_FLUSH_DELAY_MS	5
 
 static int
@@ -1064,12 +1064,27 @@ unnamedput_srv__put_proposal(struct state *st)
 		return;
 	}
 
+	if (!req->pp_timer_retry)
+		req->pp_rcvd_time = get_timestamp_us();
+
 	uint64_t weight = flexhash_estimate_vdev_weight(SERVER_FLEXHASH,
-				dev, FH_IOTYPE_PUT);
+		dev, FH_IOTYPE_PUT);
+
 	if (!req->pp_timer_retry && weight > PP_WEIGHT_PAUSE) {
+		int journaled =  dev->journal && msg->content_length < dev->journal_maxchunksize;
+		uint64_t lat = flexhash_estimate_90th(SERVER_FLEXHASH, &dev->vdevid,
+			msg->content_length,
+			journaled ? dev->stats.put90th_4k_latency_j : dev->stats.put90th_4k_latency,
+			journaled ? dev->stats.put90th_64k_latency_j : dev->stats.put90th_64k_latency,
+			journaled ? dev->stats.put90th_512k_latency_j : dev->stats.put90th_512k_latency);
+		uint64_t timeout = lat*weight/1000;
+
+		if (timeout > PP_WEIGHT_PAUSE_MS)
+			timeout = PP_WEIGHT_PAUSE_MS;
+
 		req->pp_timer_req->data = req;
-		uv_timer_start(req->pp_timer_req,
-		    unnamedput_srv__pp_busy_timeout, PP_WEIGHT_PAUSE_MS, 0);
+		uv_timer_start(req->pp_timer_req, unnamedput_srv__pp_busy_timeout,
+			timeout, 0);
 		return;
 	}
 
@@ -1077,9 +1092,6 @@ unnamedput_srv__put_proposal(struct state *st)
 	req->hash_type = msg->hdr.hash_type;
 	req->dev = dev;
 	req->req_len = msg->content_length;
-
-	if (!req->pp_timer_retry)
-		req->pp_rcvd_time = get_timestamp_us();
 
 	type_tag_t tt = attr_to_type_tag(msg->hdr.attributes);
 	uint64_t part = PLEVEL_HASHCALC(&msg->content_hash_id, (dev->plevel - 1));
