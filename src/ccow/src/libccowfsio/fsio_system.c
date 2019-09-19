@@ -526,6 +526,8 @@ __get_bucket_attrs(ci_t * ci)
 			    *((uint8_t *) kv->value);
 		else if (strcmp(kv->key, RT_SYSKEY_SYNC_PUT) == 0)
 			ci->bk_attrs.sync_put = *((uint8_t *) kv->value);
+		else if (strcmp(kv->key, RT_SYSKEY_SELECT_POLICY) == 0)
+			ci->bk_attrs.select_policy = *((uint8_t *) kv->value);
 		else if (strcmp(kv->key, RT_SYSKEY_REPLICATION_COUNT) == 0)
 			ci->bk_attrs.replication_count =
 			    *((uint8_t *) kv->value);
