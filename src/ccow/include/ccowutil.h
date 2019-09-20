@@ -444,6 +444,7 @@ static inline char *je_memdup(const char *s, size_t size) {
 #define je_malloc	malloc
 #define je_calloc	calloc
 #define je_realloc	realloc
+#define je_posix_memalign	posix_memalign
 #endif
 
 static inline int memcmp_quick(const void *m1, size_t s1, const void *m2,

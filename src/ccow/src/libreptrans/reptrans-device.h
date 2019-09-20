@@ -68,6 +68,35 @@ typedef struct key_cache_stat {
     uint32_t evicted;
 } key_cache_stat_t;
 
+typedef struct key_cache_entry {
+	uint64_t key;
+	uint32_t size;
+	uint8_t  ttag;
+	UT_hash_handle hh;
+} key_cache_entry_t;
+
+typedef struct key_cache {
+	uint32_t c; // capacity
+	key_cache_entry_t *entries;
+	uv_rwlock_t lock;
+	key_cache_stat_t stats;
+	void (*free_entry) (void *element); //cb to free items; optional
+} key_cache_t;
+
+int key_cache_ini(key_cache_t **cache, const uint32_t c,
+	void (*free_entry)(void *element));
+
+int key_cache_fini(key_cache_t *cache);
+
+int key_cache_insert(key_cache_t *c, uint64_t *key, type_tag_t ttag,
+	uint32_t size);
+
+int key_cache_lookup(key_cache_t *c, uint64_t *key, type_tag_t ttag,
+	uint64_t *size);
+
+int key_cache_remove(key_cache_t *c, uint64_t *key, type_tag_t ttag);
+
+
 typedef struct mdcache_stat {
     uint32_t hit;
     uint32_t miss;

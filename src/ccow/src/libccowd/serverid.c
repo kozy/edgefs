@@ -526,10 +526,8 @@ ccowd_kvs_disks(int *numdisks)
 		char *namekey = fs_json->u.object.values[j].name;
 		if (strcmp(namekey, "devices") == 0) {
 			json_value *v = fs_json->u.object.values[j].value;
-			for (size_t k = 0; k < v->u.object.length; k++) {
-				char *fsname = v->u.object.values[j].name;
-				nd++;
-			}
+			nd = v->u.object.length;
+			break;
 		}
 	}
 

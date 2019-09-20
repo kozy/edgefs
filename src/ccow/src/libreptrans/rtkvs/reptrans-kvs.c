@@ -103,22 +103,6 @@ typedef enum {
 /* MD offload uses separate environment */
 #define DEV_ENVS 2
 
-/* do we need a ref count for these? */
-typedef struct key_cache_entry {
-	uint64_t key;
-	uint32_t size;
-	uint8_t ttag;
-	UT_hash_handle hh;
-} key_cache_entry_t;
-
-typedef struct key_cache {
-	uint32_t c; // capacity
-	key_cache_entry_t *entries;
-	uv_rwlock_t lock;
-	key_cache_stat_t stats;
-	void (*free_entry) (void *element); //cb to free items; optional
-} key_cache_t;
-
 struct repdev_db;
 struct repdev_log
 {
@@ -149,8 +133,8 @@ struct repdev_db
 	uv_mutex_t log_flush_lock;
 	uv_cond_t log_flush_condvar;
 	key_cache_t *key_cache;
-	size_t size[TT_LAST];
-	size_t entries[TT_LAST];
+	int64_t size[TT_LAST];
+	int64_t entries[TT_LAST];
 };
 
 struct repdev_kvs
@@ -170,13 +154,6 @@ struct repdev_kvs
 	kvs_backend_info_t be_info;
 };
 
-/*
- * Im very sorry for this but at the moment we dont have a common
- * part of libreptrans e.g a libreptrans/rdcommon. This results
- * in some duplicate code and in certain cases double effort when adding
- * new features. we should really think about spending some time and create
- * a proper abstraction to avoid duplicate code between the drivers
- */
 
 typedef enum partition_walk {
 	PART_WALK_CONTINUE,
@@ -240,6 +217,36 @@ static void
 kvs_bm_exit() {
 	if (kvs_lib_handle)
 		dlclose(kvs_lib_handle);
+}
+
+static void
+kvs_backend_utilization_set(struct repdev_db* db, type_tag_t ttag,
+	int64_t size, int64_t entries) {
+	int64_t aux = 0;
+	do {
+		aux = __sync_fetch_and_add(db->size + ttag, 0);
+	} while (!__sync_bool_compare_and_swap(db->size + ttag, aux, size));
+
+	do {
+		aux = __sync_fetch_and_add(db->entries + ttag, 0);
+	} while (!__sync_bool_compare_and_swap(db->entries + ttag, aux, entries));
+}
+
+static void
+kvs_backend_utilization_get(struct repdev_db* db, type_tag_t ttag,
+	int64_t* size, int64_t* entries) {
+	*size = __sync_fetch_and_add(db->size + ttag, 0);
+	*entries = __sync_fetch_and_add(db->entries + ttag, 0);
+}
+
+static void
+kvs_backend_utilization_change(struct repdev_db* db, type_tag_t ttag,
+	int64_t size, int64_t entries) {
+	atomic_add64(db->size + ttag, size);
+	assert(__sync_fetch_and_add(db->size + ttag, 0) >= 0);
+
+	atomic_add64(db->entries + ttag, entries);
+	assert(__sync_fetch_and_add(db->entries + ttag, 0) >= 0);
 }
 
 static void
@@ -543,185 +550,6 @@ kvs_bloom_query(struct repdev_db *db, uint64_t key)
 	return rc;
 }
 
-int
-key_cache_ini(key_cache_t **cache, const uint32_t c,
-			  void (*free_entry)(void *element)) {
-
-	assert(c != 0);
-	key_cache_t *new = NULL;
-
-	if (cache == NULL)
-		return -EINVAL;
-	if ((new = je_malloc(sizeof(*new))) == NULL)
-		return -ENOMEM;
-	if (uv_rwlock_init(&new->lock) != 0) {
-		je_free(new);
-		return -ENOMEM;
-	}
-
-	new->c = c;
-	new->entries = NULL;
-	new->free_entry = free_entry;
-	new->stats.hit = 0;
-	new->stats.miss = 0;
-	new->stats.evicted = 0;
-	*cache = new;
-	return 0;
-}
-
-int
-key_cache_fini(key_cache_t *cache) {
-
-	key_cache_entry_t *entry, *tmp = NULL;
-
-	if (cache == NULL)
-		return -EINVAL;
-
-	uv_rwlock_wrlock(&cache->lock);
-
-	HASH_ITER(hh, cache->entries, entry, tmp) {
-		HASH_DEL(cache->entries, entry);
-		je_free(entry);
-	}
-
-	uv_rwlock_wrunlock(&cache->lock);
-	uv_rwlock_destroy(&cache->lock);
-	je_free(cache);
-	return 0;
-}
-
-int
-key_cache_insert(key_cache_t *c, uint64_t *key, type_tag_t ttag,
-				 uint32_t size) {
-
-	key_cache_entry_t *t = NULL;
-	key_cache_entry_t *e = NULL;
-
-	if (c == NULL)
-		return -EINVAL;
-
-	uv_rwlock_wrlock(&c->lock);
-	HASH_FIND_INT64(c->entries, key, t);
-
-	if (t != NULL) {
-		uv_rwlock_wrunlock(&c->lock);
-		return -EEXIST;
-	}
-
-	if ((e = je_malloc(sizeof(*e))) == NULL) {
-		uv_rwlock_wrunlock(&c->lock);
-		return -ENOMEM;
-	}
-
-	e->key = *key;
-	e->size = size;
-	e->ttag = ttag;
-
-	HASH_ADD_INT64(c->entries, key, e);
-
-	if (HASH_COUNT(c->entries) >= c->c) {
-		HASH_ITER(hh, c->entries, e, t) {
-			HASH_DELETE(hh, c->entries, e);
-			je_free(e);
-			c->stats.evicted++;
-			break;
-		}
-	}
-	uv_rwlock_wrunlock(&c->lock);
-	return 0;
-}
-
-int
-key_cache_lookup(key_cache_t *c, uint64_t *key, type_tag_t ttag,
-				 uint64_t *result) {
-
-	key_cache_entry_t *e = NULL;
-	int rv = 0;
-
-	if (c == NULL || key == NULL || result == NULL)
-		return -EINVAL;
-
-	uv_rwlock_wrlock(&c->lock);
-
-	HASH_FIND_INT64(c->entries, key, e);
-
-	if (e != NULL && e->ttag == ttag) {
-		/* LRUing by deleting and re-inserting it to head */
-		HASH_DELETE(hh, c->entries, e);
-		HASH_ADD_INT64(c->entries, key, e);
-		/* because of macro magic */
-		*result = e->size;
-		c->stats.hit++;
-	} else {
-		*result = 0;
-		c->stats.miss++;
-		rv = -ENOENT;
-	}
-
-	uv_rwlock_wrunlock(&c->lock);
-	return rv;
-}
-
-int
-key_cache_remove(key_cache_t *c, uint64_t *key, type_tag_t ttag) {
-
-	key_cache_entry_t *e = NULL;
-	int rc = 0;
-
-	if (c == NULL)
-		return -EINVAL;
-	uv_rwlock_wrlock(&c->lock);
-	HASH_FIND_INT64(c->entries, key, e);
-
-	if (e != NULL && e->ttag == ttag) {
-		HASH_DELETE(hh, c->entries, e);
-		je_free(e);
-	} else {
-		rc = -ENOENT;
-	}
-	uv_rwlock_wrunlock(&c->lock);
-	return rc;
-}
-
-static inline void
-kvs_keycache_insert(struct repdev_db *db, uint64_t key, type_tag_t ttag, uint64_t size)
-{
-	int err;
-
-	if (!db->dev->keycache_enabled)
-		return;
-
-	uv_rwlock_wrlock(&db->bloom_lock);
-	err = hashtable_put(db->keyht[ttag], &key, sizeof (uint64_t), &size, sizeof(uint64_t));
-	uv_rwlock_wrunlock(&db->bloom_lock);
-	assert(err == 0);
-}
-
-static inline void
-kvs_keycache_remove(struct repdev_db *db, uint64_t key, type_tag_t ttag)
-{
-	if (!db->dev->keycache_enabled)
-		return;
-
-	uv_rwlock_wrlock(&db->bloom_lock);
-	hashtable_remove(db->keyht[ttag], &key, sizeof (uint64_t));
-	uv_rwlock_wrunlock(&db->bloom_lock);
-}
-
-static inline int
-kvs_keycache_query(struct repdev_db *db, uint64_t key, type_tag_t ttag, uint64_t *outsize)
-{
-	uv_rwlock_rdlock(&db->bloom_lock);
-	size_t value_size;
-	void *value = hashtable_get(db->keyht[ttag], &key, sizeof (uint64_t), &value_size);
-	if (value)
-		*outsize = *(uint64_t *) value;
-	else
-		*outsize = 0;
-	uv_rwlock_rdunlock(&db->bloom_lock);
-	return value ? -EEXIST : 0;
-}
-
 static int kvs_log_flush(struct repdev_log *log, type_tag_t ttag);
 static void kvs_log_flush_wait(struct repdev_db *db, type_tag_t ttag);
 
@@ -858,8 +686,7 @@ kvs_bloom_load(void *arg)
 		MDB_val key;
 		MDB_val val;
 		MDB_val* vptr = is_kvs_offload_tt(ttag) ? &val : NULL;
-		db->size[ttag] = 0;
-		db->entries[ttag] = 0;
+		kvs_backend_utilization_set(db, ttag, 0, 0);
 		while ((err = mdb_cursor_get(cursor, &key, vptr, op)) == 0) {
 			op = (ttag == TT_NAMEINDEX) ? MDB_NEXT_NODUP : MDB_NEXT;
 			MDB_val keyhv;
@@ -875,12 +702,17 @@ kvs_bloom_load(void *arg)
 				uint64_t size = 0;
 				assert(vptr->mv_size == sizeof(uint64_t));
 				memcpy(&size, vptr->mv_data, vptr->mv_size);
-				db->size[ttag] += size;
-				db->entries[ttag]++;
+				/*
+				 * Accounts only ttags offloaded to the key-value backend.
+				 * Other types info will be fetched from
+				 * LMDB's stat
+				 */
+				kvs_backend_utilization_change(db, ttag, size, 1);
 			}
 			if (dev->terminating)
 				break;
-
+#if 0
+			/* hashcount might not be allocated yet */
 			if (is_hashcount_data_type_tag(ttag)) {
 				uint512_t chid = uint512_null;
 				chid.u.u.u = kh;
@@ -889,6 +721,7 @@ kvs_bloom_load(void *arg)
 					mdb_cursor_count(cursor, &hc_cnt);
 				reptrans_bump_hashcount(dev, &chid, hc_cnt);
 			}
+#endif
 		}
 
 		mdb_cursor_close(cursor);
@@ -909,6 +742,7 @@ _exit:
 	    " (took ~ %"PRIu64" ms), err: %d", dev->name, db->part, entries,
 	    (uv_hrtime() - before) / 1000000, err);
 
+	uv_rwlock_wrlock(&db->bloom_lock);
 	if (!err && db->bloom_loaded == 0 && !dev->terminating) {
 		db->bloom_loaded = 1;
 	} else {
@@ -916,7 +750,7 @@ _exit:
 			"Dev(%s)", dev->name);
 		db->bloom_loaded = -1;
 	}
-
+	uv_rwlock_wrunlock(&db->bloom_lock);
 	return NULL;
 }
 
@@ -1114,8 +948,6 @@ kvs_lmdb_close(struct repdev_db *db)
 				kvs_log_flush_wait(db, i);
 			mdb_dbi_close(db->env, db->dbi[i]);
 		}
-		if (db->keyht[i])
-			hashtable_destroy(db->keyht[i]);
 	}
 	mdb_env_close(db->env);
 	db->env = NULL;
@@ -1404,8 +1236,10 @@ kvs_lmdb_stat(struct repdev *dev)
 
 		for (size_t tt = TT_NAMEINDEX; !err && tt < TT_LAST; tt++) {
 			if (is_kvs_offload_tt(tt)) {
-				ttag_size[tt] += db->size[tt];
-				ttag_entries[tt] += db->entries[tt];
+				int64_t size, util;
+				kvs_backend_utilization_get(db, tt, &size, &util);
+				ttag_size[tt] += size;
+				ttag_entries[tt] += util;
 				continue;
 			}
 			MDB_stat mst;
@@ -2020,8 +1854,29 @@ _repeat:
 					if (subst) {
 						memcpy((char *)data_out.mv_data, &data.mv_size, sizeof(data.mv_size));
 						/* Keeps values for further use */
-						rbv->bufs[rbvals_i].base = data.mv_data;
-						rbv->bufs[rbvals_i].len = data.mv_size;
+
+						/* Backend might require value size alignment or want malloc-ed values */
+						size_t vlen = data.mv_size;
+						char* vptr = data.mv_data;
+						int valloc = kvs->be_info.flags & KVS_FLAG_NO_MMAP_VALUE;
+						if (kvs->be_info.value_aligment && (vlen % kvs->be_info.value_aligment)) {
+							valloc = 1;
+							vlen = (1 + (vlen / kvs->be_info.value_aligment))*kvs->be_info.value_aligment;
+						}
+						if (valloc) {
+							err = je_posix_memalign((void**)&vptr, kvs->be_info.value_aligment, vlen);
+							if (err) {
+								log_error(lg, "Dev(%s): log_flush %s value malloc error",
+								    dev->name, type_tag_name[ttag]);
+								err = -ENOMEM;
+								goto _exit;
+							}
+							memcpy(vptr, data.mv_data, data.mv_size);
+						}
+						rbv->bufs[rbvals_i].base = vptr;
+						rbv->bufs[rbvals_i].len = vlen;
+						if (!valloc)
+							rbv->attrs[rbvals_i] |= RTBUF_ATTR_MMAP;
 						rbk->bufs[rbvals_i].base = rbkeys->bufs[rbkeys_i-1].base;
 						rbk->bufs[rbvals_i++].len = rbkeys->bufs[rbkeys_i-1].len;
 					} else
@@ -2137,9 +1992,10 @@ _repeat:
 			err = kvs->backend->put(kvs->be_inst, ttag, rbk->bufs, rbv->bufs, rbvals_i);
 			if (err)
 				goto _exit;
-			atomic_add64(db->entries + ttag, rbvals_i);
+			int64_t size = 0;
 			for (size_t i = 0; i < rbvals_i; i++)
-				atomic_add64(db->size + ttag, rbv->bufs[i].len);
+				size += rbv->bufs[i].len;
+			kvs_backend_utilization_change(db, ttag, size, rbvals_i);
 		}
 		err = mdb_txn_commit(main_txn);
 		main_txn = NULL;
@@ -2194,7 +2050,7 @@ _exit:
 	if (rbkeys)
 		rtbuf_destroy(rbkeys);
 	if (rbv)
-		rtbuf_clean(rbv);
+		rtbuf_destroy(rbv);
 	if (rbk)
 		rtbuf_clean(rbk);
 
@@ -2425,7 +2281,7 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
     crypto_hash_t hash_type, const rtbuf_t *rb, uint512_t *chid_in,
     uint64_t attr, uint64_t options)
 {
-	int err = 0, mdb_err = 0;
+	int err = 0;
 	struct repdev_db *db;
 	struct repdev_log *log;
 	MDB_dbi dbi;
@@ -2493,6 +2349,14 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 	key.mv_data = keybuf.base;
 	data.mv_size = len;
 
+	if (is_keycache_tt(ttag) || ttag == TT_NAMEINDEX) {
+		err = kvs_keyhash(dev, &key, &keyhv, &kh);
+		if (err)
+			goto _exit;
+
+		bloom_insert = 1;
+	}
+
 	if (is_dupsort_tt(ttag)) {
 		assert(rb->nbufs == 1);
 		assert(data.mv_size < 511);
@@ -2500,7 +2364,6 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 
 		err = mdb_put(txn, dbi, &key, &data, MDB_NODUPDATA);
 		if (err) {
-			mdb_err = err;
 			if (err == MDB_KEYEXIST) {
 				log_debug(lg, "Dev(%s): put_blob_with_attr %s mdb_put: (%d) %s",
 				    dev->name, type_tag_name[ttag], err, mdb_strerror(err));
@@ -2522,14 +2385,7 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 
 		data.mv_data = NULL; /* MDB_RESERVE */
 
-		if (is_keycache_tt(ttag)) {
-			err = kvs_keyhash(dev, &key, &keyhv, &kh);
-			if (err)
-				goto _exit;
-
-			bloom_insert = 1;
-		}
-		if (overwrite) {
+		if (overwrite && is_log_tt(dev, ttag)) {
 			MDB_txn* log_txn = NULL;
 			err = mdb_txn_begin(log->env, NULL, 0, &log_txn);
 			if (err) {
@@ -2563,7 +2419,6 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 			data.mv_data = NULL;
 		}
 		if (err) {
-			mdb_err = err;
 			if (err == MDB_KEYEXIST) {
 				log_debug(lg, "Dev(%s): "
 					"put_blob %s mdb_put: (%d) %s",
@@ -2590,12 +2445,34 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 				rtbuf_t* flat = rtbuf_serialize((rtbuf_t*)rb);
 				assert(flat);
 				uv_buf_t uk = { .base = key.mv_data, .len = key.mv_size };
-				uv_buf_t* uv = flat->bufs;
-				err = kvs->backend->put(kvs->be_inst, ttag, &uk, uv, 1);
-				if (err) {
-					goto _exit;
+				uv_buf_t uv = flat->bufs[0];
+				if (kvs->be_info.value_aligment && uv.len % kvs->be_info.value_aligment) {
+					size_t vlen = (1 + (uv.len / kvs->be_info.value_aligment)) * kvs->be_info.value_aligment;
+					char* ptr = NULL;
+					je_posix_memalign((void**)&ptr, kvs->be_info.value_aligment, vlen);
+					if (!ptr) {
+						rtbuf_destroy(flat);
+						log_error(lg, "Dev(%s): value %s malloc error %lu bytes",
+							dev->name, type_tag_name[ttag], vlen);
+						err = -ENOMEM;
+						goto _exit;
+					}
+					memcpy(ptr, uv.base, uv.len);
+					uv.base = ptr;
+					uv.len = len;
 				}
+				err = kvs->backend->put(kvs->be_inst, ttag, &uk, &uv, 1);
+
+				if (uv.base != flat->bufs[0].base)
+					je_free(uv.base);
+				rtbuf_destroy(flat);
+				if (err)
+					goto _exit;
 				memcpy((char *)data.mv_data, &len, sizeof(data.mv_size));
+
+				atomic_inc64(db->entries + ttag);
+				atomic_add64(db->size + ttag, uv.len);
+
 			} else {
 				size_t copied = 0;
 				for (int i = 0; i < (int)rb->nbufs; i++) {
@@ -2614,13 +2491,11 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 		    dev->name, type_tag_name[ttag], err, mdb_strerror(err));
 		err = -EIO;
 		goto _exit;
-	} else if (!mdb_err && is_hashcount_data_type_tag(ttag)) {
-		reptrans_bump_hashcount(dev, &chid, 1);
 	}
 
 _exit:
 
-	if (!err && (bloom_insert || ttag == TT_NAMEINDEX)) {
+	if (!err && bloom_insert) {
 		kvs_bloom_insert(db, kh);
 		if (ttag != TT_NAMEINDEX)
 			key_cache_insert(db->key_cache, &kh, ttag, len);
@@ -2893,6 +2768,8 @@ _repeat:
 			assert(reallen > 0);
 			/* Get real chunk */
 			ent.len = reallen > kvs->be_info.min_value_size ? reallen : kvs->be_info.min_value_size;
+			if (kvs->be_info.value_aligment && (ent.len % kvs->be_info.value_aligment))
+				ent.len = (1 + (ent.len / kvs->be_info.value_aligment))*kvs->be_info.value_aligment;
 			ent.base = je_malloc(ent.len);
 			uv_buf_t uk = { .base = key.mv_data, .len = key.mv_size };
 			err = kvs->backend->get(kvs->be_inst, ttag, uk, &ent);
@@ -3089,6 +2966,87 @@ _exit:
 }
 
 static int
+kvs_dupcount_fast(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
+	const uint512_t *chid, size_t max, size_t* pcount) {
+
+	assert(is_dupsort_tt(ttag));
+	int repeat = !(is_log_tt(dev, ttag) && !(dev->rt->flags & GBF_FLAG_NO_WAL));
+	size_t count = 0;
+
+	struct repdev_db *db;
+	struct repdev_log *log;
+	MDB_dbi dbi, dbi_main;
+	uv_buf_t keybuf = { .base = NULL, .len = 0 };
+	MDB_txn* txn = NULL;
+	MDB_cursor* cur = NULL;
+	MDB_env* env = NULL;
+	struct repdev_lfs *lfs = dev->device_lfs;
+
+	assert (ttag != TT_HASHCOUNT);
+
+	int err = kvs_key_encode(dev, ttag, hash_type, chid, &keybuf, &db, &dbi_main,
+	    &log);
+	if (err)
+		return err;
+
+_repeat:
+	if (!repeat) {
+		/*
+		 * Lookup in journal log first (in memory lookup) then in
+		 * TT main db.
+		 */
+		env = log->env;
+		dbi = log->dbi[ttag];
+	} else {
+		/*
+		 * This is direct TT main lookup.
+		 */
+		env = db->env;
+		dbi = dbi_main;
+	}
+
+	err = mdb_txn_begin(env, NULL, MDB_RDONLY, &txn);
+	if (err) {
+		log_error(lg, "Dev(%s): cannot begin mdb lfs_dupcount_fast txn: (%d) %s",
+		    dev->name, err, mdb_strerror(err));
+		err = -EIO;
+		goto _exit;
+	}
+
+	err = mdb_cursor_open(txn, dbi, &cur);
+	assert(!err);
+	if (!err) {
+		MDB_val key = {.mv_data = keybuf.base, .mv_size = keybuf.len };
+		MDB_val val = {.mv_data = NULL, .mv_size = 0 };
+		err = mdb_cursor_get(cur, &key, &val, MDB_SET);
+		if (!err) {
+			size_t cnt = 0;
+			err = mdb_cursor_count(cur, &cnt);
+			count += cnt;
+		}
+	}
+	if (err && err != MDB_NOTFOUND) {
+		log_error(lg, "Get(%s): mdb_cursor_open/get/count repeat %d rd_dupcount_fast txn: (%d) %s",
+		    dev->name, repeat, err, mdb_strerror(err));
+		err = -EIO;
+	} else
+		err = 0;
+
+_exit:
+	if (txn)
+		mdb_txn_abort(txn);
+	if (!err) {
+		if (!repeat && (!max || (max > count))) {
+			repeat = 1;
+			goto _repeat;
+		}
+		*pcount = count;
+	}
+	return err;
+}
+
+
+static int
 kvs_get_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	int flags, const uint512_t *chid_in, rtbuf_t **rb, int max_num,
 	reptrans_blob_filter filter_cb, void *arg)
@@ -3098,7 +3056,7 @@ kvs_get_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	struct repdev_log *log;
 	MDB_dbi dbi;
 	uint512_t chid = *chid_in;
-	uv_buf_t keybuf = { .base = NULL, .len = 0 };;
+	uv_buf_t keybuf = { .base = NULL, .len = 0 };
 
 	assert (ttag != TT_HASHCOUNT);
 
@@ -3109,6 +3067,9 @@ kvs_get_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 		rt_chid_swap_trlog(chid_in, &chid, &hash_type);
 	else if (ttag == TT_VERIFICATION_QUEUE)
 		rt_chid_swap_verqueue(chid_in, &chid, &hash_type);
+
+	if (flags & GBF_FLAG_DUPCOUNT_ROUGH)
+		return kvs_dupcount_fast(dev, ttag, hash_type, &chid, max_num, arg);
 
 	rt_set_thread_vdev_context(dev);
 	err = kvs_key_encode(dev, ttag, hash_type, &chid, &keybuf, &db, &dbi,
@@ -3246,6 +3207,8 @@ _repeat:
 	size_t nameindex_cnt = 0;
 	size_t value_size = 0;
 	if (val) {
+		assert(!is_kvs_offload_tt(ttag));
+
 		for (size_t i = 0; !err && val && i < len; ++i) {
 			data.mv_data = val[i].base;
 			data.mv_size = val[i].len;
@@ -3290,8 +3253,7 @@ _repeat:
 			if (repeat && is_kvs_offload_tt(ttag)) {
 				err = kvs->backend->remove(kvs->be_inst, ttag, &keybuf, 1);
 				assert(err == 0);
-				atomic_sub64(db->size + ttag, value_size);
-				atomic_dec64(db->entries + ttag);
+				kvs_backend_utilization_change(db, ttag, -((int64_t)value_size), 1);
 			}
 			size_t del_cnt = (ttag == TT_NAMEINDEX) ? nameindex_cnt : 1;
 			deleted += del_cnt;
@@ -3461,8 +3423,7 @@ _repeat:;
 		if (repeat && is_kvs_offload_tt(ttag)) {
 			err = kvs->backend->remove(kvs->be_inst, ttag, &keybuf, 1);
 			assert(err == 0);
-			atomic_sub64(db->size + ttag, value_size);
-			atomic_dec64(db->entries + ttag);
+			kvs_backend_utilization_change(db, ttag, -((int64_t)value_size), -1);
 		}
 	}
 	kvs_log_flush_barrier(db_lock, ttag, 0);
@@ -3707,8 +3668,11 @@ kvs_iterate_blobs_shard(struct repdev *dev, type_tag_t ttag,
 			if (want_values && pdata && is_kvs_offload_tt(ttag)) {
 				assert(pdata->mv_size == sizeof(realsize));
 				memcpy(&realsize, pdata->mv_data, pdata->mv_size);
-				bufdata.len = realsize > kvs->be_info.min_value_size ?
-					realsize : kvs->be_info.min_value_size;
+
+				bufdata.len = realsize > kvs->be_info.min_value_size ? realsize : kvs->be_info.min_value_size;
+				if (kvs->be_info.value_aligment && (bufdata.len % kvs->be_info.value_aligment))
+					bufdata.len = (1 + (bufdata.len / kvs->be_info.value_aligment))*kvs->be_info.value_aligment;
+
 				bufdata.base = je_malloc(bufdata.len);
 				if (!bufdata.base) {
 					log_error(lg, "memory allocation error");
@@ -3851,12 +3815,36 @@ kvs_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 		return err;
 	}
 
-	int max_blobs_adj = max_blobs;
+	int blobs_dist[kvs->plevel];
 	if (max_blobs != -1) {
-		max_blobs_adj = max_blobs / kvs->plevel;
-		max_blobs_adj = max_blobs_adj + max_blobs_adj / 8;
-		if (max_blobs_adj < 64)
-			max_blobs_adj = 64;
+		/*
+		 * Need to figure out the weight of each plevel.
+		 * Chunks might be distributed unevenly.
+		 */
+		size_t total = 0;
+		for (int j = 0; j <  kvs->plevel; j++) {
+			db = kvs->db + j;
+			assert(db);
+			MDB_txn *txn = NULL;
+			err = mdb_txn_begin(db->env, NULL, MDB_RDONLY, &txn);
+			if (err) {
+				log_error(lg, "Dev(%s): cannot begin mdb txn: (%d) %s",
+					dev->name, err, mdb_strerror(err));
+				return err;
+			}
+			MDB_stat dstat;
+			mdb_stat(txn, db->dbi[ttag], &dstat);
+			blobs_dist[j] = dstat.ms_entries;
+			total += dstat.ms_entries;
+			mdb_txn_abort(txn);
+		}
+		if (!total)
+			return 0;
+		for (int j = 0; j < kvs->plevel; j++)
+			blobs_dist[j] = 1LL + blobs_dist[j] * (long long)max_blobs / total;
+	} else {
+		for (int j = 0; j < kvs->plevel; j++)
+			blobs_dist[j] = -1;
 	}
 
 	for (int j = 0; j < kvs->plevel; j++) {
@@ -3878,7 +3866,7 @@ kvs_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 
 		err = kvs_iterate_blobs_shard(dev, ttag,
 		    callback, param, want_values,
-		    max_blobs_adj, j, sh);
+		    blobs_dist[j], j, sh);
 		if (err && err != MDB_NOTFOUND)
 			log_error(lg, "Get(%s): cannot load part %d, err: %d",
 			    dev->name, j, err);
@@ -4022,8 +4010,11 @@ kvs_iterate_blobs_nonstrict(struct repdev *dev, type_tag_t ttag,
 				if (want_values && pdata && is_kvs_offload_tt(ttag)) {
 					assert(pdata->mv_size == sizeof(realsize));
 					memcpy(&realsize, pdata->mv_data, pdata->mv_size);
-					bufdata.len = realsize > kvs->be_info.min_value_size ?
-						realsize : kvs->be_info.min_value_size;
+
+					bufdata.len = realsize > kvs->be_info.min_value_size ? realsize : kvs->be_info.min_value_size;
+					if (kvs->be_info.value_aligment && (bufdata.len % kvs->be_info.value_aligment))
+						bufdata.len = (1 + (bufdata.len / kvs->be_info.value_aligment))*kvs->be_info.value_aligment;
+
 					bufdata.base = je_malloc(bufdata.len);
 					if (!bufdata.base) {
 						log_error(lg, "memory allocation error");
@@ -4245,12 +4236,8 @@ kvs_stat_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 
 	err = kvs_log_lookup(dev, db, log, dbi, ttag, GBF_FLAG_ONE, &chid, &keybuf,
 		hash_type, NULL, 1, kvs_stat_filter, bs, NULL);
-	if (err) {
-		log_debug(lg, "Stat(%s): cannot stat blob from mdb: %d",
-		    dev->name, err);
-		if (bs)
-			bs->size = 0;
-	}
+	if (err && bs)
+		bs->size = 0;
 	if (keybuf.base)
 		je_free(keybuf.base);
 	return err;

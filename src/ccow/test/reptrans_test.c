@@ -29,6 +29,7 @@
 #include "cmocka.h"
 #include "common.h"
 #include "ccow.h"
+#include "ccow-impl.h"
 #include "ccowd.h"
 #include "ccowd-impl.h"
 #include "reptrans.h"
@@ -375,7 +376,7 @@ randomize_buffer(void* buf, size_t size) {
 	char* ptr = (char*)buf;
 
 	for(size_t i=0; i < size; i++) {
-		*ptr = rand() % 256;
+		ptr[i] = rand() % 256;
 	}
 }
 
@@ -1072,6 +1073,69 @@ reptrans_batch_incoming_queue_test(void **state) {
 	}
 }
 
+static void
+unnamed_put_perf_test(void **state) {
+	size_t n_chunks = 1000*1000;
+	size_t chunk_size = 16*1024;
+	size_t iov_size = 4;
+
+	uint512_t chid;
+	char* buff = je_malloc(n_chunks + chunk_size);
+	assert_non_null(buff);
+	uv_buf_t ub = {.base = buff, .len = n_chunks + chunk_size};
+	rtbuf_t* rb = rtbuf_init_mapped(&ub, 1);
+	randomize_buffer(buff, n_chunks + chunk_size);
+
+	ccow_completion_t c = NULL;
+	int err = ccow_create_completion(cl, NULL, NULL, n_chunks, &c);
+	assert_int_equal(0, err);
+
+	uint8_t select_policy = CCOW_SELECT_POLICY_QDEPTH;
+	assert_int_equal(ccow_attr_modify_default(c, CCOW_ATTR_SELECT_POLICY,
+		(void *)&select_policy, NULL), 0);
+	uint8_t rep_cnt = 2;
+	assert_int_equal(ccow_attr_modify_default(c, CCOW_ATTR_REPLICATION_COUNT,
+		(void *)&rep_cnt, NULL), 0);
+
+	uint8_t ht = HASH_TYPE_XXHASH_128;
+	assert_int_equal(ccow_attr_modify_default(c, CCOW_ATTR_HASH_TYPE, (void *)&ht, NULL), 0);
+
+	uint64_t attr = RD_ATTR_CHUNK_PAYLOAD;
+	uint64_t ts = get_timestamp_us();
+	uint64_t ios = 0;
+	for (size_t i = 0; i < n_chunks; i++) {
+		struct ccow_op *put_op;
+		struct ccow_io *put_io;
+		rb->bufs->base = buff + i;
+		rb->bufs->len = chunk_size;
+
+		assert_int_equal(0, rtbuf_hash(rb, ht, &chid));
+
+		assert_int_equal(0, ccow_operation_create(c, CCOW_PUT, &put_op));
+
+		assert_int_equal(0, ccow_unnamedput_create_detached(c, NULL, put_op, &put_io, NULL));
+
+		put_io->attributes = RD_ATTR_CHUNK_PAYLOAD;
+		put_op->metadata.replication_count = rep_cnt;
+
+		struct putcommon_client_req *req = CCOW_IO_REQ(put_io);
+		req->chid = chid;
+		req->hash_type = ht;
+		req->payload = rb;
+
+		assert_int_equal(0, ccow_start_io(put_io));
+		assert_int_equal(0, ccow_wait(c, i));
+		ios++;
+		if (get_timestamp_us() - ts > 1000000) {
+			ts = get_timestamp_us();
+			printf("IOPs %lu\n", ios);
+			ios = 0;
+		}
+	}
+	rtbuf_destroy(rb);
+	je_free(buff);
+}
+
 int
 main(int argc, char *argv[]) {
    int opt, err = 0;
@@ -1102,6 +1166,9 @@ main(int argc, char *argv[]) {
 			unit_test(libccow_setup),
 			unit_test(bucket_create),
 			unit_test(libreptrans_setup),
+#if 0
+			unit_test(unnamed_put_perf_test),
+#endif
 			unit_test(reptrans_ngrequest_locate_test),
 			unit_test(reptrans_batch_incoming_queue_test),
 			unit_test(reptrans_verification_queue_test),

@@ -72,6 +72,9 @@ kvslmdb_init_internal(kvslmdb_handle_t h) {
 	int readahead = 128;
 	int direct = 0;
 	int err = 0;
+	int raw = 0;
+	size_t psize = 4096;
+	size_t capacity = 128*1024*1025; /* 128 MB in RAW mode */
 	char fname[PATH_MAX];
 	MDB_txn* main_txn = NULL;
 	if (o) {
@@ -96,9 +99,60 @@ kvslmdb_init_internal(kvslmdb_handle_t h) {
 					continue;
 				}
 				direct = v->u.integer;
+			} else if (strcmp(namekey, "raw") == 0) {
+				if (v->type != json_integer) {
+					log_error(lg, "rt-kvs.json error: \"raw\" option must be integer");
+					continue;
+				}
+				raw = v->u.integer;
+			} else if (strcmp(namekey, "capacity") == 0) {
+				if (v->type != json_integer) {
+					log_error(lg, "rt-kvs.json error: \"capacity\" option must be integer");
+					continue;
+				}
+				capacity = v->u.integer;
+			} else if (strcmp(namekey, "psize") == 0) {
+				if (v->type != json_integer) {
+					log_error(lg, "rt-kvs.json error: \"psize\" option must be integer");
+					continue;
+				}
+				psize = v->u.integer;
 			}
 		}
 	}
+
+	if (!raw) {
+		struct stat st;
+		struct statvfs vstat;
+
+		int err = stat(h->path, &st);
+		if (err && err != ENOENT)
+			return -err;
+		if (!err) {
+			if (!S_ISDIR(st.st_mode)) {
+				log_error(lg, "Specified path %s isn't a directory", h->path);
+				return -EINVAL;
+			}
+		} else {
+			/* Folder doesn't exist, trying to create */
+			err = mkdir(h->path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+			if (err) {
+				log_error(lg, "Cannot create storage folder: %s(%d)", strerror(err), err);
+				return -err;
+			}
+		}
+
+		err = statvfs(h->path, &vstat);
+		if (err) {
+			log_error(lg, "statvfs error: %s(%d)", strerror(err), err);
+			return -err;
+		}
+		size_t capacity =  vstat.f_bsize * vstat.f_blocks;
+		h->capacity = capacity - LMDB_FS_RESERVED_BLOCKS*capacity/100;
+	} else {
+		h->capacity = capacity;
+	}
+
 	/*
 	 *  key/value data store init
 	 */
@@ -122,6 +176,8 @@ kvslmdb_init_internal(kvslmdb_handle_t h) {
 		goto _exit;
 	}
 
+	mdb_env_set_psize(h->env, psize);
+
 	mdb_env_set_oomfunc(h->env, kvslmdb_lmdb_oomfunc);
 
 	int sync_flag = sync == 0 ? MDB_NOSYNC :
@@ -129,14 +185,28 @@ kvslmdb_init_internal(kvslmdb_handle_t h) {
 		 (sync == 2 ? MDB_NOMETASYNC : 0));
 	int rdahead_flag = readahead ? 0 : MDB_NORDAHEAD;
 	int direct_flag = direct ? MDB_DIRECT : 0;
+	int raw_flag = raw ? MDB_RAW : 0;
 	int env_opt = MDB_COALESCE | MDB_LIFORECLAIM | MDB_NOTLS | sync_flag \
-		      | MDB_NOSUBDIR | rdahead_flag | direct_flag;
+		      | MDB_NOSUBDIR | rdahead_flag | direct_flag | raw_flag;
 
-	sprintf(fname, "rm -f %s/parts/%02x/main.mdb-lock", h->path, 0);
-	err = system(fname);
-	sprintf(fname, "mkdir -p %s/parts/%02x/", h->path, 0);
-	err = system(fname);
-	sprintf(fname, "%s/parts/%02x/main.mdb", h->path, 0);
+	if (!raw_flag) {
+		sprintf(fname, "rm -f %s/parts/%02x/main.mdb-lock", h->path, 0);
+		err = system(fname);
+		sprintf(fname, "mkdir -p %s/parts/%02x/", h->path, 0);
+		err = system(fname);
+		sprintf(fname, "%s/parts/%02x/main.mdb", h->path, 0);
+	} else {
+		/* In RAW mode path is the diskID. We have to found real partition name */
+		char buff[PATH_MAX];
+		snprintf(buff, PATH_MAX, "/dev/disk/by-id/%s", h->path);
+		char* realPath = realpath(buff, NULL);
+		if (!realPath) {
+			log_error(lg, "Cannot resolve kernel device name for %s", h->path);
+			err = -EIO;
+			goto _exit;
+		}
+		strcpy(fname, realPath);
+	}
 	err = mdb_env_open(h->env, fname, env_opt, 0664);
 	if (err) {
 		log_error(lg, "Dev(%s): cannot open, path=%s "
@@ -187,44 +257,17 @@ _exit:
 
 static int
 kvslmdb_init(const char* path, json_value *o, kvs_backend_handle_t* handle) {
-	struct stat st;
-	struct statvfs vstat;
 	char fname[1024];
 
 	if (!path || !strlen(path)) {
 		log_error(lg, "Directory path is void");
 		return -ENOENT;
 	}
-
-	int err = stat(path, &st);
-	if (err && err != ENOENT)
-		return -err;
-	if (!err) {
-		if (!S_ISDIR(st.st_mode)) {
-			log_error(lg, "Specified path %s isn't a directory", path);
-			return -EINVAL;
-		}
-	} else {
-		/* Folder doesn't exist, trying to create */
-		err = mkdir(path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-		if (err) {
-			log_error(lg, "Cannot create storage folder: %s(%d)", strerror(err), err);
-			return -err;
-		}
-	}
-
-	err = statvfs(path, &vstat);
-	if (err) {
-		log_error(lg, "statvfs error: %s(%d)", strerror(err), err);
-		return -err;
-	}
-
+	int err = 0;
 	kvslmdb_handle_t h = calloc(1, sizeof(*h));
 	if (!h)
 		return -ENOMEM;
 	h->path = strdup(path);
-	size_t capacity =  vstat.f_bsize * vstat.f_blocks;
-	h->capacity = capacity - LMDB_FS_RESERVED_BLOCKS*capacity/100;
 	h->term = 0;
 	h->env = NULL;
 	h->opts = o;
@@ -276,9 +319,8 @@ kvslmdb_get(kvs_backend_handle_t handle, int8_t ttag, iobuf_t key,
 		err = -EIO;
 		goto _exit;
 	}
-	assert(v.mv_size);
-	assert(v.mv_size <= value->len);
 	memcpy(value->base, v.mv_data, v.mv_size);
+	value->len = v.mv_size;
 	err = 0;
 
 _exit:
@@ -401,6 +443,8 @@ kvslmdb_info(kvs_backend_handle_t handle, kvs_backend_info_t* info) {
 			h->path, err, mdb_strerror(err));
 		return -EIO;
 	}
+	info->flags = 0;
+	info->value_aligment = 0;
 	info->capacity = env_stat.me_mapsize;
 	info->min_value_size = 1;
 	info->del_bulk_size = 1024;

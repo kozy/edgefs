@@ -179,6 +179,10 @@ simple_put_file(void **state)
 		(void *)&bs, NULL);
 	assert_int_equal(err, 0);
 
+	uint8_t ht = HASH_TYPE_XXHASH_128;
+	assert_int_equal(ccow_attr_modify_default(c, CCOW_ATTR_HASH_TYPE,
+		(void *)&ht, NULL), 0);
+
 	if (btree_order > 0) {
 		uint16_t bto = btree_order;
 		err = ccow_attr_modify_default(c, CCOW_ATTR_BTREE_ORDER,
