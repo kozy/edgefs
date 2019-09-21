@@ -394,8 +394,11 @@ func SystemStatus(isSummary bool) error {
 		}
 		defer C.ccow_tenant_term(tc)
 
-		fmt.Printf("guid %+s\n", C.GoString(C.ccow_get_system_guid_formatted(tc)));
+		guid := C.GoString(C.ccow_get_system_guid_formatted(tc))
+		fmt.Printf("guid %+s\n", guid);
 
+		segid := guid[0:16]
+		fmt.Printf("segid %+s\n", segid);
 		return nil
 	}
 
