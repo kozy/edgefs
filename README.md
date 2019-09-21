@@ -1,6 +1,8 @@
-# EdgeFS - decentralized data storage layer for Edge/IoT, Edge/Fog and Cloud Computing
+# EdgeFS - decentralized data fabric layer for Edge/IoT, Edge/Fog and Cloud Computing
 
-EdgeFS is high-performance, low-latency, small memory footprint, decentralized object storage system released under Apache License v2.0 developed in C/Go.
+EdgeFS is high-performance, low-latency, small memory footprint, decentralized data fabric system released under Apache License v2.0 developed in C/Go.
+
+EdgeFS is built around decentralized immutable metadata consistency to sustain network partitioning up to many days and yet provide consistent global data fabric namespace via unique versions reconciliation technique.
 
 EdgeFS advanced globally immutable versioning with file-level granularity unlimited snapshots, global (LAN/WAN) data deduplication and geo-transparent data access enables variety of decentralized Edge/Fog/Cloud Computing use cases.
 
@@ -12,11 +14,15 @@ It integrates with Kubernetes and Docker Compose. Enables Edge/Fog/Cloud applica
 
 EdgeFS is capable of spanning unlimited number of geographically distributed sites (Geo-site), connected with each other as one global name space data fabric running on top of Kubernetes platform, providing persistent, fault-tolerant and high-performance fully compatible S3 Object API and [CSI volumes](https://github.com/Nexenta/edgefs-csi) for stateful Kubernetes Applications.
 
-At each Geo-site, EdgeFS segment nodes deployed as containers (Kubernetes StatefulSet or Docker Compose) on physical or virtual nodes, pooling available storage capacity and presenting it via compatible S3/NFS/iSCSI/etc storage emulated protocols for cloud-native applications running on the same or dedicated servers.
+At each Edge location, EdgeFS segment nodes deployed as containers (Kubernetes StatefulSet or Docker Compose) on physical or virtual nodes, pooling available storage capacity and presenting it via compatible S3/NFS/iSCSI/etc storage emulated protocols for cloud-native applications running on the same or dedicated servers.
+
+EdgeFS can run on top of any underlying storage architecture - high-performance NVMe Fabric, local raw devices, existing filesytems or high-performance key-value databases.
 
 ## How it works, in a Nutshell?
 
-If you familiar with "git", where all modifications are fully versioned and globally immutable, it is highly likely you already know how it works at its core. Think of it as a world-scale copy-on-write technique. Now, if we can make a parallel for you to understand it better - what EdgeFS does, it expands "git" paradigm to object storage and making Kubernetes Persistent Volumes accessible via emulated storage standard protocols e.g. S3, NFS and even block devices such as iSCSI, in a high-performance and low-latency ways. With fully versioned modifications, fully immutable metadata and data, users data can be transparently replicated, distributed and dynamically pre-fetched across many Geo-sites.
+Essentially it is high-performance versioning system that is capable of achieving 1,000,000+ versions per second rates, where each version is universally identifieable and location independent.
+
+If you familiar with "git", where all modifications are fully versioned and globally immutable, it is highly likely you already know how it works at its core. Think of it as a world-scale copy-on-write technique. Now, if we can make a parallel for you to understand it better - what EdgeFS does, it expands "git" paradigm to object storage and making Kubernetes Persistent Volumes accessible via emulated storage standard protocols e.g. File, Object, NoSQL databases and even block devices, in a high-performance and low-latency ways. With fully versioned modifications, fully immutable metadata and data, users data can be transparently replicated, distributed and dynamically pre-fetched across many Geo-sites.
 
 ## Developer Guides, Services and APIs
 
