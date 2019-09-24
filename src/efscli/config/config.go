@@ -47,10 +47,27 @@ type RtlfsDevice struct {
 	VerifyChid          int    `json:"verify_chid"`
 	PlevelOverride      int    `json:"plevel_override,omitempty"`
 	MaxSize             uint64 `json:"maxsize,omitempty"`
+	WalDisabled         int    `json:"wal_disabled,omitempty"`
 }
 
 type RtlfsDevices struct {
 	Devices []RtlfsDevice `json:"devices"`
+}
+
+type RtkvsDevices struct {
+	Backend string        `json:"backend"`
+	Devices []RtkvsDevice `json:"devices"`
+}
+
+type RtkvsDevice struct {
+	Name           string `json:"name"`
+	Path           string `json:"path"`
+	JornalPath     string `json:"journal"`
+	JournalMaxsize uint64 `json:"jenvsize,omitempty"`
+	VerifyChid     int    `json:"verify_chid"`
+	PlevelOverride int    `json:"plevel_override,omitempty"`
+	Sync           int    `json:"sync"`
+	WalDisabled    int    `json:"wal_disabled,omitempty"`
 }
 
 type CcowTrlog struct {
@@ -64,6 +81,7 @@ type CcowTenant struct {
 	ReplicationCount int `json:"replication_count,omitempty"`
 	SyncPut          int `json:"sync_put,omitempty"`
 	SyncPutNamed     int `json:"sync_put_named,omitempty"`
+	CommitWait       int `json:"sync_put_commit_wait"`
 }
 
 type CcowNetwork struct {
@@ -113,6 +131,7 @@ type NodeConfig struct {
 	Rtrd            RTDevices    `json:"rtrd"`
 	RtrdSlaves      []RTDevices  `json:"rtrdslaves"`
 	Rtlfs           RtlfsDevices `json:"rtlfs"`
+	Rtkvs           RtkvsDevices `json:"rtkvs"`
 	NodeType        string       `json:"nodeType"`
 }
 
@@ -123,6 +142,7 @@ var (
 	CCOWDJsonFile      = "/etc/ccow/ccowd.json"
 	RTRDJsonFile       = "/etc/ccow/rt-rd.json"
 	RTLFSJsonFile      = "/etc/ccow/rt-lfs.json"
+	RTKVSJsonFile      = "/etc/ccow/rt-kvs.json"
 
 	CorosyncConfFile            = "/etc/corosync/corosync.conf"
 	CorosyncConfExampleFile     = "/etc/corosync/corosync.conf.example"
@@ -399,6 +419,18 @@ func ConfigNode() {
 			fmt.Printf("Warning: No Rtlfs devices passed. No %s created.\n", nedgeHome+RTLFSJsonFile)
 		}
 
+	}  else if transport == "rtkvs" {
+		fmt.Printf("Rtkvs configuration for NodeType: %s %+v", nodeConfig.NodeType, nodeConfig.Rtkvs)
+		if len(nodeConfig.Rtkvs.Devices) > 0 || nodeConfig.NodeType == "gateway" {
+			err := efsutil.MarshalToFile(nedgeHome+RTKVSJsonFile, &nodeConfig.Rtkvs)
+			if err != nil {
+				fmt.Printf("Can't marshal JSON file %s Error: %v \n", nedgeHome+RTKVSJsonFile, err)
+				os.Exit(1)
+			}
+			fmt.Printf("Configured %s\n", nedgeHome+RTKVSJsonFile)
+		} else {
+			fmt.Printf("Warning: No Rtkvs devices passed. No %s created.\n", nedgeHome+RTKVSJsonFile)
+		}
 	} else {
 		fmt.Printf("Driver transport not re-configured\n")
 	}
