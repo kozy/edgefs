@@ -72,6 +72,11 @@
 #define DEV_MAGIC "NEFMT1"
 #define DEV_LMDB_MAXREADERS	512		/* LMDB default is 126 */
 #define DEV_LMDB_LOG_MAPSIZE		(128ULL * 1024ULL * 1024ULL)
+/**
+ * Assumption: 16kB chunk size, 4TB KVSSD, 1 back-reference per chunk (300 bytes)
+ * Capacity for VBRs: ~75GB, adding 30% overhead for manifests/nameindexes = 100GB
+ */
+#define DEV_LMDB_JENV_MAPSIZE	(100ULL * 1024ULL * 1024ULL * 1024ULL)
 #define DEV_KVS_VERSION		1 /* current version of the lfs */
 
 /* Maximum number of entries before we will start flushing into main TT
@@ -201,7 +206,7 @@ kvs_backend_get(const char* name) {
 	kvs_lib_handle = dlopen(lib_name, RTLD_LAZY | RTLD_LOCAL);
 	if (!kvs_lib_handle) {
 		char *errstr = dlerror();
-		log_error(lg, "Cannot open backend library %s", lib_name);
+		log_error(lg, "Cannot open backend library %s: %s", lib_name, errstr);
 		return NULL;
 	}
 	sprintf(sym_name, "%s_vtbl", name);
@@ -4397,12 +4402,7 @@ kvs_dev_init(void *kvs_arg)
 
 	/* main and journal DBI are located on the same disk */
 	char mp[PATH_MAX];
-	err = kvs_get_mountpoint_by_name(dev->journal, mp, sizeof(mp));
-
-	if (err) {
-		arg->err = err;
-		return NULL;
-	}
+	strcpy(mp, dev->journal);
 
 	if (dev->rt->init_traits) {
 		struct ccowd_params* params = dev->rt->init_traits;
@@ -4422,7 +4422,7 @@ kvs_dev_init(void *kvs_arg)
 		return NULL;
 	}
 
-	dev->stats.physical_capacity = 1024UL*1024UL*1024UL*1024UL;
+	dev->stats.physical_capacity = j_size;
 	/* We use journal name suffixed by VDEV name */
 	strcat(mp, "/");
 	strcat(mp, dev->name);
@@ -4887,80 +4887,6 @@ kvs_parse_opts(json_value *o, struct reptrans *rt)
 		return -1;
 	}
 
-	/* FIXME: to calm down ASAN */
-	usleep(1);
-
-	uint32_t md_max = devices->u.array.length;
-	char* j_names[md_max];
-	uint32_t j_refs[md_max];
-	uint64_t j_part_size[md_max];
-
-	memset(j_names, 0, sizeof(j_names));
-	memset(j_refs, 0, sizeof(j_refs));
-	memset(j_part_size, 0, sizeof(j_part_size));
-	uint32_t n_j = 0;
-
-	for (i = devices->u.array.length; i > 0 ; i--) {
-		json_value *d = devices->u.array.values[i - 1];
-		char * name = NULL;
-		for (j = 0; j < d->u.object.length; j++) {
-			char *namekey = d->u.object.values[j].name;
-			json_value *v = d->u.object.values[j].value;
-
-			if (strcmp(namekey, "path") == 0) {
-				name = v->u.string.ptr;
-			} else if (strcmp(namekey, "journal") == 0) {
-				if (v->type != json_string)
-					continue;
-				char *journal = v->u.string.ptr;
-				if (!journal) {
-					log_error(lg, "Journal ins't defined for a VDEV at index %lu", i);
-					return -EINVAL;
-				}
-				uint32_t idx = 0;
-				for (; idx < n_j; idx++)
-					if (!strcmp(journal, j_names[idx]))
-						break;
-				if (!j_names[idx]) {
-					j_names[idx] = je_strdup(journal);
-					n_j++;
-				}
-				j_refs[idx]++;
-			}
-		}
-		if (!name)
-			log_error(lg, "Device name ins't defined at index %lu", i);
-	}
-
-	/* Calculate mdoffload's HDD/SSD part size */
-	for (uint32_t i = 0; i < n_j; i++) {
-		char mount_point[PATH_MAX];
-		int err = kvs_get_mountpoint_by_name(j_names[i], mount_point,
-			sizeof(mount_point));
-		if (err) {
-			log_error(lg, "Couldn't resolve mount point for a disk %s",
-				j_names[i]);
-			return -ENOENT;
-		}
-
-		struct statvfs s;
-		if (statvfs(mount_point, &s) != 0) {
-			log_error(lg, "Can't access mdoffload device path %s: %d", mount_point,
-			    -errno);
-			return -ENOENT;
-		}
-		j_part_size[i] = s.f_frsize * s.f_blocks / j_refs[i];
-		if (j_part_size[i] - DEV_LMDB_LOG_MAPSIZE < DEV_LMDB_LOG_MAPSIZE) {
-			log_error(lg, "The SSD device at %s is too small: "
-				"part size %lu MB is smaller than the journal",
-				mount_point, j_part_size[i]/(1024U*1024U));
-			return -EINVAL;
-		}
-		log_notice(lg, "The SSD device %s size %lu MB, part size %lu MB, #parts %u",
-			mount_point, (s.f_frsize * s.f_blocks)/(1024U*1024U),
-			j_part_size[i]/(1024U*1024U), j_refs[i]);
-	}
-
 	int numdevs = 0;
 	int err = 0;
 	struct kvs_arg arg[devices->u.array.length];
@@ -4992,6 +4918,7 @@ kvs_parse_opts(json_value *o, struct reptrans *rt)
 		uint8_t bloom_enabled = 1;
 		uint8_t keycache_enabled = 1;
 		uint32_t keycache_size_max = KEY_CACHE_MAX;
+		uint64_t journal_env_size = DEV_LMDB_JENV_MAPSIZE;
 		int detached = 0;
 
 		struct repdev_bg_config* bg_cfg =
@@ -5166,6 +5093,15 @@ kvs_parse_opts(json_value *o, struct reptrans *rt)
 					continue;
 				}
 				detached = v->u.integer;
+			} else if (strcmp(namekey, "jenvsize") == 0) {
+				if (v->type != json_integer) {
+					log_warn(lg, "Syntax error: "
+						"dev.%lu.%lu.maxsize is not an "
+						"integer", i, j);
+					err = 1;
+					continue;
+				}
+				journal_env_size = v->u.integer;
 			}
 		}
 
@@ -5174,6 +5110,7 @@ kvs_parse_opts(json_value *o, struct reptrans *rt)
 				name);
 			continue;
 		}
+
 
 		size_t n_opts;
 		/*
@@ -5185,13 +5122,15 @@ kvs_parse_opts(json_value *o, struct reptrans *rt)
 		reptrans_parse_bg_jobs_config(d, bg_cfg, &n_opts);
 
 		/* skip initialization if important parameters missing */
-		if (!name || !path) {
+		if (!name || !path || !journal) {
+			log_error(lg, "Skipped device at index %lu: name %s, path %s, journal %s", i, name, path, journal);
 			if (name)
 				je_free(name);
 			if (path)
 				je_free(path);
+			if (journal)
+				je_free(journal);
 			je_free(bg_cfg);
-			log_notice(lg, "Skipped device at index %lu", i);
 			continue;
 		}
 
@@ -5246,16 +5185,10 @@ kvs_parse_opts(json_value *o, struct reptrans *rt)
 		arg[i].th = 0;
 		arg[i].backend_name = backend_name;
 		arg[i].n_dev = devices->u.array.length;
-		for (uint32_t n = 0; n < n_j; n++) {
-			if (strcmp(j_names[n], journal) == 0) {
-				arg[i].j_size = j_part_size[n];
-				break;
-			}
-		}
-		assert(arg[i].j_size);
+		arg[i].j_size = journal_env_size;
 
 		err = pthread_create(&arg[i].th, NULL,
-				&kvs_dev_init, (void *)&arg[i]);
+			&kvs_dev_init, (void *)&arg[i]);
 		if (err) {
 			log_warn(lg, "Dev(%s): cannot start bloom_load thread: (%d) %s",
 					dev->name, err, strerror(err));
@@ -5754,11 +5687,7 @@ kvs_erase(struct reptrans *rt, struct _json_value *o, const erase_opt_t* opts) {
 		struct stat st;
 		char cmd[PATH_MAX];
 		char mp[PATH_MAX];
-		int err = kvs_get_mountpoint_by_name(journal, mp, PATH_MAX);
-		if (err) {
-			log_error(lg, "Cannot find a mountpoint for journal %s", journal);
-			continue;
-		}
+		strcpy(mp, journal);
 
 		int wal_only = opts->flags & RD_ERASE_FLAG_WAL_ONLY;
 

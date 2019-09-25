@@ -20,6 +20,7 @@ type RTDevice struct {
 	PlevelOverride    int    `json:"plevel_override,omitempty"`
 	Sync              int    `json:"sync"`
 	Detached          int    `json:"detached"`
+	WalDisabled       int    `json:"wal_disabled,omitempty"`
 }
 
 type RTDevices struct {
@@ -41,7 +42,8 @@ type RTDeviceParams struct {
 	UseMetadataOffload bool   // when useAllSSD is false, enable metadata offload on SSD
 	UseAllSSD          bool   // only look for SSD/NVMe
 	RtPlevelOverride   int    // if > 0, override automatic partitioning numbering logic
-	Sync               int
+	Sync               int    // Consistency mode
+	WalDisabled        int    // Write-Ahead-Log mode
 }
 
 func DefaultRTParams() (params *RTDeviceParams) {
@@ -61,6 +63,7 @@ func DefaultRTParams() (params *RTDeviceParams) {
 		UseAllSSD:          false,
 		RtPlevelOverride:   0,
 		Sync:               1,
+		WalDisabled:        0,
 	}
 }
 
@@ -116,11 +119,12 @@ func GetRTDevices(nodeDisks []LocalDisk, rtParams *RTDeviceParams) (rtDevices []
 				continue
 			}
 			rtdev := RTDevice{
-				Name:       getIdDevLinkName(devices[i].DevLinks),
-				Device:     "/dev/" + devices[i].Name,
-				Psize:      rtParams.LmdbPageSize,
-				VerifyChid: rtParams.RtVerifyChid,
-				Sync:       rtParams.Sync,
+				Name:        getIdDevLinkName(devices[i].DevLinks),
+				Device:      "/dev/" + devices[i].Name,
+				Psize:       rtParams.LmdbPageSize,
+				VerifyChid:  rtParams.RtVerifyChid,
+				Sync:        rtParams.Sync,
+				WalDisabled: rtParams.WalDisabled,
 			}
 			if rtParams.RtPlevelOverride != 0 {
 				rtdev.PlevelOverride = rtParams.RtPlevelOverride
@@ -143,11 +147,12 @@ func GetRTDevices(nodeDisks []LocalDisk, rtParams *RTDeviceParams) (rtDevices []
 				continue
 			}
 			rtdev := RTDevice{
-				Name:       getIdDevLinkName(devices[i].DevLinks),
+				Name:        getIdDevLinkName(devices[i].DevLinks),
 				Device:     "/dev/" + devices[i].Name,
-				Psize:      rtParams.LmdbPageSize,
-				VerifyChid: rtParams.RtVerifyChid,
-				Sync:       rtParams.Sync,
+				Psize:       rtParams.LmdbPageSize,
+				VerifyChid:  rtParams.RtVerifyChid,
+				Sync:        rtParams.Sync,
+				WalDisabled: rtParams.WalDisabled,
 			}
 			if rtParams.RtPlevelOverride != 0 {
 				rtdev.PlevelOverride = rtParams.RtPlevelOverride
@@ -186,14 +191,15 @@ func GetRTDevices(nodeDisks []LocalDisk, rtParams *RTDeviceParams) (rtDevices []
 	for i := range hdds_divided {
 		for j := range hdds_divided[i] {
 			rtdev := RTDevice{
-				Name:       getIdDevLinkName(hdds_divided[i][j].DevLinks),
-				Device:     "/dev/" + hdds_divided[i][j].Name,
-				Psize:      rtParams.LmdbPageSize,
-				MdPsize:    rtParams.LmdbMdPageSize,
-				VerifyChid: rtParams.RtVerifyChid,
-				Journal:    getIdDevLinkName(ssds[i].DevLinks),
-				Metadata:   getIdDevLinkName(ssds[i].DevLinks) + "," + rtParams.UseMetadataMask,
-				Sync:       rtParams.Sync,
+				Name:        getIdDevLinkName(hdds_divided[i][j].DevLinks),
+				Device:      "/dev/" + hdds_divided[i][j].Name,
+				Psize:       rtParams.LmdbPageSize,
+				MdPsize:     rtParams.LmdbMdPageSize,
+				VerifyChid:  rtParams.RtVerifyChid,
+				Journal:     getIdDevLinkName(ssds[i].DevLinks),
+				Metadata:    getIdDevLinkName(ssds[i].DevLinks) + "," + rtParams.UseMetadataMask,
+				Sync:        rtParams.Sync,
+				WalDisabled: rtParams.WalDisabled,
 			}
 			if rtParams.UseBcache {
 				rtdev.Bcache = 1
