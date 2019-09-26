@@ -200,8 +200,7 @@ int srv_getcommon_proposal_work(struct state *st, ccowtp_work_cb work_cb,
 	dev->get_disk_qdepth++;
 	assert(after_work_cb);
 	if (req->ent || ((req->found_in_key_cache_size) && preq
-	    && (ctx->opcode_in == RT_UNNAMED_CHUNK_GET)
-	    && !(req->attributes & (RD_ATTR_CM_LEAF_WRITE | RD_ATTR_ONDEMAND_PREFETCH)))) {
+	    && (ctx->opcode_in == RT_UNNAMED_CHUNK_GET))) {
 		work_cb(req);
 		after_work_cb(req, 0);
 		return 0;
