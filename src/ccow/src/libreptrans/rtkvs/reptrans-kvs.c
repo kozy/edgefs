@@ -2372,7 +2372,7 @@ kvs_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 			if (err == MDB_KEYEXIST) {
 				log_debug(lg, "Dev(%s): put_blob_with_attr %s mdb_put: (%d) %s",
 				    dev->name, type_tag_name[ttag], err, mdb_strerror(err));
-				err = 0;
+				err = -EEXIST;
 			} else if (KVS_NO_FREE_SPACE(err)) {
 				reptrans_dev_set_status(dev, REPDEV_STATUS_READONLY_FAULT);
 				log_warn(lg, "Dev(%s): put_blob_with_attr %s mdb_put: (%d) %s",
