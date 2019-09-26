@@ -137,6 +137,10 @@ src/libreptrans/rtkvs/backend/kvslmdb/.deps/
 src/libreptrans/rtkvs/backend/kvslmdb/.libs/
 src/libreptrans/rtkvs/backend/kvslmdb/Makefile
 src/libreptrans/rtkvs/backend/kvslmdb/Makefile.in
+src/libreptrans/rtkvs/backend/kvssd/.deps/
+src/libreptrans/rtkvs/backend/kvssd/.libs/
+src/libreptrans/rtkvs/backend/kvssd/Makefile
+src/libreptrans/rtkvs/backend/kvssd/Makefile.in
 src/libreptrans/rtlfs/.deps/
 src/libreptrans/rtlfs/.libs/
 src/libreptrans/rtlfs/Makefile

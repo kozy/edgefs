@@ -5673,12 +5673,6 @@ kvs_erase(struct reptrans *rt, struct _json_value *o, const erase_opt_t* opts) {
 			log_error(lg, "the name, path or journal are absent in rt-kvs.json");
 			return -EBADF;
 		}
-		struct statvfs s;
-		if (statvfs(path, &s) != 0) {
-			log_error(lg, "Can't access device path %s: %d", path,
-			    -errno);
-			continue;
-		}
 
 		if (opts->name && strcmp(opts->name, name))
 			continue;

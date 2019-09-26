@@ -98,3 +98,7 @@
 	url = https://github.com/Nexenta/kronosnet.git
 	branch = v1.8-nexenta
 	ignore = all
+[submodule "deps/kvssd/KVSSD"]
+	path = deps/kvssd/KVSSD
+	url = https://github.com/Nexenta/KVSSD.git
+

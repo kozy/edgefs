@@ -8,7 +8,7 @@ SRCDIR=$(NEDGE_HOME)
 MAKEFLAGS += -j
 
 CORO_DEPS=jemalloc libqb knet corosync
-DEPS=lmdb libuv nanomsg liberasurecode libbacktrace \
+DEPS=lmdb libuv nanomsg liberasurecode libbacktrace kvssd \
      json-c h2o smartmontools
 CCOW_DEPS=stgt fio nfs-ganesha
 

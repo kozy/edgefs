@@ -21,25 +21,18 @@
 ## specific language governing permissions and limitations
 ## under the License.
 ##
-SUBDIRS = libcrypto libccowutil libreptrans libreplicast libclengine \
-          libconnbroker libcompress libchunk libflexhash libccache libauditc \
-	  libauditd libtrlog libccow libccowd libccowfsio libccowvol \
-	  include
+lib_LTLIBRARIES = libkvssd_backend.la
 
-sbin_PROGRAMS = ccow-auditd ccow-daemon
+libkvssd_backend_la_SOURCES = kvssd-backend.c
 
-ccow_auditd_SOURCES = ccow-auditd.c
-ccow_auditd_CFLAGS =
-ccow_auditd_LDFLAGS = $(ASAN_LIB)
-ccow_auditd_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
-		    $(top_srcdir)/src/libauditd/libauditd.la
+libkvssd_backend_la_CFLAGS = -I$(top_srcdir)/src/libflexhash \
+			-I$(top_srcdir)/src/libreplicast \
+			-I$(top_srcdir)/src/libreptrans \
+			-I$(top_srcdir)/src/libccowd \
+			-I$(top_srcdir)/src/libflexhash \
+			-I$(top_srcdir)/src/libclengine \
+			-I$(top_srcdir)/src/libtrlog \
+			-I$(top_srcdir)/src/libccow \
+			-I$(top_srcdir)/src/libreptrans/rtkvs
 
-ccow_daemon_SOURCES = ccow-daemon.c
-ccow_daemon_CFLAGS =	-I$(top_srcdir)/src/libreplicast \
-			-I$(top_srcdir)/src/libreptrans
-ccow_daemon_LDFLAGS = $(ASAN_LIB)
-ccow_daemon_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
-		    $(top_srcdir)/src/libccowd/libccowd.la \
-		    $(top_srcdir)/src/libccow/libccow.la \
-		    $(top_srcdir)/src/libtrlog/libtrlog.la \
-		    $(top_srcdir)/src/libccache/libccache.la
+libkvssd_backend_la_LDFLAGS = -lkvapi
