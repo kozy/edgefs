@@ -119,6 +119,12 @@ uc_mi_get_meminfo(ucache_t * uc)
 	FILE * fp = 0;
 	char buf[128];
 	size_t rv;
+
+#if 0
+	/**
+	 * The code below reports wrong memory size.
+	 * hierarchical_memory_limit is huge (9223372036854771712)
+	 */
 	size_t haml = 0, rss = 0;
 	if (is_container && !(getenv("DATA_CONTAINER"))) {
 		fp = fopen("/sys/fs/cgroup/memory/memory.stat", "r");
@@ -156,7 +162,7 @@ uc_mi_get_meminfo(ucache_t * uc)
 		uc_mi_buffered = 0;
 		return 0;
 	}
-
+#endif
 
 	/*
 	 * read and parse /proc/meminfo, but only in the case of data-container
@@ -6078,6 +6084,62 @@ ccow_get_stats(ccow_t tctx, ccow_stats_t *stats)
 }
 
 void
+ccow_print_ucache_stats(ccow_t tctx) {
+	ucache_stats_t* stats = &tctx->ucache->stats;
+	log_notice(lg, "\n"
+	    "------------------------------------------------------------\n"
+	    "ucache: \n"
+	    "    puts           = %"PRIu64" \n"
+	    "    gets           = %"PRIu64" \n"
+	    "    ucsize_max     = %zu \n"
+	    "    ucsize_lim     = %zu \n"
+	    "    mem_limit      = %zu \n"
+	    "    ucsize         = %zu \n"
+	    "    total ram      = %zu \n"
+	    "    free ram       = %zu \n"
+	    "    hits           = %"PRIu64" \n"
+	    "    misses         = %"PRIu64" \n"
+	    "    put_hits       = %"PRIu64" \n"
+	    "    put_misses     = %"PRIu64" \n"
+	    "    put_evicts     = %"PRIu64" \n"
+	    "    expand_nomem   = %"PRIu64" \n"
+	    "    expands        = %"PRIu64" \n"
+	    "    shrinks        = %"PRIu64" \n"
+	    "    inprogs        = %"PRIu64" \n"
+	    "    size_cur       = %"PRIu64" \n"
+	    "    size_inc       = %"PRIu64" \n"
+	    "    size_min       = %"PRIu64" \n"
+	    "    size_max       = %"PRIu64" \n"
+	    "    lru_count      = %"PRIu64" \n"
+	    "    overwr_evicts  = %"PRIu64" \n"
+	    "------------------------------------------------------------\n",
+	    stats->puts,
+	    stats->gets,
+	    stats->ucsize_max,
+	    stats->ucsize_lim,
+	    stats->mem_limit,
+	    stats->ucsize,
+	    stats->total_ram,
+	    stats->free_ram,
+	    stats->hits,
+	    stats->misses,
+	    stats->put_hits,
+	    stats->put_misses,
+	    stats->put_evicts,
+	    stats->expand_nomem,
+	    stats->expands,
+	    stats->shrinks,
+	    stats->inprogs,
+	    stats->size_cur,
+	    stats->size_inc,
+	    stats->size_min,
+	    stats->size_max,
+	    stats->lru_count,
+	    stats->overwr_evicts
+	);
+}
+
+void
 ccow_print_stats(ccow_stats_t stats)
 {
 	log_flush(lg);
@@ -6132,57 +6194,6 @@ ccow_print_stats(ccow_stats_t stats)
 	    stats->cmcache.cmc_put_misses,
 	    stats->cmcache.cmc_evicts,
 	    stats->cmcache.cmc_overwr_evicts
-	);
-	log_notice(lg, "\n"
-	    "------------------------------------------------------------\n"
-	    "ucache: \n"
-	    "    puts           = %"PRIu64" \n"
-	    "    gets           = %"PRIu64" \n"
-	    "    ucsize_max     = %zu \n"
-	    "    ucsize_lim     = %zu \n"
-	    "    mem_limit      = %zu \n"
-	    "    ucsize         = %zu \n"
-	    "    total ram      = %zu \n"
-	    "    free ram       = %zu \n"
-	    "    hits           = %"PRIu64" \n"
-	    "    misses         = %"PRIu64" \n"
-	    "    put_hits       = %"PRIu64" \n"
-	    "    put_misses     = %"PRIu64" \n"
-	    "    put_evicts     = %"PRIu64" \n"
-	    "    expand_nomem   = %"PRIu64" \n"
-	    "    expands        = %"PRIu64" \n"
-	    "    shrinks        = %"PRIu64" \n"
-	    "    inprogs        = %"PRIu64" \n"
-	    "    size_cur       = %"PRIu64" \n"
-	    "    size_inc       = %"PRIu64" \n"
-	    "    size_min       = %"PRIu64" \n"
-	    "    size_max       = %"PRIu64" \n"
-	    "    lru_count      = %"PRIu64" \n"
-	    "    overwr_evicts  = %"PRIu64" \n"
-	    "------------------------------------------------------------\n",
-	    stats->ucache.puts,
-	    stats->ucache.gets,
-	    stats->ucache.ucsize_max,
-	    stats->ucache.ucsize_lim,
-	    stats->ucache.mem_limit,
-	    stats->ucache.ucsize,
-	    stats->ucache.total_ram,
-	    stats->ucache.free_ram,
-	    stats->ucache.hits,
-	    stats->ucache.misses,
-	    stats->ucache.put_hits,
-	    stats->ucache.put_misses,
-	    stats->ucache.put_evicts,
-	    stats->ucache.expand_nomem,
-	    stats->ucache.expands,
-	    stats->ucache.shrinks,
-	    stats->ucache.inprogs,
-	    stats->ucache.size_cur,
-	    stats->ucache.size_inc,
-	    stats->ucache.size_min,
-	    stats->ucache.size_max,
-	    stats->ucache.lru_count,
-	    stats->ucache.overwr_evicts
 	);
 	log_notice(lg, "\n"
 	    "------------------------------------------------------------\n"
@@ -6305,25 +6316,25 @@ ccow_ucache_timer_worker(void * arg)
 	assert(uc_mi_total != 0);
 	assert(uc_mi_free  != 0);
 
-	uc->tc->stats.ucache.total_ram = uc_mi_total;
-	uc->tc->stats.ucache.free_ram  = uc_mi_free + uc_mi_buffered +
+	uc->stats.total_ram = uc_mi_total;
+	uc->stats.free_ram  = uc_mi_free + uc_mi_buffered +
 		uc_mi_cached;
-	if (uc->tc->stats.ucache.free_ram > uc_mi_swapcached + 1)
-		uc->tc->stats.ucache.free_ram -= uc_mi_swapcached;
+	if (uc->stats.free_ram > uc_mi_swapcached + 1)
+		uc->stats.free_ram -= uc_mi_swapcached;
 
-	assert(uc->tc->stats.ucache.total_ram != 0);
-	assert(uc->tc->stats.ucache.free_ram  != 0);
+	assert(uc->stats.total_ram != 0);
+	assert(uc->stats.free_ram  != 0);
 
 	double fp =
-		(uc->tc->stats.ucache.free_ram * 100)/uc->tc->stats.ucache.total_ram;
+		(uc->stats.free_ram * 100)/uc->stats.total_ram;
 
 	unsigned long free_pct = fp;
 
-	uc->tc->stats.ucache.size_cur  = uc->size_cur;
-	uc->tc->stats.ucache.size_inc  = uc->size_inc;
-	uc->tc->stats.ucache.size_min  = uc->size_min;
-	uc->tc->stats.ucache.size_max  = uc->size_max;
-	uc->tc->stats.ucache.lru_count = uc->lru_count;
+	uc->stats.size_cur  = uc->size_cur;
+	uc->stats.size_inc  = uc->size_inc;
+	uc->stats.size_min  = uc->size_min;
+	uc->stats.size_max  = uc->size_max;
+	uc->stats.lru_count = uc->lru_count;
 
 	uc->timer_count++;
 
@@ -6338,7 +6349,6 @@ ccow_ucache_timer_worker(void * arg)
 	}
 
 	ccow_ucache_evict(uc, free_pct);
-	// ccow_print_stats(&uc->tc->stats);
 
 _exit:
 	tc->ucache_work_inprog = 0;
@@ -6451,11 +6461,11 @@ ccow_ucache_create(struct ccow *tc)
 	} else if (is_embedded()) {
 		mem_limit = UCACHE_MEMLIMIT_EMBEDDED;
 	}
-	tc->stats.ucache.mem_limit = mem_limit;
-	tc->stats.ucache.ucsize_max = si.totalram;
-	tc->stats.ucache.ucsize_lim = (si.totalram * tc->ucache_size_limit) / 100;
+	uc->stats.mem_limit = mem_limit;
+	uc->stats.ucsize_max = si.totalram;
+	uc->stats.ucsize_lim = (si.totalram * tc->ucache_size_limit) / 100;
 	log_info(lg, "Tenant ucache memory limits: %ld/%ld",
-	    tc->stats.ucache.ucsize_lim, mem_limit);
+	    uc->stats.ucsize_lim, mem_limit);
 
 	return uc;
 }
@@ -6473,7 +6483,7 @@ ccow_ucache_expand(ucache_t *uc, unsigned long fp)
 
 	if (fp < UCACHE_FREE_SPACE_LIM) {
 		/* there's not enough freeram to expand */
-		uc->tc->stats.ucache.expand_nomem++;
+		uc->stats.expand_nomem++;
 		uv_mutex_unlock(&uc->uc_pos_mutex);
 		return;
 	}
@@ -6490,7 +6500,7 @@ ccow_ucache_expand(ucache_t *uc, unsigned long fp)
 	}
 
 	/* expand */
-	uc->tc->stats.ucache.expands++;
+	uc->stats.expands++;
 
 	/* move the LRU queue to a temporary queue header for now */
 	QUEUE new_lru;
@@ -6513,7 +6523,7 @@ ccow_ucache_expand(ucache_t *uc, unsigned long fp)
 			ucache_entry_t * itm = QUEUE_DATA(lru, ucache_entry_t, lru_link);
 			QUEUE_REMOVE(lru);
 
-			uc->tc->stats.ucache.ucsize -= itm->value.len;
+			uc->stats.ucsize -= itm->value.len;
 
 			je_free(itm->value.base);
 			je_free(itm);
@@ -6526,7 +6536,7 @@ ccow_ucache_expand(ucache_t *uc, unsigned long fp)
 	}
 
 	uc->lru_count = 0;
-	uc->tc->stats.ucache.ucsize = 0;
+	uc->stats.ucsize = 0;
 
 	uv_mutex_unlock(&uc->uc_pos_mutex);
 
@@ -6554,52 +6564,10 @@ ccow_ucache_evict_overwrite(void *arg, void *ch)
 
 	assert(ucache != NULL);
 	assert(chid != 0);
-
-	uv_mutex_lock(&ucache->uc_pos_mutex);
-
-	if (ucache->uc_inprog) {
-		ucache->tc->stats.ucache.inprogs++;
-		uv_mutex_unlock(&ucache->uc_pos_mutex);
-		return;
-	}
-
-	ucache->uc_inprog = 1;
-
-	/* position in cache */
-	int i = ccow_ucache_idx(ucache, chid);
-
-	if (ucache->cache[i].count == 0) {
-		/* empty cache entry, nothing to evict */
-		ucache->uc_inprog = 0;
-		uv_mutex_unlock(&ucache->uc_pos_mutex);
-		return;
-	}
-
-	QUEUE * ent;
-	ucache_entry_t * itm;
-
-	QUEUE_FOREACH(ent, &ucache->cache[i].hdr) {
-		itm = QUEUE_DATA(ent, ucache_entry_t, col_link);
-
-		if (uint512_cmp(&itm->key, chid) == 0) {
-			QUEUE_REMOVE(&itm->lru_link);
-			QUEUE_REMOVE(&itm->col_link);
-
-			ucache->lru_count--;
-			ucache->tc->stats.ucache.ucsize -= itm->value.len;
-
-			je_free(itm->value.base);
-			je_free(itm);
-			ucache->tc->stats.ucache.overwr_evicts++;
-
-			ucache->uc_inprog = 0;
-			uv_mutex_unlock(&ucache->uc_pos_mutex);
-			return;
-		}
-	}
-
-	ucache->uc_inprog = 0;
-	uv_mutex_unlock(&ucache->uc_pos_mutex);
+	/**
+	 * Do nothing here because chunk overwrite isn't a reasons for eviction.
+	 * The chunk is a part of previous object version still and might be fetched soon.
+	 */
 }
 
 void
@@ -6620,7 +6588,7 @@ ccow_ucache_shrink(ucache_t *uc, unsigned long fp)
 	}
 
 	/* shrink */
-	uc->tc->stats.ucache.shrinks++;
+	uc->stats.shrinks++;
 
 	/* evict excess entries */
 	uint64_t new_size = uc->size_cur - uc->size_inc;
@@ -6666,7 +6634,7 @@ ccow_ucache_shrink(ucache_t *uc, unsigned long fp)
 			ucache_entry_t * itm = QUEUE_DATA(lru, ucache_entry_t, lru_link);
 			QUEUE_REMOVE(lru);
 
-			uc->tc->stats.ucache.ucsize -= itm->value.len;
+			uc->stats.ucsize -= itm->value.len;
 
 			je_free(itm->value.base);
 			je_free(itm);
@@ -6687,7 +6655,7 @@ ccow_ucache_shrink(ucache_t *uc, unsigned long fp)
 		QUEUE * lru = QUEUE_TAIL(&new_lru);
 		ucache_entry_t * itm = QUEUE_DATA(lru, ucache_entry_t, lru_link);
 		QUEUE_REMOVE(lru);
-		uc->tc->stats.ucache.ucsize -= itm->value.len;
+		uc->stats.ucsize -= itm->value.len;
 
 		uv_buf_t buf;
 
@@ -6721,7 +6689,9 @@ ccow_ucache_evict(ucache_t *uc, unsigned long fp)
 		QUEUE * lru = QUEUE_TAIL(&uc->lru_q);
 		ucache_entry_t * itm = QUEUE_DATA(lru, ucache_entry_t, lru_link);
 		QUEUE_REMOVE(lru);
-		uc->tc->stats.ucache.ucsize -= itm->value.len;
+		int t = ccow_ucache_idx(uc, &itm->key);
+		uc->cache[t].count--;
+		uc->stats.ucsize -= itm->value.len;
 		QUEUE_REMOVE(&itm->col_link);
 
 		uc->lru_count--;
@@ -6787,13 +6757,13 @@ ccow_ucache_put(ucache_t *uc, uint512_t *chid, uv_buf_t *chunks, int nbufs)
 {
 	struct ccow *tc = uc->tc;
 
-	tc->stats.ucache.puts++;
+	tc->ucache->stats.puts++;
 
 	/* evict what's old */
 	uv_mutex_lock(&uc->uc_pos_mutex);
 
 	if (uc->uc_inprog) {
-		tc->stats.ucache.inprogs++;
+		tc->ucache->stats.inprogs++;
 		uv_mutex_unlock(&uc->uc_pos_mutex);
 		return;
 	}
@@ -6824,7 +6794,7 @@ ccow_ucache_put(ucache_t *uc, uint512_t *chid, uv_buf_t *chunks, int nbufs)
 			QUEUE_REMOVE(&itm->lru_link);
 			QUEUE_INSERT_HEAD(&uc->lru_q, &itm->lru_link);
 
-			tc->stats.ucache.put_hits++;
+			uc->stats.put_hits++;
 
 			uc->uc_inprog = 0;
 			uv_mutex_unlock(&uc->uc_pos_mutex);
@@ -6832,18 +6802,18 @@ ccow_ucache_put(ucache_t *uc, uint512_t *chid, uv_buf_t *chunks, int nbufs)
 		}
 	}
 
-	tc->stats.ucache.put_misses++;
+	uc->stats.put_misses++;
 
 	/* item was not found in queue, evict LRU item if cache is full to
 	 * make room. */
 
-	size_t used_total = tc->stats.ucache.total_ram - tc->stats.ucache.free_ram;
-	int ucache_too_big = (tc->stats.ucache.mem_limit &&
-	    tc->stats.ucache.ucsize >= tc->stats.ucache.mem_limit);
+	size_t used_total = uc->stats.total_ram - uc->stats.free_ram;
+	int ucache_too_big = (uc->stats.mem_limit &&
+	    uc->stats.ucsize >= uc->stats.mem_limit);
 
 	if ((!QUEUE_EMPTY(&uc->lru_q)) &&
-	    ((uc->lru_count == uc->size_cur) ||
-	     (used_total >= tc->stats.ucache.ucsize_lim) || ucache_too_big)) {
+	    ((uc->lru_count == 3 * uc->size_cur) ||
+	     (used_total && uc->stats.ucsize_lim && used_total >= uc->stats.ucsize_lim) || ucache_too_big)) {
 		assert(uc->size_cur != 0);
 		assert(uc->cache != NULL);
 
@@ -6856,14 +6826,14 @@ ccow_ucache_put(ucache_t *uc, uint512_t *chid, uv_buf_t *chunks, int nbufs)
 
 		QUEUE_REMOVE(&itm->col_link);
 		int t = ccow_ucache_idx(uc, &itm->key);
-		uc->cache[i].count--;
+		uc->cache[t].count--;
 
 		if (itm->value.base && itm->value.len) {
-			tc->stats.ucache.ucsize -= itm->value.len;
+			uc->stats.ucsize -= itm->value.len;
 			je_free(itm->value.base);
 		}
 
-		tc->stats.ucache.put_evicts++;
+		uc->stats.put_evicts++;
 
 	} else {
 		itm = je_calloc(1, sizeof(ucache_entry_t));
@@ -6891,7 +6861,7 @@ ccow_ucache_put(ucache_t *uc, uint512_t *chid, uv_buf_t *chunks, int nbufs)
 
 	itm->value.base = je_malloc(total_len);
 	if (itm->value.base) {
-		tc->stats.ucache.ucsize += total_len;
+		uc->stats.ucsize += total_len;
 		size_t copied = 0;
 		for (int cidx = 0; cidx < nbufs; cidx++) {
 			uv_buf_t *chunk = chunks + cidx;
@@ -6911,12 +6881,12 @@ ccow_ucache_get(ucache_t *uc, uint512_t *chid, uv_buf_t *buf)
 {
 	struct ccow *tc = uc->tc;
 
-	tc->stats.ucache.gets++;
+	uc->stats.gets++;
 
 	uv_mutex_lock(&uc->uc_pos_mutex);
 
 	if (uc->uc_inprog) {
-		tc->stats.ucache.inprogs++;
+		uc->stats.inprogs++;
 		uv_mutex_unlock(&uc->uc_pos_mutex);
 		return 0;
 	}
@@ -6942,7 +6912,7 @@ ccow_ucache_get(ucache_t *uc, uint512_t *chid, uv_buf_t *buf)
 
 		if (itm->value.base && uint512_cmp(&itm->key, chid) == 0) {
 			/* hit */
-			tc->stats.ucache.hits++;
+			uc->stats.hits++;
 
 			buf->base = je_malloc(itm->value.len);
 			if (buf->base) {
@@ -6958,7 +6928,7 @@ ccow_ucache_get(ucache_t *uc, uint512_t *chid, uv_buf_t *buf)
 	}
 
 	/* miss */
-	tc->stats.ucache.misses++;
+	uc->stats.misses++;
 
 	uc->uc_inprog = 0;
 	uv_mutex_unlock(&uc->uc_pos_mutex);
