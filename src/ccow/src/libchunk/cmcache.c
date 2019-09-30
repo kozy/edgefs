@@ -225,7 +225,6 @@ ccow_cmcache_put(cmcache_t * cmc, uint512_t * chid, rtbuf_t * rt)
 
 	if (used >= tc->stats.ucache.ucsize_lim || cmcache_too_big) {
 		ccow_cmcache_evict(cmc, CMCACHE_EVICT_CNT_HI);
-		return;
 	}
 
 	if (cmc->cache[i].cmc_col_count == 0) {
@@ -266,6 +265,8 @@ ccow_cmcache_put(cmcache_t * cmc, uint512_t * chid, rtbuf_t * rt)
 			return;
 		}
 	}
+	if (!rt)
+		return;
 
 	tc->stats.cmcache.cmc_put_misses++;
 
