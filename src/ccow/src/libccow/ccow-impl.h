@@ -97,7 +97,7 @@ extern "C" {
  * This parameter regulates how many outstanding I/Os can be on the tenant
  * context at the time. It throttles down in case of retransmits.
  */
-#define CCOW_IO_RATE_MAX		16
+#define CCOW_IO_RATE_MAX		32
 #define CCOW_IO_RATE_MAX_LOW		1
 #define CCOW_IO_RATE_MAX_HI		128
 #define CCOW_IO_RATE_MAX_EMBEDDED	4
