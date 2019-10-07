@@ -7804,7 +7804,6 @@ reptrans_put_blob(struct repdev *dev, type_tag_t ttag,
 	if (ttag == TT_CHUNK_PAYLOAD || ttag == TT_CHUNK_MANIFEST || ttag == TT_PARITY_MANIFEST)
 		start = uv_hrtime();
 	err = dev->__vtbl->put_blob(dev, ttag, hash_type, rb, chid);
-	assert(err != -EEXIST);
 	if (err < 0)
 		goto _exit;
 	if (ttag == TT_CHUNK_PAYLOAD || ttag == TT_CHUNK_MANIFEST || ttag == TT_PARITY_MANIFEST) {
@@ -7829,7 +7828,7 @@ _exit:
 		dev->stat_blob_put[ttag]++;
 	}
 
-	return 0;
+	return err;
 }
 
 int

@@ -909,7 +909,7 @@ _next:
 	 * Finally add new version
 	 */
 	err = reptrans_put_version(dev, &req->md, vmchid, (uint32_t) rtbuf_len(rb));
-	if (err) {
+	if (err && err != -EEXIST) {
 		log_error(lg, "NamedPut(%s), Error adding new version: %d",
 		    dev->name, err);
 		rtbuf_destroy(rb);

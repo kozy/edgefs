@@ -1210,8 +1210,8 @@ unnamedput_srv__put_proposal(struct state *st)
 	}
 
 	req->inexec++;
-	log_debug(lg, "Dev(%s): proposal: scheduled unnamedput_srv_exec",
-	    dev->name);
+	log_debug(lg, "Dev(%s): proposal CHID %016lX: scheduled unnamedput_srv_exec",
+	    dev->name, msg->content_hash_id.u.u.u);
 	ccowtp_work_queue(dev->tp, REPTRANS_TP_PRIO_MID, unnamedput_srv_exec,
 	    unnamedput_srv_done, wqe);
 }

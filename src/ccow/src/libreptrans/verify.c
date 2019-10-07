@@ -588,16 +588,20 @@ reptrans_verify_one_request(struct repdev *dev, struct verification_request *vbr
 		    &vbreq->vbr);
 		vbreq->vbr.rep_count = tmp;
 		if (err) {
-			log_error(lg,
-			    "Dev(%s): gen %lu put VBR %s -> %s, err %d",
-			    dev->name, vbreq->generation, chidstr,
-				ref_chidstr, err);
-			return err;
+			if (err != -EEXIST || pre_ref_count == 0) {
+				log_error(lg,
+			    		"Dev(%s): gen %lu put VBR %s -> %s, vtype %x, pre_ref_count %lu, err %d",
+			    		dev->name, vbreq->generation, chidstr,
+					ref_chidstr, vbreq->vtype, pre_ref_count, err);
+				return err;
+			}
+			err = 0;
+		} else {
+			(*n_verified)++;
+			post_ref_count++;
+			log_debug_vbr(lg, "Dev(%s): gen %lu put VBR %s -> %s cts %lu",
+		    		dev->name, vbreq->generation, chidstr, ref_chidstr, cts);
 		}
-		(*n_verified)++;
-		post_ref_count++;
-		log_debug_vbr(lg, "Dev(%s): gen %lu put VBR %s -> %s cts %lu",
-		    dev->name, vbreq->generation, chidstr, ref_chidstr, cts);
 	}
 
 _propagate:
@@ -861,7 +865,7 @@ reptrans_verify_queue__callback(struct repdev *dev, type_tag_t ttag,
 	}
 
 
-	if (bg_job_wait_resume(work->job, 1000))
+	if (bg_job_wait_resume(work->job, 10000))
 		return -ENODEV;
 
 	/* We don't ask iterator for a blob, load it ourself */
@@ -1393,7 +1397,7 @@ reptrans_process_batches__callback(struct repdev *dev, type_tag_t ttag,
 	if (err)
 		return err;
 
-	if (bg_job_wait_resume(work->job, 1000))
+	if (bg_job_wait_resume(work->job, 10000))
 		return -ENODEV;
 
 	/*

@@ -68,6 +68,7 @@ type RtkvsDevice struct {
 	PlevelOverride int    `json:"plevel_override,omitempty"`
 	Sync           int    `json:"sync"`
 	WalDisabled    int    `json:"wal_disabled,omitempty"`
+	ReadAhead      int    `json:"readahead"`
 }
 
 type CcowTrlog struct {
@@ -422,6 +423,14 @@ func ConfigNode() {
 	}  else if transport == "rtkvs" {
 		fmt.Printf("Rtkvs configuration for NodeType: %s %+v", nodeConfig.NodeType, nodeConfig.Rtkvs)
 		if len(nodeConfig.Rtkvs.Devices) > 0 || nodeConfig.NodeType == "gateway" {
+			for _,dev := range(nodeConfig.Rtkvs.Devices) {
+				if dev.WalDisabled == 2 {
+					// Prevent the read ahead for no-WAL config
+					dev.ReadAhead = 0
+				} else {
+					dev.ReadAhead = 64
+				}
+			}
 			err := efsutil.MarshalToFile(nedgeHome+RTKVSJsonFile, &nodeConfig.Rtkvs)
 			if err != nil {
 				fmt.Printf("Can't marshal JSON file %s Error: %v \n", nedgeHome+RTKVSJsonFile, err)

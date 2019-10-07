@@ -97,7 +97,7 @@ extern "C" {
  * This parameter regulates how many outstanding I/Os can be on the tenant
  * context at the time. It throttles down in case of retransmits.
  */
-#define CCOW_IO_RATE_MAX		16
+#define CCOW_IO_RATE_MAX		32
 #define CCOW_IO_RATE_MAX_LOW		1
 #define CCOW_IO_RATE_MAX_HI		128
 #define CCOW_IO_RATE_MAX_EMBEDDED	4
@@ -437,6 +437,32 @@ struct ccow;
  */
 
 typedef struct {
+	uint64_t puts;
+	uint64_t gets;
+	size_t ucsize_max;	/* maximum size of ucache in bytes */
+	size_t ucsize_lim;
+	size_t mem_limit;	/* user defined limit for both CM/U caches */
+	size_t ucsize;		/* current size of ucache in bytes */
+	size_t total_ram;
+	size_t free_ram;
+	uint64_t put_hits;
+	uint64_t put_misses;
+	uint64_t put_evicts;
+	uint64_t hits;		/* cache hits */
+	uint64_t misses;	/* cache misses */
+	uint64_t expand_nomem;
+	uint64_t expands;	/* cache expansions */
+	uint64_t shrinks;	/* cache shrinks */
+	uint64_t inprogs;
+	uint64_t size_cur;
+	uint64_t size_inc;
+	uint64_t size_min;
+	uint64_t size_max;
+	uint64_t lru_count;
+	uint64_t overwr_evicts;
+} ucache_stats_t;
+
+typedef struct {
 	union {
 		struct {
 			volatile uint64_t count;
@@ -475,6 +501,7 @@ typedef struct {
 	QUEUE lru_q;
 
 	uint64_t uc_mi_e_lcl;
+	ucache_stats_t stats;
 } ucache_t;
 
 // FIXME: TBD: times

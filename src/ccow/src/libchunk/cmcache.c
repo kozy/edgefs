@@ -103,11 +103,11 @@ ccow_cmcache_timer_cb(uv_timer_t* handle, int status)
 
 	cmcache_t * cmc = tc->cmcache;
 
-	size_t used = tc->stats.ucache.total_ram - tc->stats.ucache.free_ram;
-	int cmcache_too_big = (tc->stats.ucache.mem_limit &&
-	    tc->stats.cmcache.cmc_size >= tc->stats.ucache.mem_limit);
+	size_t used = tc->ucache->stats.total_ram - tc->ucache->stats.free_ram;
+	int cmcache_too_big = (tc->ucache->stats.mem_limit &&
+	    tc->stats.cmcache.cmc_size >= tc->ucache->stats.mem_limit);
 
-	if (used >= tc->stats.ucache.ucsize_lim || cmcache_too_big) {
+	if (used >= tc->ucache->stats.ucsize_lim || cmcache_too_big) {
 		ccow_cmcache_evict(cmc, CMCACHE_EVICT_CNT_HI);
 	} else {
 		ccow_cmcache_evict(cmc, CMCACHE_EVICT_CNT_LOW);
@@ -219,13 +219,12 @@ ccow_cmcache_put(cmcache_t * cmc, uint512_t * chid, rtbuf_t * rt)
 	/*
 	 * don't add to cache if memory limits exceeded.
 	 */
-	size_t used = tc->stats.ucache.total_ram - tc->stats.ucache.free_ram;
-	int cmcache_too_big = (tc->stats.ucache.mem_limit &&
-	    tc->stats.cmcache.cmc_size >= tc->stats.ucache.mem_limit);
+	size_t used = tc->ucache->stats.total_ram - tc->ucache->stats.free_ram;
+	int cmcache_too_big = (tc->ucache->stats.mem_limit &&
+	    tc->stats.cmcache.cmc_size >= tc->ucache->stats.mem_limit);
 
-	if (used >= tc->stats.ucache.ucsize_lim || cmcache_too_big) {
+	if (used >= tc->ucache->stats.ucsize_lim || cmcache_too_big) {
 		ccow_cmcache_evict(cmc, CMCACHE_EVICT_CNT_HI);
-		return;
 	}
 
 	if (cmc->cache[i].cmc_col_count == 0) {
@@ -266,6 +265,8 @@ ccow_cmcache_put(cmcache_t * cmc, uint512_t * chid, rtbuf_t * rt)
 			return;
 		}
 	}
+	if (!rt)
+		return;
 
 	tc->stats.cmcache.cmc_put_misses++;
 
