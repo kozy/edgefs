@@ -459,7 +459,7 @@ namedput_attrib_exec(struct repdev *dev, uint8_t *data, size_t size, ccow_t tc,
 		goto _exit;
 	}
 
-	err = modify_attrs(c_inprog, iter, optype, attrs, attr_nr);
+	err = modify_attrs_sop(c_inprog, iter, optype, attrs, attr_nr);
 
 	for (uint32_t i = 0; i < attr_nr; i++) {
 		if (attr[i].key)

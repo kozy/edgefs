@@ -714,24 +714,24 @@ _exit:
 
 /* Set uint64_t type attribute */
 static inline void
-set_uint64_attr(ccow_metadata_kv_t attr, char *key, uint64_t *val)
+set_int64_attr(ccow_metadata_kv_t attr, char *key, int64_t *val)
 {
 	attr->mdtype = CCOW_MDTYPE_METADATA;
-	attr->type = CCOW_KVTYPE_UINT64;
+	attr->type = CCOW_KVTYPE_INT64;
 	attr->key = key;
 	/* TODO: Find out if this should be strlen(key) + 1 */
 	attr->key_size = strlen(key);
 	attr->value = val;
-	attr->value_size = sizeof(uint64_t);
+	attr->value_size = sizeof(int64_t);
 }
 
 static inline int
-set_uint64_attr_iovec(ccow_metadata_kv_t attr, char *key, uint64_t *val,
+set_int64_attr_iovec(ccow_metadata_kv_t attr, char *key, int64_t *val,
 			msgpack_p **p, uv_buf_t *ubuf, struct iovec *iov)
 {
 	int err;
 
-	set_uint64_attr(attr, key, val);
+	set_int64_attr(attr, key, val);
 	err = ccow_pack_mdkv(attr, p);
 	if (err) {
 		log_error(lg, "Invalid mdkv packing %d", err);
@@ -753,13 +753,6 @@ ccow_sharded_list_put(ccow_t tctx, const char *bid, size_t bid_size,
 {
 	return ccow_sharded_list_put_v2(tctx, bid, bid_size, shard_context,
 		iov, iovcnt, shard_context->overwrite);
-}
-
-static inline int
-check_attr_conflict(int64_t delta_size, int64_t delta_objs, int64_t delta_used)
-{
-	return !((delta_size >= 0 && delta_objs >= 0 && delta_used >= 0) ||
-		(delta_size <= 0 && delta_objs <= 0 && delta_used <= 0));
 }
 
 static int
@@ -785,12 +778,7 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 	    delta_used == 0 && iov == NULL)
 		return 0;
 
-	/* One or more attributes should all either be positive or negative */
-	if (check_attr_conflict(delta_size, delta_objs, delta_used))
-		return -ERANGE;
-
-	/* Total will either be +ve or negative. Conflict already checked */
-	total_delta = delta_size + delta_objs + delta_used;
+	total_delta = labs(delta_size) + labs(delta_objs) + labs(delta_used);
 
 	/* If this is MD only op and there is no delta, return back */
 	if ((optype == CCOW_INSERT_MD || optype == CCOW_DELETE_MD) &&
@@ -807,7 +795,6 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 	struct ccow_metadata_kv attr[3];
 	msgpack_p *p[3] = { NULL, NULL, NULL };
 	uv_buf_t ubuf[3];
-	uint64_t d_size, d_objs, d_used;
 
 	shard_index = get_shard(key, key_size, shard_context->shard_count);
 	if (shard_index < 0) {
@@ -830,10 +817,6 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 		op = optype;
 	}
 
-	d_size = labs(delta_size) + 0LLU;
-	d_objs = labs(delta_objs) + 0LLU;
-	d_used = labs(delta_used) + 0LLU;
-
 	log_debug(lg, "Put/delete %s/%s/%s/%s key: %s, with delta_size: %ld "
 			"deltaobs: %ld, deltaused: %ld",
 			tc->cid, tc->tid, bid, shard_context->shard_name, key, delta_size,
@@ -841,8 +824,8 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 
 
 	if (delta_size) {
-		err = set_uint64_attr_iovec(&attr[idx], RT_SYSKEY_LOGICAL_SIZE,
-					    &d_size, &p[idx], &ubuf[idx],
+		err = set_int64_attr_iovec(&attr[idx], RT_SYSKEY_LOGICAL_SIZE,
+					    &delta_size, &p[idx], &ubuf[idx],
 					    &newiov[iovcnt + idx]);
 
 		if (err)
@@ -850,9 +833,9 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 		idx++;
 	}
 
-	if (d_objs) {
-		err = set_uint64_attr_iovec(&attr[idx], RT_SYSKEY_OBJECT_COUNT,
-					    &d_objs, &p[idx], &ubuf[idx],
+	if (delta_objs) {
+		err = set_int64_attr_iovec(&attr[idx], RT_SYSKEY_OBJECT_COUNT,
+					    &delta_objs, &p[idx], &ubuf[idx],
 					    &newiov[iovcnt + idx]);
 
 		if (err)
@@ -860,10 +843,10 @@ ccow_sharded_list_update_with_md(ccow_t tctx, const char *bid, size_t bid_size,
 		idx++;
 	}
 
-	if (d_used) {
-		err = set_uint64_attr_iovec(&attr[idx],
+	if (delta_used) {
+		err = set_int64_attr_iovec(&attr[idx],
 					    RT_SYSKEY_ESTIMATED_USED,
-					    &d_used, &p[idx], &ubuf[idx],
+					    &delta_used, &p[idx], &ubuf[idx],
 					    &newiov[iovcnt + idx]);
 
 		if (err)
@@ -1007,23 +990,12 @@ ccow_sharded_attributes_put(ccow_t tctx, const char *bid, size_t bid_size,
 	int err = 0, shard_index;
 	ccow_completion_t c = NULL;
 	struct ccow *tc = tctx;
-	int64_t total_delta;	/* to determine if values are +ve ot -ve */
 
 	/* If there is no delta to be updated, return */
 	if (delta_size == 0 && delta_objs == 0 && delta_used == 0)
 		return 0;
 
-	/* One or more attributes should all either be positive or negative */
-	if (check_attr_conflict(delta_size, delta_objs, delta_used))
-		return -ERANGE;
-
-	/* Total will either be +ve or negative. Conflict already checked */
-	total_delta = delta_size + delta_objs + delta_used;
-
-	/*
-	 * Determine INSERT or DELETE operation.
-	 */
-	ccow_op_t optype = total_delta > 0 ? CCOW_INSERT_MD : CCOW_DELETE_MD;
+	ccow_op_t optype = delta_objs >= 0 ? CCOW_INSERT_MD : CCOW_DELETE_MD;
 
 	return ccow_sharded_list_update_with_md(tctx, bid, bid_size,
 						shard_context, key,
