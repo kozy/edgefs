@@ -580,7 +580,7 @@ test_fsinfo_after(void **state)
 	int err;
 
 	/* Wait write buffers to be flushed. */
-#define TIMER_INTERVAL 5
+#define TIMER_INTERVAL 10
 	sleep(TIMER_INTERVAL + 1);
 
 	err = ccow_fsio_fsinfo(ci, &fsinfo);

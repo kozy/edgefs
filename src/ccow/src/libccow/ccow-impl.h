@@ -1354,6 +1354,8 @@ int ccow_verify_mdop(ccow_op_t optype, ccow_metadata_kv_t attrs[],
 		     uint32_t attr_nr);
 int modify_attrs(ccow_completion_t c, ccow_lookup_t iter, ccow_op_t optype,
 	     ccow_metadata_kv_t attrs[], uint32_t attr_nr);
+int modify_attrs_sop(ccow_completion_t c, ccow_lookup_t iter, ccow_op_t optype,
+	     ccow_metadata_kv_t attrs[], uint32_t attr_nr);
 
 #define CLIENT_GETCOMMON_MAX_RETRY	200
 #define CLIENT_GETCOMMON_MAX_RETRY_FAILFAST	3

@@ -3353,6 +3353,101 @@ modify_attrs(ccow_completion_t c, ccow_lookup_t iter, ccow_op_t optype,
 }
 
 int
+modify_attrs_sop(ccow_completion_t c, ccow_lookup_t iter, ccow_op_t optype,
+	     ccow_metadata_kv_t attrs[], uint32_t attr_nr)
+{
+	uint32_t i;
+	uint64_t sz = 0, obj_cnt, used = 0;
+	uint64_t prev_sz;
+	int err = 0;
+	int val_sz;
+	void *val;
+	ccow_default_attr_t atype;
+	struct ccow_metadata_kv *kv = NULL;
+
+	if (!c->needs_final_put) {
+		while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_METADATA, -1))) {
+			if (strcmp(kv->key, RT_SYSKEY_LOGICAL_SIZE) == 0)
+				ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, &sz);
+			if (strcmp(kv->key, RT_SYSKEY_OBJECT_COUNT) == 0)
+				ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, &obj_cnt);
+			if (strcmp(kv->key, RT_SYSKEY_ESTIMATED_USED) == 0)
+				ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, &used);
+		}
+	} else {
+		sz = c->logical_sz;
+		obj_cnt = c->object_count;
+		used = c->used_sz;
+	}
+
+	// In this case obj_cnt should be a delta
+	/* Modify the attributes */
+	for (i = 0; i < attr_nr; i++) {
+		kv = attrs[i];
+		switch (kv->mdtype) {
+		case CCOW_MDTYPE_METADATA:
+			if (strcmp(kv->key, RT_SYSKEY_LOGICAL_SIZE) == 0) {
+				prev_sz = sz;
+				int64_t new_sz = (int64_t) sz + *(int64_t *)kv->value;
+				sz = (uint64_t) (new_sz < 0 ? 0 : new_sz);
+				err = ccow_attr_modify_default(c,
+					CCOW_ATTR_LOGICAL_SZ, &sz, NULL);
+				if (err == 0)
+					err = ccow_attr_modify_default(c,
+						CCOW_ATTR_PREV_LOGICAL_SZ, &prev_sz,
+						iter);
+				log_debug(lg, "New size: %"PRIu64" Old size: %lu", sz, prev_sz);
+			} else if (strcmp(kv->key, RT_SYSKEY_OBJECT_COUNT) == 0) {
+				int64_t cnt = ((int64_t) obj_cnt + *(int64_t *)kv->value);
+				uint64_t new_cnt = (uint64_t) (cnt < 0 ? 0 : cnt);
+				err = ccow_attr_modify_default(c,
+					CCOW_ATTR_OBJECT_COUNT, &new_cnt, iter);
+				log_debug(lg, "optype: %s new_cnt: %lu old_cnt: %lu",
+						ccow_op2str(optype), new_cnt, obj_cnt);
+				if (err)
+					return err;
+			} else if (strcmp(kv->key, RT_SYSKEY_ESTIMATED_USED) == 0) {
+				int64_t tmp = ((int64_t) used + *(int64_t *)kv->value);
+				uint64_t new_used = (uint64_t) (tmp < 0 ? 0 : tmp);
+				log_debug(lg, "optype: %s new_used: %lu old_used: %lu",
+						ccow_op2str(optype), new_used, used);
+				err = ccow_attr_modify_default(c, CCOW_ATTR_ESTIMATED_USED, &new_used, iter);
+				if (err) {
+					return err;
+				}
+			} else {
+				atype = get_attr_type(kv->key);
+				assert(atype != CCOW_ATTR_UNKNOWN);
+				err = ccow_attr_modify_default(c, atype,
+					attrs[i]->value, iter);
+			}
+			if (err)
+				return err;
+			break;
+		case CCOW_MDTYPE_CUSTOM:
+			val = optype == CCOW_DELETE_MD ? NULL : attrs[i]->value;
+			val_sz = optype == CCOW_DELETE_MD ? 0 :
+				 attrs[i]->value_size;
+			err = ccow_attr_modify_custom(c, attrs[i]->type,
+						      attrs[i]->key,
+						      attrs[i]->key_size,
+						      val, val_sz, iter);
+			if (err)
+				return err;
+			break;
+		default:
+			err = -EINVAL;
+			log_notice(lg, "Unsupported metadata type");
+			break;
+		}
+		if (err)
+			break;
+	}
+	return err;
+}
+
+
+int
 ccow_put_attrs_unsafe(ccow_t tc, const char *cid, size_t cid_size,
 		      const char *tid, size_t tid_size, const char *bid,
 		      size_t bid_size, const char *oid, size_t oid_size,
