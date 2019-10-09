@@ -58,8 +58,12 @@ payload_s3_hmac_gen(uint8_t *input_key, uint8_t key_len, uint8_t *msg,
 	uint8_t key[BLOCK_LENGTH];
 	uint8_t inner_key[BLOCK_LENGTH];
 	uint8_t outer_key[BLOCK_LENGTH];
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	EVP_MD_CTX *inner_s, *outer_s;
+#else
 	EVP_MD_CTX inner_s[1];
 	EVP_MD_CTX outer_s[1];
+#endif
 	uint8_t inner_hash[SHA256_DIGEST_LENGTH];
 
 	memcpy(key, input_key, key_len);
@@ -70,6 +74,12 @@ payload_s3_hmac_gen(uint8_t *input_key, uint8_t key_len, uint8_t *msg,
 		outer_key[i] = key[i] ^ OUTER_PAD;
 	}
 
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	inner_s = EVP_MD_CTX_new();
+	assert(inner_s != NULL);
+	outer_s = EVP_MD_CTX_new();
+	assert(outer_s != NULL);
+#endif
 	EVP_MD_CTX_init(inner_s);
 	if (EVP_DigestInit_ex(inner_s, EVP_sha256(), NULL) == 0)
 		assert(0);
@@ -80,7 +90,6 @@ payload_s3_hmac_gen(uint8_t *input_key, uint8_t key_len, uint8_t *msg,
 	memset(inner_hash, 0, SHA256_DIGEST_LENGTH);
 	if (EVP_DigestFinal_ex(inner_s, inner_hash, NULL) == 0)
 		assert(0);
-	EVP_MD_CTX_cleanup(inner_s);
 
 	EVP_MD_CTX_init(outer_s);
 	if (EVP_DigestInit_ex(outer_s, EVP_sha256(), NULL) == 0)
@@ -92,7 +101,13 @@ payload_s3_hmac_gen(uint8_t *input_key, uint8_t key_len, uint8_t *msg,
 	memset(hmac_out, 0, SHA256_DIGEST_LENGTH);
 	if (EVP_DigestFinal_ex(outer_s, hmac_out, NULL) == 0)
 		assert(0);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	EVP_MD_CTX_cleanup(inner_s);
 	EVP_MD_CTX_cleanup(outer_s);
+#else
+	EVP_MD_CTX_free(inner_s);
+	EVP_MD_CTX_free(outer_s);
+#endif
 }
 
 static void

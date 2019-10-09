@@ -45,12 +45,15 @@ int (*blake2bp_update_dyn)(blake2bp_state *S, const void *in, size_t inlen);
 int (*blake2bp_final_dyn)(blake2bp_state *S, void *out, size_t outlen);
 int (*blake2bp_dyn)(void *out, size_t outlen, const void *in, size_t inlen, const void *key, size_t keylen);
 
-
 typedef union {
 	edonr_ctx edonr[1];
 	blake2b_state blake2b[1];
 	blake2bp_state blake2bp[1];
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	EVP_MD_CTX evp[1];
+#else /* OPENSSL_VERSION_NUMBER < 0x10100000L */
+	EVP_MD_CTX *evp;
+#endif /* OPENSSL_VERSION_NUMBER < 0x10100000L */
 	XXH256_state_t xxhash;
 } S_u;
 
@@ -137,6 +140,11 @@ m_sha2_init(crypto_state_t *state, crypto_t method, int keylen)
 		return -1;
 	state->keylen = keylen;
 	state->method = method;
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+	S->evp = EVP_MD_CTX_new();
+	if (S->evp == NULL)
+		return -1;
+#endif
 	EVP_MD_CTX_init(S->evp);
 	return EVP_DigestInit_ex(S->evp,
 	    keylen == 64 ? EVP_sha512() : EVP_sha256(), NULL) == 0 ? -1 : 0;
@@ -156,7 +164,11 @@ m_sha2_final(crypto_state_t *state, uint8_t *out)
 	if (state->keylen == 32)
 		memset(out + 32, 0, 32);
 	int success = EVP_DigestFinal_ex(S->evp, out, NULL);
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	EVP_MD_CTX_cleanup(S->evp);
+#else
+	EVP_MD_CTX_free(S->evp);
+#endif
 	return success == 0 ? -1 : 0;
 }
 
