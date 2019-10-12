@@ -607,6 +607,7 @@ trput_process_result(ccow_t tc, struct mlist_node *result_head,
 		if (!(rec.trtype & TRLOG_OBJ_CREATE) &&
 			!(rec.trtype & TRLOG_OBJ_UPDATE) &&
 			!(rec.trtype & TRLOG_OBJ_DELETE) &&
+			!(rec.trtype & TRLOG_EXPUNGE) &&
 			!(rec.trtype & TRLOG_VERSION_EXPUNGE)) {
 			res_node = res_node->next;
 			MEMFREE_TRLOG_DATA(rec);
