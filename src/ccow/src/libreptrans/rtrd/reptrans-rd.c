@@ -8245,6 +8245,7 @@ rd_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 			assert(db);
 			for (int i = 0; i < DEV_SHARD_MAX(db, ttag); i++) {
 				MDB_txn *txn = NULL;
+				MDB_stat dstat;
 				MDB_dbi dbi = DEV_SHARD(db, ttag, i);
 				err = mdb_txn_begin(DEV_ENV(db, ttag), NULL, MDB_RDONLY, &txn);
 				if (err) {
@@ -8253,19 +8254,19 @@ rd_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 						dev->name, err, mdb_strerror(err));
 					return err;
 				}
-				MDB_stat dstat;
+
 				mdb_stat(txn, dbi, &dstat);
 				blobs_dist[j*DEV_SHARD_MAX(db, ttag) + i] = dstat.ms_entries;
 				total += dstat.ms_entries;
 				mdb_txn_abort(txn);
 			}
 		}
-		if (!total) {
-			pthread_rwlock_unlock(&rd->guard);
-			return 0;
+		for (int j = 0; j < rd->plevel*DEV_SHARDS_MAX; j++) {
+			if (total)
+				blobs_dist[j] = 1LL + blobs_dist[j] * (long long)max_blobs / total;
+			else
+				blobs_dist[j] = 0;
 		}
-		for (int j = 0; j < rd->plevel*DEV_SHARDS_MAX; j++)
-			blobs_dist[j] = 1LL + blobs_dist[j] * (long long)max_blobs / total;
 	} else if (max_blobs == -1) {
 		for (int j = 0; j < rd->plevel*DEV_SHARDS_MAX; j++)
 			blobs_dist[j] = -1;
@@ -8288,11 +8289,15 @@ rd_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 			pthread_rwlock_unlock(&rd->guard);
 			goto _exit;
 		}
-
+		/* The mdoffload partion doesn't have shards */
 		if (dev->journal && is_mdoffload_tt(dev, ttag) && j != rd->plevel -1)
 			continue;
 
 		for (int shard=0; shard < DEV_SHARD_MAX(db, ttag); shard++) {
+			/* Skip void shard */
+			if (!blobs_dist[j*DEV_SHARD_MAX(db, ttag) + shard])
+				continue;
+
 			err = rd_iterate_blobs_shard(dev, ttag,
 			    callback, param, want_values,
 			    blobs_dist[j*DEV_SHARD_MAX(db, ttag) + shard], j, shard, sh, del);
