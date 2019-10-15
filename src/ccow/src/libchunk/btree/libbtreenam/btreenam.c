@@ -793,8 +793,8 @@ btn_update_fetches_done(btc_cm_fetch_ctx_t *ctx, int *done)
 		size_t nvals = op->iovcnt_in;
 
 		struct iovec *iov_key   = &op->iov_in[i];
-		uint512_t    *nhid =  nvals > 1 ? (uint512_t *)op->iov_in[i+1].iov_base : NULL;
-		uint512_t    *parent_chid = nvals > 1 ? (uint512_t *)op->iov_in[i+2].iov_base : NULL;
+		uint512_t    *nhid =  nvals > 2 ? (uint512_t *)op->iov_in[i+1].iov_base : NULL;
+		uint512_t    *parent_chid = nvals > 2 ? (uint512_t *)op->iov_in[i+2].iov_base : NULL;
 
 		struct iovec *iov_val = (nvals > 3) ?
 			op->iov_in+i+3 : (nvals > 1 ) ? op->iov_in+i+1 : NULL;
