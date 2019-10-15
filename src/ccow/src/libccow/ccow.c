@@ -2365,6 +2365,12 @@ ccow_create_completion(ccow_t cluster, void *cb_arg,
 	(_ptr_to)->object_delete_after = (_ptr_from)->object_delete_after; \
 	(_ptr_to)->inline_data_flags = (_ptr_from)->inline_data_flags;
 
+#define PROP_INH_CLONE(_ptr_from, _ptr_to) \
+	(_ptr_to)->ec_enabled = (_ptr_from)->ec_enabled; \
+	(_ptr_to)->ec_data_mode = (_ptr_from)->ec_data_mode; \
+	(_ptr_to)->ec_trg_policy = (_ptr_from)->ec_trg_policy;
+
+
 int
 ccow_copy_inheritable_md(ccow_completion_t comp_in, ccow_completion_t comp_out)
 {
@@ -2423,6 +2429,13 @@ ccow_copy_inheritable_comp_to_md(struct ccow_completion *comp_from,
     struct vmmetadata *md_to)
 {
 	PROP_INH(comp_from, md_to);
+}
+
+void
+ccow_copy_inheritable_comp_to_md_clone(struct ccow_completion *comp_from,
+    struct vmmetadata *md_to)
+{
+	PROP_INH_CLONE(comp_from, md_to);
 }
 
 void

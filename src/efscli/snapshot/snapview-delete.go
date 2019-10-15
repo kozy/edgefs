@@ -21,7 +21,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package object
+package snapshot
 
 /*
 #include "ccow.h"
@@ -83,7 +83,7 @@ func snapViewDelete(opath string, flags []efsutil.FlagValue) error {
 	}
 
 	var snapview_t C.ccow_snapview_t
-        ret = C.ccow_snapview_create(tc, &snapview_t, c_bucket, C.strlen(c_bucket) + 1, c_object, C.strlen(c_object) + 1)
+	ret = C.ccow_snapview_create(tc, &snapview_t, c_bucket, C.strlen(c_bucket) + 1, c_object, C.strlen(c_object) + 1)
 	if ret != 0 {
 		if ret != -C.EEXIST {
 			return fmt.Errorf("%s: ccow_snapview_create err=%d", efsutil.GetFUNC(), ret)
@@ -93,8 +93,8 @@ func snapViewDelete(opath string, flags []efsutil.FlagValue) error {
 
 	ret = C.ccow_snapview_delete(tc, snapview_t)
 	if ret != 0 {
-                return fmt.Errorf("%s: ccow_snapview_delete err=%d", efsutil.GetFUNC(), ret)
-        }
+		return fmt.Errorf("%s: ccow_snapview_delete err=%d", efsutil.GetFUNC(), ret)
+	}
 
 	return nil
 }
@@ -130,7 +130,5 @@ var (
 )
 
 func init() {
-	//flagsSnapViewDelete = make([]efsutil.FlagValue, len(flagNames))
-	//efsutil.ReadAttributes(snapViewDeleteCmd, flagNames, flagsSnapViewDelete)
-	ObjectCmd.AddCommand(snapViewDeleteCmd)
+	SnapshotCmd.AddCommand(snapViewDeleteCmd)
 }

@@ -3741,10 +3741,12 @@ lfs_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 			total += dstat.ms_entries;
 			mdb_txn_abort(txn);
 		}
-		if (!total)
-			return 0;
-		for (int j = 0; j < lfs->plevel; j++)
-			blobs_dist[j] = 1LL + (long long)blobs_dist[j] * max_blobs / total;
+		for (int j = 0; j < lfs->plevel; j++) {
+			if (total)
+				blobs_dist[j] = 1LL + (long long)blobs_dist[j] * max_blobs / total;
+			else
+				blobs_dist[j] = 0;
+		}
 	} else for (int j = 0; j < lfs->plevel; j++)
 		blobs_dist[j] = -1;
 
@@ -3763,6 +3765,9 @@ lfs_iterate_blobs_strict(struct repdev *dev, type_tag_t ttag,
 			if (err)
 				break;
 		}
+
+		if (!blobs_dist[j])
+			continue;
 
 		err = lfs_iterate_blobs_shard(dev, ttag,
 		    callback, param, want_values,

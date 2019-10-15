@@ -396,6 +396,7 @@ struct replicast_datagram_hdr {
 #define RD_ATTR_ONDEMAND_CLONE          0x0004000000000000UL /* Put a cloned object as local */
 #define RD_ATTR_ONDEMAND_PREFETCH       0x0008000000000000UL /* A get operation is triggered in order to pre-fetch a cacheable object from remote */
 #define RD_ATTR_CHUNK_LOOKUP            0x0010000000000000UL /* A chunk lookup request */
+#define RD_ATTR_SNAPSHOT                0x0020000000000000UL /* A snapshot insert request */
         uint64_t attributes;
         uint8_t hash_type;                /* payload hash type */
 	uint64_t fh_genid;		/* flexhash genid */

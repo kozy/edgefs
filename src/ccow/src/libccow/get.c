@@ -576,10 +576,11 @@ ccow_get_chids(const char *cid, size_t cid_size, const char *tid,
  *
  * Scope: PRIVATE
  */
-int ccow_tenant_get(const char *cid, size_t cid_size, const char *tid,
+int ccow_tenant_get_version(const char *cid, size_t cid_size, const char *tid,
     size_t tid_size, const char *bid, size_t bid_size, const char *oid,
     size_t oid_size, struct ccow_completion *c, struct iovec *iov,
-    size_t iovcnt, uint64_t off, ccow_op_t optype, ccow_lookup_t *iter)
+    size_t iovcnt, uint64_t off, ccow_op_t optype, ccow_lookup_t *iter,
+    const uint512_t* vmchid, const uint512_t* nhid)
 {
 	int err;
 
@@ -636,10 +637,52 @@ int ccow_tenant_get(const char *cid, size_t cid_size, const char *tid,
 	 */
 	struct ccow_io *get_io;
 	struct ccow_op *get_op;
-	err = ccow_namedget_create(cid, cid_size, tid, tid_size, bid, bid_size,
-	    oid, oid_size, c, ccow_namedget_done, optype, &get_op, &get_io);
-	if (err)
+	if (!vmchid) {
+		err = ccow_namedget_create(cid, cid_size, tid, tid_size, bid, bid_size,
+			oid, oid_size, c, ccow_namedget_done, optype, &get_op, &get_io);
+	} else {
+		assert(nhid);
+		err = ccow_operation_create(c, optype, &get_op);
+		if (err) {
+			log_error(lg, "Cannot create operation: %d", err);
+			return err;
+		}
+		get_op->cid = je_memdup(cid, cid_size);
+		if (!get_op->cid)
+			return -ENOMEM;
+
+		get_op->tid = je_memdup(tid, tid_size);
+		if (!get_op->cid)
+			return -ENOMEM;
+
+		get_op->bid = je_memdup(bid, bid_size);
+		if (!get_op->cid)
+			return -ENOMEM;
+
+		get_op->oid = je_memdup(oid, oid_size);
+		if (!get_op->cid)
+			return -ENOMEM;
+
+		get_op->cid_size = cid_size;
+		get_op->tid_size = tid_size;
+		get_op->bid_size = bid_size;
+		get_op->oid_size = oid_size;
+		get_op->uvid_timestamp = get_timestamp_us();
+
+		get_op->shard_index = c->shard_index;
+
+		err = ccow_unnamedget_create(c, ccow_namedget_done, get_op, &get_io, NULL);
+		if (!err) {
+			struct getcommon_client_req *req = CCOW_IO_REQ(get_io);
+			req->ng_chid = *nhid;
+			req->chid = *vmchid;
+			get_io->attributes |= RD_ATTR_VERSION_MANIFEST;
+		}
+	}
+	if (err) {
+		log_error(lg, "IO create error: %d", err);
 		return err;
+	}
 	struct ccow_lookup *lp;
 	if (iter != NULL) {
 		if (*bid == 0 && *oid == 0)
@@ -679,6 +722,20 @@ int ccow_tenant_get(const char *cid, size_t cid_size, const char *tid,
 	/* async start the io */
 	err = ccow_start_io(get_io);
 	return err;
+}
+
+/*
+ * Initiate CCOW GET
+ *
+ * Scope: PRIVATE
+ */
+int ccow_tenant_get(const char *cid, size_t cid_size, const char *tid,
+    size_t tid_size, const char *bid, size_t bid_size, const char *oid,
+    size_t oid_size, struct ccow_completion *c, struct iovec *iov,
+    size_t iovcnt, uint64_t off, ccow_op_t optype, ccow_lookup_t *iter) {
+	return ccow_tenant_get_version(cid, cid_size, tid, tid_size,
+		bid, bid_size, oid, oid_size, c, iov, iovcnt, off,
+		optype, iter, NULL, NULL);
 }
 
 /*

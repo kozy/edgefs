@@ -296,7 +296,7 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 {
 	static uint64_t process_counter = 0;
 	int err = 0;
-	struct iovec iov[2];
+	struct iovec iov[4];
 	ccow_op_t optype;
 	char buf[64];
 	int64_t delta_size = 0;
@@ -356,8 +356,14 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 	iov[0].iov_base = data->oid;
 	iov[0].iov_len = strlen(data->oid) + 1;
 
-	iov[1].iov_base = uv_b.base;
-	iov[1].iov_len = uv_b.len;
+	iov[1].iov_base = &data->nhid;
+	iov[1].iov_len = sizeof(data->nhid);
+
+	iov[2].iov_base = &data->vmchid;
+	iov[2].iov_len = sizeof(data->vmchid);
+
+	iov[3].iov_base = uv_b.base;
+	iov[3].iov_len = uv_b.len;
 
 
 	/* Update bucket list */
@@ -375,7 +381,7 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			if (optype == CCOW_INSERT_LIST) {
 				c_flags = CCOW_CONT_F_INSERT_LIST_OVERWRITE;
 				ccow_stream_flags(c_inprog, &c_flags);
-				err = ccow_insert_list_cont(c_inprog, iov, 2, 1, index);
+				err = ccow_insert_list_cont(c_inprog, iov, 4, 1, index);
 			} else {
 				c_flags = 0;
 				ccow_stream_flags(c_inprog, &c_flags);
@@ -442,14 +448,20 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			iov[0].iov_base = inode_str;
 			iov[0].iov_len = strlen(inode_str) + 1;
 
-			iov[1].iov_base = uv_b_fot.base;
-			iov[1].iov_len = uv_b_fot.len;
+			iov[1].iov_base = &data->nhid;
+			iov[1].iov_len = sizeof(data->nhid);
+
+			iov[2].iov_base = &data->vmchid;
+			iov[2].iov_len = sizeof(data->vmchid);
+
+			iov[3].iov_base = uv_b_fot.base;
+			iov[3].iov_len = uv_b_fot.len;
 
 			c_flags = 0;
 			ccow_stream_flags(c_fot, &c_flags);
 			if (optype == CCOW_INSERT_LIST) {
 				c_flags = CCOW_CONT_F_INSERT_LIST_OVERWRITE;
-				err = ccow_insert_list_cont(c_fot, iov, 2, 1, index_fot);
+				err = ccow_insert_list_cont(c_fot, iov, 4, 1, index_fot);
 			} else {
 				err = ccow_delete_list_cont(c_fot, iov, 1, 1, index_fot);
 			}
@@ -472,7 +484,7 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 		if (need_bucket_update(data)) {
 			c_flags = CCOW_CONT_F_INSERT_LIST_OVERWRITE;
 			ccow_stream_flags(c_inprog, &c_flags);
-			err = ccow_insert_list_cont(c_inprog, iov, 2, 1, index);
+			err = ccow_insert_list_cont(c_inprog, iov, 4, 1, index);
 			if (err) {
 				log_error(lg, "TRLOG: update insert list error: %d", err);
 				goto _err;
@@ -510,7 +522,7 @@ _err:
 	if (p_fot)
 		msgpack_pack_free(p_fot);
 	if (err)
-		log_error(lg, "Failed to process object - err: %d", err);
+		log_error(lg, "Failed to update stats - err: %d", err);
 	return err;
 }
 

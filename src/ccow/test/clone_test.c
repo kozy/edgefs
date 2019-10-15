@@ -110,7 +110,6 @@ clone_test__clone_0_1k(void **state)
 	copy_opts.oid_size = strlen(cloned_name) + 1;
 	copy_opts.genid = NULL;
 	copy_opts.version_uvid_timestamp = 0;
-	copy_opts.version_vm_content_hash_id = NULL;
 
 
 	err = ccow_clone(c, "test", 5, TEST_BUCKET_NAME, strlen(TEST_BUCKET_NAME) + 1,
@@ -141,7 +140,6 @@ clone_test__clone_to_self(void **state)
 	copy_opts.oid_size = strlen(source_name) + 1;
 	copy_opts.genid = NULL;
 	copy_opts.version_uvid_timestamp = 0;
-	copy_opts.version_vm_content_hash_id = NULL;
 
 	err = ccow_clone(c, "test", 5, TEST_BUCKET_NAME, strlen(TEST_BUCKET_NAME) + 1,
 	    source_name, strlen(source_name) + 1, &copy_opts);
@@ -278,7 +276,6 @@ clone_test_override(void **state)
 	copy_opts.oid_size = strlen(cloned_override_name2) + 1;
 	copy_opts.genid = NULL;
 	copy_opts.version_uvid_timestamp = 0;
-	copy_opts.version_vm_content_hash_id = NULL;
 
 	uint64_t value1 = REPLICATION_COUNT_OVERRIDE2;
 	err = ccow_attr_modify_md_overrides(c, RT_SYSKEY_REPLICATION_COUNT, value1);

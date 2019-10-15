@@ -33,6 +33,7 @@
 #include "ccow.h"
 #include "erasure-coding.h"
 #include "reptrans_bg_sched.h"
+#include "compat.h"
 
 #define EC_DEBUG 0
 
@@ -3189,6 +3190,16 @@ reptrans_ec_encode_queue__cb(struct repdev *dev, type_tag_t ttag,
 	assert(SERVER_FLEXHASH);
 	assert(val->len == sizeof(struct verification_request));
 	vbreq = (struct verification_request*)val->base;
+	if (vbreq->ttag != TT_VERSION_MANIFEST && vbreq->ttag != TT_CHUNK_MANIFEST) {
+		err = vbreq_convert_compat(val->base, &vbreq);
+		if (err) {
+			log_error(lg, "Dev(%s) incompatible or corrupted encoding "
+				"entry for key %016lX%106lX, skipping",
+				dev->name, key->u.u.u, key->u.u.l);
+			err = 0;
+			goto _del_entry;
+		}
+	}
 
 	if (vbreq->ttag == TT_VERSION_MANIFEST) {
 		/* Do not encode VMs which are scheduled for purge */

@@ -21,7 +21,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package object
+package snapshot
 
 /*
 #include "ccow.h"
@@ -36,17 +36,15 @@ import (
 	"strings"
 
 	"github.com/Nexenta/edgefs/src/efscli/efsutil"
-	"github.com/Nexenta/edgefs/src/efscli/validate"
+	//"github.com/Nexenta/edgefs/src/efscli/validate"
 	"github.com/spf13/cobra"
 )
 
-func snapshotList(snapViewPath, pattern string, count uint32, flags []efsutil.FlagValue) error {
-
-	c_pattern := C.CString(pattern)
-	defer C.free(unsafe.Pointer(c_pattern))
+func snapshotRollback(snapViewPath, snapshotName string) error {
 
 	// SnapView path parts
 	snapPathParts := strings.SplitN(snapViewPath, "/", 4)
+
 	c_svCluster := C.CString(snapPathParts[0])
 	defer C.free(unsafe.Pointer(c_svCluster))
 
@@ -58,6 +56,9 @@ func snapshotList(snapViewPath, pattern string, count uint32, flags []efsutil.Fl
 
 	c_svObject := C.CString(snapPathParts[3])
 	defer C.free(unsafe.Pointer(c_svObject))
+	
+	// Snapshot name
+	c_shName := C.CString(snapshotName)
 
 	// Libccow Init
 	conf, err := efsutil.GetLibccowConf()
@@ -77,77 +78,33 @@ func snapshotList(snapViewPath, pattern string, count uint32, flags []efsutil.Fl
 	}
 	defer C.ccow_tenant_term(svtc)
 
-	var svc C.ccow_completion_t
-	ret = C.ccow_create_completion(svtc, nil, nil, 1, &svc)
-	if ret != 0 {
-		return fmt.Errorf("%s: snapview ccow_create_completion err=%d\n", efsutil.GetFUNC(), ret)
-	}
 
 	var snapview_t C.ccow_snapview_t
-
-	ret = C.ccow_snapview_create(svtc, &snapview_t, c_svBucket, C.strlen(c_svBucket)+1, c_svObject, C.strlen(c_svObject)+1)
+	ret = C.ccow_snapview_new(&snapview_t, c_svBucket, C.strlen(c_svBucket)+1, c_svObject, C.strlen(c_svObject)+1)
 	if ret != 0 && ret != -C.EEXIST {
 		return fmt.Errorf("%s: snapView ccow_snapview_create err=%d\n", efsutil.GetFUNC(), ret)
 	}
 	defer C.ccow_snapview_destroy(svtc, snapview_t)
 
-	var snapshotIterator C.ccow_lookup_t
-
-	ret = C.ccow_snapshot_lookup(svtc, snapview_t, c_pattern, C.strlen(c_pattern)+1, C.ulong(count), &snapshotIterator)
-	if ret != 0 {
-		if snapshotIterator != nil {
-			C.ccow_lookup_release(snapshotIterator)
-		}
-
-		if ret == -C.ENOENT {
-			return nil
-		}
-
-		return fmt.Errorf("ccow_snapshot_lookup err=%d\n", ret)
+	ret = C.ccow_snapshot_rollback(svtc, snapview_t, c_shName, C.strlen(c_shName)+1)
+	if ret != 0 && ret != -C.EEXIST {
+		return fmt.Errorf("%s: snapshot rollback error: %d\n", efsutil.GetFUNC(), ret)
 	}
-
-	var kv *C.struct_ccow_metadata_kv
-	for {
-		kv = (*C.struct_ccow_metadata_kv)(C.ccow_lookup_iter(snapshotIterator, C.CCOW_MDTYPE_NAME_INDEX, -1))
-		if kv == nil {
-			break
-		}
-		if kv.key_size == 0 {
-			continue
-		}
-
-		if strings.HasPrefix(C.GoString(kv.key), pattern) {
-			//found = 1
-			if !efsutil.IsSystemName(C.GoString(kv.key)) {
-				fmt.Printf("%s\n", C.GoString(kv.key))
-			}
-			continue
-		}
-	}
-	C.ccow_lookup_release(snapshotIterator)
-
 	return nil
 }
 
 var (
-	flagsSnapshotList []efsutil.FlagValue
 
-	snapshotListCmd = &cobra.Command{
-		Use:   "snapshot-list snapViewPath <namePattern>",
-		Short: "list snapshots of specified snapview object",
-		Long:  "list snapshots of specified snapview object",
-		Args:  validate.Object,
+	snapshotRollbackCmd = &cobra.Command{
+		Use:   "rollback <snapview-path> <snapshot>",
+		Long:  "rollback existing snapview's snapshot",
+		Short: "rollback a snapshot",
+		//Args:  validate.Object,
 		Run: func(cmd *cobra.Command, args []string) {
 
-			/*edgefs object snapshot-add cl/tn/bk/ob@snapshotName cl/tn/bk/ob.snapview */
-			if len(args) < 1 {
-				fmt.Printf("Wrong parameters: Should be edgerfs object snapshot-list <snapViewPath>")
+			if len(args) != 2 {
+				fmt.Printf("Wrong parameters: Should be 'efscli snapshot rollback <cl/tn/bk/sv.snapview> <snapshotName>'\n")
 				return
-			}
-
-			var pattern string
-			if len(args) >= 2 {
-				pattern = args[1]
 			}
 
 			snapViewPathParts := strings.Split(args[0], "/")
@@ -157,11 +114,27 @@ var (
 			}
 
 			if !strings.HasSuffix(args[0], EDGEFS_SNAPVIEW_SUFFIX) {
-				fmt.Printf("Not a snapview path: %s", args[1])
+				fmt.Printf("Not a snapview path: %s", args[0])
 				return
 			}
 
-			err := snapshotList(args[0], pattern, 1000000, flagsSnapshotList)
+			snapshotParts := strings.Split(args[1], "@")
+			if len(snapshotParts) != 2 {
+				fmt.Printf("Wrong snapshot format %s. Should be <cluster>/<tenant>/<bucket>[/<object>]@<snapshotName>\n", args[1])
+				return
+			}
+
+			pathParts := strings.Split(snapshotParts[0], "/")
+			if len(pathParts) < 3 {
+				fmt.Printf("Wrong object snapshot path: %s.\n", snapshotParts[0])
+				return
+			} else if len(pathParts) == 3 {
+				fmt.Printf("Wrong object snapshot path: %s. A bucket snapshot rollback is NOT supported." +
+					" Use an 'efscli snapshot clone' command instead\n", snapshotParts[0])
+				return
+			}
+
+			err := snapshotRollback(args[0], args[1])
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -171,7 +144,7 @@ var (
 )
 
 func init() {
-	//flagsSnapshotList = make([]efsutil.FlagValue, len(flagNames))
-	//efsutil.ReadAttributes(snapshotListCmd, flagNames, flagsSnapshotList)
-	ObjectCmd.AddCommand(snapshotListCmd)
+	SnapshotCmd.AddCommand(snapshotRollbackCmd)
 }
+
+

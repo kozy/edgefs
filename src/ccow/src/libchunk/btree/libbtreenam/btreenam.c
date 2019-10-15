@@ -767,21 +767,39 @@ btn_update_fetches_done(btc_cm_fetch_ctx_t *ctx, int *done)
 	 * iovec case. */
 
 	/* for btree name index, the most that can be updated on a single put
-	 * call is 1 entry of 3 iovecs key, val (optional) and chid (optional). */
-	assert(op_chunks->nbufs <= 3);
+	 * call is 1 entry of 3 iovecs key, val (optional) and chid (optional).
+	 *
+	 * Snapview:
+	 * iov[0] - key: snapshot name
+	 * iov[1] - nhid
+	 * iov[2] - vmchid
+	 *
+	 * Old Bucket:
+	 * iov[0] - key: OID
+	 * iov[1] - packed value
+	 *
+	 * New Bucket:
+	 * iov[0] - key: OID
+	 * iov[1] - nhid
+	 * iov[2] - oid's vmchid
+	 * iov[3] - packed value
+	 */
+	assert(op_chunks->nbufs <= 4);
 
 	/* update the btree by adding entries from the op's chunk list,  */
 	for (uint16_t i = 0; i < op_chunks->nbufs; i++) {
-		struct iovec *iov_in   = &op->iov_in[i];
 		uv_buf_t     *op_chunk = &rtbuf(op_chunks, i);
-		uint512_t    *op_chid  = &op->chids[i];
-		struct iovec *iov_in_val = (op->iovcnt_in >= 2) ?
-				&op->iov_in[++i] : NULL;
-		uint512_t    *parent_chid = (op->iovcnt_in == 3) ?
-				(uint512_t *)op->iov_in[++i].iov_base : NULL;
+		uint512_t    *op_chid  = op->chids + i;
+		size_t nvals = op->iovcnt_in;
 
-		if (op->iovcnt_in == 3)
-			uint512_logdump(lg, "INSERTING INTO BTN: ", parent_chid);
+		struct iovec *iov_key   = &op->iov_in[i];
+		uint512_t    *nhid =  nvals > 1 ? (uint512_t *)op->iov_in[i+1].iov_base : NULL;
+		uint512_t    *parent_chid = nvals > 1 ? (uint512_t *)op->iov_in[i+2].iov_base : NULL;
+
+		struct iovec *iov_val = (nvals > 3) ?
+			op->iov_in+i+3 : (nvals > 1 ) ? op->iov_in+i+1 : NULL;
+
+		i += nvals - 1;
 
 		bt_key_val_t *kv = BT_CALLOC(1, sizeof(*kv));
 
@@ -796,8 +814,8 @@ btn_update_fetches_done(btc_cm_fetch_ctx_t *ctx, int *done)
 		/*
 		 * add new name index
 		 */
-		uint32_t val_len = iov_in_val ? iov_in_val->iov_len : 0;
-		size_t sz = sizeof(btn_key_t) + iov_in->iov_len + val_len;
+		uint32_t val_len = iov_val ? iov_val->iov_len : 0;
+		size_t sz = sizeof(btn_key_t) + iov_key->iov_len + val_len;
 		btn_key_t *key = BT_CALLOC(1, sz);
 		if (key == NULL) {
 			log_error(lg, "%s: memory allocation failure\n",
@@ -809,13 +827,13 @@ btn_update_fetches_done(btc_cm_fetch_ctx_t *ctx, int *done)
 		}
 
 		/* copy key */
-		key->len = iov_in->iov_len;
-		memcpy(key->key, iov_in->iov_base, key->len);
+		key->len = iov_key->iov_len;
+		memcpy(key->key, iov_key->iov_base, key->len);
 
 		/* copy val */
 		key->val_len = val_len;
-		if (iov_in_val)
-			memcpy(key->key + key->len, iov_in_val->iov_base, val_len);
+		if (iov_val)
+			memcpy(key->key + key->len, iov_val->iov_base, val_len);
 
 		assert(key != NULL);
 		assert(memcmp_quick(key->key, key->len,
@@ -837,19 +855,16 @@ btn_update_fetches_done(btc_cm_fetch_ctx_t *ctx, int *done)
 		re->length            = sz;
 		re->compressed_length = sz;
 
-		if (op->iovcnt_in > 2)
-			RT_REF_TYPE_SET(re, RT_REF_TYPE_INLINE_VERSION);
-		else
-			RT_REF_TYPE_SET(re, RT_REF_TYPE_INLINE_PAYLOAD);
+		RT_REF_TYPE_SET(re, RT_REF_TYPE_INLINE_VERSION);
+
 		RT_REF_HASH_TYPE_SET(re, HASH_TYPE_DEFAULT);
 
 		re->data = (uint8_t *) key;
 
-		if (op->iovcnt_in > 2) {
+		if (parent_chid)
 			re->content_hash_id = *parent_chid;
-			assert(val_len == UINT512_BYTES);
-			memcpy(&re->name_hash_id, iov_in_val->iov_base, val_len);
-		}
+		if (nhid)
+			re->name_hash_id = *nhid;
 
 		kv->kv_key = (void *) key;
 		assert(kv->kv_val == NULL);
@@ -977,7 +992,7 @@ btn_update(chunkmap_handle_t chm_handle, struct ccow_op *cont_op,
 	nassert(comp->tc->loop_thrid == uv_thread_self());
 
 	assert((op_chunks->nbufs > 0) || (btn->op == cont_op));
-	assert(op_chunks->nbufs <= 3);
+	assert(op_chunks->nbufs <= 4);
 
 	/* in namedput__init_continued() we pass current operation and that
 	 * signals us that we in a final commit stage, initialized by

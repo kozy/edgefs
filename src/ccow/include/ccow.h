@@ -1303,7 +1303,7 @@ typedef enum {
 } ondemand_policy_t;
 
 /**
- * Asynchronously trigger a cacheable object's policy change
+ * Asynchronously trigger a cacheable object's policy change (latest object version)
  *
  * @param bid bucket name id of the bucket
  * @param bid_size of bucket name ID
@@ -1317,8 +1317,6 @@ int
 ccow_ondemand_policy_change_request(const char *bid, size_t bid_size, const char *oid,
 	size_t oid_size, uint64_t generation, ondemand_policy_t pol,
 	ccow_completion_t comp);
-
-
 
 /**
  * Change a cacheable (mdonly) object's policy. Blocking call.
@@ -2062,8 +2060,6 @@ struct ccow_copy_opts {
 	size_t oid_size;
 	uint64_t *genid;  /* Source generation id (optional) */
 	uint64_t version_uvid_timestamp; /* Source version timestamp (optional) */
-	char *version_vm_content_hash_id; /* Source vm hash id (optional) */
-	char *vm_chid;		/* pointer to 512bit VM CHID */
 	uint8_t md_override; /* Don't inherit source's default metadata */
 };
 

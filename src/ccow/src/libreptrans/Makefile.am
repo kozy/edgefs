@@ -39,7 +39,7 @@ libreptrans_la_SOURCES = reptrans-data.c reptrans.c named-put.c unnamed-put.c \
 			 vmm_cache.c recovery-srv.c rt_locks.c \
 			 rcvd_cache.c opp-status-srv.c serial_op.c gwcache-get.c \
 			 gwcache-async.c reptrans-flex.c rowevac-srv.c sop_list.c \
-			 res-get.c
+			 res-get.c compat.c
 
 libreptrans_la_CFLAGS = -I$(top_srcdir)/src/libflexhash \
 			-I$(top_srcdir)/src/libreplicast \

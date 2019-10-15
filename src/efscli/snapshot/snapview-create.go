@@ -21,7 +21,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package object
+package snapshot
 
 /*
 #include "ccow.h"
@@ -34,7 +34,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
 	"github.com/Nexenta/edgefs/src/efscli/efsutil"
 	"github.com/Nexenta/edgefs/src/efscli/validate"
 	"github.com/spf13/cobra"
@@ -132,7 +131,5 @@ var (
 )
 
 func init() {
-	//flagsSnapViewCreate = make([]efsutil.FlagValue, len(flagNames))
-	//efsutil.ReadAttributes(snapViewCreateCmd, flagNames, flagsSnapViewCreate)
-	ObjectCmd.AddCommand(snapViewCreateCmd)
+	SnapshotCmd.AddCommand(snapViewCreateCmd)
 }

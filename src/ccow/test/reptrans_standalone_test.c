@@ -1509,72 +1509,75 @@ batch_trlog_queue_test(void **state) {
 
 	struct repdev* dev = devices[0];
 
-	char* ibq_buffs[TRLOG_ENTRIES];
+	char* ibq_buffs[TRLOG_ENTRIES] = {0};
 	uint512_t* keys = je_calloc(TRLOG_ENTRIES, sizeof(uint512_t));
 
-	struct incoming_bach_queue_arg arg = {
-			.buffs = ibq_buffs,
-			.keys = keys,
-			.n = 0,
-			.ts_prev = 0,
-			.mode = 0
-	};
-	/* Clean the queue */
-	err = reptrans_iterate_blobs(dev, TT_TRANSACTION_LOG, trlog_callback,
-		&arg, 0);
-	/* Append new entries to the queue */
-	uint64_t ts_offset = 0;
-	printf("Adding %d entries to trlog\n", TRLOG_ENTRIES);
+	for (size_t n = 1; n < TRLOG_ENTRIES; n *= 5) {
 
-	for (uint32_t i = 0; i < TRLOG_ENTRIES; i++) {
-		if (i % 10 == 0)
-			ts_offset = rand() % 65536;
-		ibq_buffs[i] = je_calloc(1, BATCH_SIZE);
-		assert_non_null(ibq_buffs[i]);
-		uv_buf_t ub = { .base = ibq_buffs[i], .len = BATCH_SIZE};
-		random_buffer(ub);
-		msgpack_p* pack = msgpack_pack_init();
-		assert_non_null(pack);
-		uint64_t ts = get_timestamp_us() + ts_offset;
-		int err = msgpack_pack_uint64(pack, ts);
-		assert_int_equal(err, 0);
-		err = msgpack_pack_raw(pack, ibq_buffs[i], BATCH_SIZE);
-		assert_int_equal(err, 0);
-		uv_buf_t pb;
-		msgpack_get_buffer(pack, &pb);
+		struct incoming_bach_queue_arg arg = {
+				.buffs = ibq_buffs,
+				.keys = keys,
+				.n = 0,
+				.ts_prev = 0,
+				.mode = 0
+		};
+		/* Clean the queue */
+		err = reptrans_iterate_blobs(dev, TT_TRANSACTION_LOG, trlog_callback,
+			&arg, 0);
+		/* Append new entries to the queue */
+		uint64_t ts_offset = 0;
+		printf("Adding %d entries to trlog\n", n);
 
-		uint512_t key;
-		key.u.u.u = rand();
-		key.u.u.l = ts;
-		rtbuf_t* rb = rtbuf_init_mapped(&pb, 1);
-		err = reptrans_put_blob(dev, TT_TRANSACTION_LOG, HASH_TYPE_DEFAULT, rb, &key, 0);
+		for (uint32_t i = 0; i < n; i++) {
+			if (i % 10 == 0)
+				ts_offset = rand() % 65536;
+			ibq_buffs[i] = je_calloc(1, BATCH_SIZE);
+			assert_non_null(ibq_buffs[i]);
+			uv_buf_t ub = { .base = ibq_buffs[i], .len = BATCH_SIZE};
+			random_buffer(ub);
+			msgpack_p* pack = msgpack_pack_init();
+			assert_non_null(pack);
+			uint64_t ts = get_timestamp_us() + ts_offset;
+			int err = msgpack_pack_uint64(pack, ts);
+			assert_int_equal(err, 0);
+			err = msgpack_pack_raw(pack, ibq_buffs[i], BATCH_SIZE);
+			assert_int_equal(err, 0);
+			uv_buf_t pb;
+			msgpack_get_buffer(pack, &pb);
+
+			uint512_t key;
+			key.u.u.u = rand();
+			key.u.u.l = ts;
+			rtbuf_t* rb = rtbuf_init_mapped(&pb, 1);
+			err = reptrans_put_blob(dev, TT_TRANSACTION_LOG, HASH_TYPE_DEFAULT, rb, &key, 0);
+			assert_int_equal(err, 0);
+			rtbuf_destroy(rb);
+			msgpack_pack_free(pack);
+		}
+		int limited_count = 0;
+		uint64_t ts = get_timestamp_us();
+		/* Verify the strict iterator */
+		err = reptrans_iterate_blobs_strict_order_limited(dev, TT_TRANSACTION_LOG, trlog_cb_limited,
+			&limited_count, 0, 2256);
+		printf("strict_itertor: %d entries, duration %lu mS\n", limited_count, (get_timestamp_us() - ts)/1000);
+
+		arg.mode = 1;
+		arg.n = 0;
+
+		/* Verify the queue order and entries number. Empty the queue */
+		err = reptrans_iterate_blobs_strict_order(dev,
+			TT_TRANSACTION_LOG, trlog_callback,
+			&arg, 1);
 		assert_int_equal(err, 0);
-		rtbuf_destroy(rb);
-		msgpack_pack_free(pack);
+		assert_int_equal(arg.n, n);
+		/* Ensure the queue is empty */
+		arg.mode = 2;
+		arg.n = 0;
+		err = reptrans_iterate_blobs_strict_order(dev,
+			TT_TRANSACTION_LOG, trlog_callback,
+			&arg, 1);
+		assert_int_equal(arg.n, 0);
 	}
-	int limited_count = 0;
-	uint64_t ts = get_timestamp_us();
-	/* Verify the strict iterator */
-	err = reptrans_iterate_blobs_strict_order_limited(dev, TT_TRANSACTION_LOG, trlog_cb_limited,
-		&limited_count, 0, 2256);
-	printf("strict_itertor: %d entries, duration %lu mS\n", limited_count, (get_timestamp_us() - ts)/1000);
-
-	arg.mode = 1;
-	arg.n = 0;
-
-	/* Verify the queue order and entries number. Empty the queue */
-	err = reptrans_iterate_blobs_strict_order(dev,
-		TT_TRANSACTION_LOG, trlog_callback,
-		&arg, 1);
-	assert_int_equal(err, 0);
-	assert_int_equal(arg.n, TRLOG_ENTRIES);
-	/* Ensure the queue is empty */
-	arg.mode = 2;
-	arg.n = 0;
-	err = reptrans_iterate_blobs_strict_order(dev,
-		TT_TRANSACTION_LOG, trlog_callback,
-		&arg, 1);
-	assert_int_equal(arg.n, 0);
 	je_free(keys);
 	for (uint32_t i = 0; i < TRLOG_ENTRIES; i++)
 		if (ibq_buffs[i])

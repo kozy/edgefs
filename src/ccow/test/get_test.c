@@ -31,6 +31,7 @@
 #include "ccow.h"
 #include "ccowd.h"
 #include "../src/libreplicast/replicast.h"
+#include "../src/libccow/ccow-impl.h"
 
 #define TEST_BUCKET_NAME	"get-bucket-test"
 ccow_t tc;
@@ -314,7 +315,47 @@ object_delete(void **state)
 	delete(tc, TEST_BUCKET_NAME, GET_TEST_OID_DEF, NULL, NULL);
 	delete(tc, TEST_BUCKET_NAME, GET_TEST_OID_TWO_DEF, NULL, NULL);
 	delete(tc, TEST_BUCKET_NAME, GET_TEST_OID_FOUR_DEF, NULL, NULL);
+}
+
+static void
+object_get_version(void ** state)
+{
+	/* Try to get just an object by its VM */
+	assert_non_null(tc);
+	ccow_completion_t c;
+	uint512_t vmchid, nhid;
+	int err = ccow_create_completion(tc, NULL, NULL, 2, &c);
+	assert_int_equal(err, 0);
+	// Fetch object metainfo
+	err = ccow_tenant_get(tc->cid, tc->cid_size, tc->tid, tc->tid_size,
+		TEST_BUCKET_NAME, strlen(TEST_BUCKET_NAME) + 1,GET_TEST_OID_EIGHT_DEF,
+		strlen(GET_TEST_OID_EIGHT_DEF)+1, c, NULL, 0, 0, CCOW_GET, NULL);
+	assert_int_equal(err, 0);
+	err = ccow_wait(c, 0);
+	assert_int_equal(err, 0);
+	printf("VMCHID %016lX%016lX\n", c->vm_content_hash_id.u.u.u, c->vm_content_hash_id.u.u.l);
+	vmchid = c->vm_content_hash_id;
+	nhid = c->vm_name_hash_id;
+
+	// Deleting the object
 	delete(tc, TEST_BUCKET_NAME, GET_TEST_OID_EIGHT_DEF, NULL, NULL);
+
+	// Get the object
+	int len = GET_TEST_FIXEDMAP_BS * 8;
+	char buf[len]; memset(buf, 0, len);
+
+	assert_non_null(tc);
+	struct iovec *iov;
+	size_t iovcnt;
+	err = ccow_chunk(buf, len, GET_TEST_FIXEDMAP_BS, &iov, &iovcnt);
+	assert_int_equal(err, 0);
+
+	err = ccow_tenant_get_version(tc->cid, tc->cid_size, tc->tid, tc->tid_size,
+		TEST_BUCKET_NAME, strlen(TEST_BUCKET_NAME) + 1,GET_TEST_OID_EIGHT_DEF,
+		strlen(GET_TEST_OID_EIGHT_DEF)+1, c, iov, iovcnt, 0, CCOW_GET, NULL, &vmchid, &nhid);
+	assert_int_equal(err, 0);
+	err = ccow_wait(c, 1);
+	assert_int_equal(err, 0);
 }
 
 static void
@@ -352,6 +393,7 @@ main(int argc, char **argv)
 		unit_test(get_test__default_0_8k),
 		unit_test(get_test__empty),
 		unit_test(object_delete),
+		unit_test(object_get_version),
 		unit_test(bucket_delete),
 		unit_test(libccow_teardown),
 		unit_test(libccowd_teardown)

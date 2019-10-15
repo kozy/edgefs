@@ -31,6 +31,7 @@ import (
 	"github.com/Nexenta/edgefs/src/efscli/cluster"
 	"github.com/Nexenta/edgefs/src/efscli/config"
 	"github.com/Nexenta/edgefs/src/efscli/object"
+	"github.com/Nexenta/edgefs/src/efscli/snapshot"
 	"github.com/Nexenta/edgefs/src/efscli/service"
 	"github.com/Nexenta/edgefs/src/efscli/system"
 	"github.com/Nexenta/edgefs/src/efscli/tenant"
@@ -56,6 +57,7 @@ func main() {
 	efscliCmd.AddCommand(config.ConfigCmd)
 	efscliCmd.AddCommand(user.UserCmd)
 	efscliCmd.AddCommand(device.DeviceCommand)
+	efscliCmd.AddCommand(snapshot.SnapshotCmd)
 
 	if err := efscliCmd.Execute(); err != nil {
 		fmt.Println(err)

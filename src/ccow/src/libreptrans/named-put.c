@@ -831,6 +831,10 @@ namedput_srv_exec(void *arg)
 			return;
 		}
 	} else {
+		if (*req->md.cid != 0 && *req->md.tid != 0 && *req->md.bid != 0 && *req->md.oid == 0)
+			vbreq.vtype |= RT_VERIFY_BUCKET;
+		if (msg_pp->hdr.attributes & RD_ATTR_SNAPSHOT)
+			vbreq.vtype |= RT_VERIFY_SNAPSHOT;
 		uint16_t mdonly_policy = RT_ONDEMAND_GET(req->md.inline_data_flags);
 		if (mdonly_policy != ondemandPolicyLocal) {
 			/* cacheable objects have to bypass quarantine */
