@@ -2178,6 +2178,18 @@ ccow_clone_version(ccow_completion_t comp, const char *tid_src, size_t tid_src_s
 		c->version_uvid_timestamp = (*copy_opts->genid > 0 ? copy_opts->version_uvid_timestamp : 0);
 	}
 
+	if (copy_opts->version_vm_content_hash_id) {
+		c->version_vm_content_hash_id = (uint512_t *) je_malloc(sizeof(uint512_t));
+		if (!c->version_vm_content_hash_id) {
+			err = -ENOMEM;
+			log_error(lg, "ccow_clone returned error %d", err);
+			ccow_release(c);
+			return err;
+		}
+		uint512_fromhex(copy_opts->version_vm_content_hash_id, (UINT512_BYTES * 2 + 1), c->version_vm_content_hash_id);
+	} else {
+		c->version_vm_content_hash_id = NULL;
+	}
 	char *tid_dst = copy_opts->tid;
 	size_t tid_dst_size = copy_opts->tid_size;
 	char *bid_dst = copy_opts->bid;

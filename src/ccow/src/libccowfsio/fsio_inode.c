@@ -2764,6 +2764,7 @@ ccowfs_inode_clone_get(ccowfs_inode *src_inode, ci_t *dest_ci,
 	copy_opts.oid_size = inode->oid_size;
 	copy_opts.genid = NULL;
 	copy_opts.version_uvid_timestamp = 0;
+	copy_opts.version_vm_content_hash_id = NULL;
 
 	err = ccowfs_create_completion(inode->ci, NULL, NULL, src_inode->ino,
 	    &c);

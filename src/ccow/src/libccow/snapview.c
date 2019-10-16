@@ -480,6 +480,7 @@ ccow_clone_snapview_object(ccow_t tctx, ccow_snapview_t sv_hdl,
 	copy_opts.genid = NULL;
 	copy_opts.version_uvid_timestamp = 0;
 	copy_opts.md_override = 0;
+	copy_opts.version_vm_content_hash_id = NULL;
 
 
 	/* In case of Rollback we've passed NULL/NULL/NULL, so use the same

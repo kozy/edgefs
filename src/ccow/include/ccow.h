@@ -2061,6 +2061,7 @@ struct ccow_copy_opts {
 	uint64_t *genid;  /* Source generation id (optional) */
 	uint64_t version_uvid_timestamp; /* Source version timestamp (optional) */
 	uint8_t md_override; /* Don't inherit source's default metadata */
+	char* version_vm_content_hash_id;
 };
 
 /*
