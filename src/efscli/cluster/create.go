@@ -59,14 +59,20 @@ func ClusterCreate(clname string, flags []efsutil.FlagValue) error {
 
 	ret := C.ccow_admin_init(c_conf, cl, 1, &tc)
 	if ret != 0 {
-		return fmt.Errorf("ccow_admin_init err=%d", ret)
+		return fmt.Errorf("Coudln't create a tenant context %d", ret)
 	}
 	defer C.ccow_tenant_term(tc)
 
+	/* Check whether the system initialized */
+	guid := C.ccow_get_system_guid_formatted(tc)
+	if guid == nil {
+		return fmt.Errorf("The system is NOT initialized")
+	}
+
 	var c C.ccow_completion_t
-	ret = C.ccow_create_completion(tc, nil, nil, 1, &c)
+	ret = C.ccow_create_completion(tc, nil, nil, 2, &c)
 	if ret != 0 {
-		return fmt.Errorf("ccow_create_completion err=%d", ret)
+		return fmt.Errorf("Failed to create a completion %d", ret)
 	}
 
 	c_clname := C.CString(clname)
@@ -80,7 +86,7 @@ func ClusterCreate(clname string, flags []efsutil.FlagValue) error {
 	ret = C.ccow_cluster_create(tc, c_clname,
 		C.strlen(c_clname)+1, c)
 	if ret != 0 {
-		return fmt.Errorf("Cluster create err=%d", ret)
+		return fmt.Errorf("Couldn't create a cluster %d", ret)
 	}
 
 	return efsutil.ModifyCustomAttributes(clname, "", "", "", flags)
@@ -104,7 +110,7 @@ var (
 		Run: func(cmd *cobra.Command, args []string) {
 			err := ClusterCreate(args[0], flags)
 			if err != nil {
-				fmt.Println(err)
+				fmt.Println("ERROR:", err)
 				os.Exit(1)
 			}
 		},
