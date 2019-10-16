@@ -296,6 +296,7 @@ clone_test(void **state)
 	copy_opts.oid_size = strlen(clone_path) + 1;
 	copy_opts.genid = NULL;
 	copy_opts.version_uvid_timestamp = 0;
+	copy_opts.version_vm_content_hash_id = NULL;
 	printf("Clonning %s -> %s\n", object_name, clone_path);
 	err = ccow_clone(c, "test", 5, bucket_name, strlen(bucket_name) + 1,
 		object_name, strlen(object_name) + 1, &copy_opts);

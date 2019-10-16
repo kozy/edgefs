@@ -162,7 +162,7 @@ clone_test_clone(void **state)
 	copy_opts.oid_size = strlen(object_copy) + 1;
 	copy_opts.genid = &genid_version;
 	copy_opts.version_uvid_timestamp = version_uvid_timestamp;
-
+	copy_opts.version_vm_content_hash_id = version_vm_content_hash_id;
 
 	err = ccow_clone(c, "test", 5, TEST_BUCKET_NAME, strlen(TEST_BUCKET_NAME) + 1,
 	    object_name, strlen(object_name) + 1, &copy_opts);
