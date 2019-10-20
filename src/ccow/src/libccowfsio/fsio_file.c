@@ -276,6 +276,8 @@ ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
 		goto out;
 	}
 
+	file_inode->write_free_cb = file->write_free_cb;
+
 	err = fsio_buffer_cache_write(file_inode, offset, buffer_size, buffer);
 	if (err) {
 		log_error(fsio_lg,

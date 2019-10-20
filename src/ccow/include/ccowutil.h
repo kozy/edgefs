@@ -468,8 +468,8 @@ static inline int memcmp_safe(const void *m1, size_t s1, const void *m2,
 
 #define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
 
-#define panic(panicmsg...) do { \
-	fprintf(stderr, panicmsg); \
+#define panic(...) do { \
+	fprintf(stderr, __VA_ARGS__); \
 	fflush(stderr); \
 	abort(); \
 } while (0)

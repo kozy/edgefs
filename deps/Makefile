@@ -9,8 +9,8 @@ MAKEFLAGS += -j
 
 CORO_DEPS=jemalloc libqb knet corosync
 DEPS=lmdb libuv nanomsg liberasurecode libbacktrace kvssd \
-     json-c h2o smartmontools
-CCOW_DEPS=stgt fio nfs-ganesha
+     json-c h2o smartmontools libco
+CCOW_DEPS=stgt fio nfs-ganesha sqlite
 
 all: install
 

@@ -46,14 +46,14 @@ define install_lib_deps
 		cgroup-bin systemtap-sdt-dev libcurl4-openssl-dev libkrb5-dev \
 		libblkid-dev libnss3-dev groff libssl-dev libcgroup-dev \
 		bison flex curl unzip udev zlib1g-dev libtirpc-dev rpcbind \
-		libnl-route-3-dev pkg-config; \
+		libnl-route-3-dev pkg-config tcl; \
 fi
 @if test $(distributorid) = centos -o $(distributorid) = rhel; then \
 	yum -y --skip-broken install openssl-devel libtool automake cmake \
 		systemtap-sdt-devel curl-devel libcgroup-devel libuuid-devel \
 		libcgroup-tools libasan devtoolset-4-libasan-devel \
 		libblkid-devel nss-devel groff-base openssl-devel \
-		libcgroup-devel krb5-devel bison flex curl unzip udev; \
+		libcgroup-devel krb5-devel bison flex curl unzip udev tcl; \
 	yum -y install --enablerepo=rhel-7-server-optional-rpms; \
 	yum -y groupinstall "Development Tools"; \
 	yum -y install centos-release-scl; \
