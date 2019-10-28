@@ -476,6 +476,9 @@ replicast_pack_sg_dynfetch_payload(msgpack_p *p, const struct dynfetch_data* dat
 	int err = msgpack_pack_uint64(p, data->flags);
 	if (err)
 		return err;
+	err = msgpack_pack_uint64(p, data->seg_uid);
+	if (err)
+		return err;
 	err = msgpack_pack_raw(p, data->obj_path, strlen(data->obj_path)+1);
 	if (err)
 		return err;

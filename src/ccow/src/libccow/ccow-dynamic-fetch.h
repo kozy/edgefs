@@ -72,6 +72,7 @@ struct dynfetch_data {
 	struct refentry ref;
 	uint16_t n_chids; /* Number of CHIDs */
 	uint512_t* chids;
+	uint64_t seg_uid;  // Segment UID
 };
 
 /**
