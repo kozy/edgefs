@@ -1146,6 +1146,7 @@ unnamedget_dynfetch_request(struct state *st) {
 		d->chids[2] = r->mchid;
 		d->n_chids = 3;
 	}
+	d->seg_uid = op->metadata.uvid_src_guid.l;  // Segment UID
 	log_debug(lg, "Payload %s: a dynamic fetch  request to ISGW %s SegUID %016lX",
 		mchidstr, op->isgw_addr_last, op->metadata.uvid_src_guid.l);
 	snprintf(d->obj_path, sizeof(d->obj_path), "%s/%s/%s/%s",
