@@ -322,7 +322,7 @@ unnamedget_process_payload(struct state *st)
 				comp->cont_flags &= ~CCOW_CONT_F_EXIST;
 				state_next(st, EV_DONE);
 				return;
-			} else if (!(io->attributes & RD_ATTR_PSEUDO_GET)) {
+			} else if (!(io->attributes & (RD_ATTR_PSEUDO_GET | RD_ATTR_MULTISITE))) {
 				ccow_fail_io(st->io, -ENOENT);
 				state_next(st, EV_ERR);
 				return;
