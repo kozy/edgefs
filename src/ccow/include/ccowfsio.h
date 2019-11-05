@@ -161,6 +161,13 @@ typedef int (*fsio_up_callback) (void *cb_args, inode_t inode,
     uint64_t ccow_fsio_up_flags);
 
 /**
+ * Set free() callback for write buffers for the file descriptor.
+ * Can only be called prior to any write I/Os for the descriptor.
+ */
+void ccow_fsio_write_free_set(ccow_fsio_file_t *file,
+    ccow_fsio_write_free_cb free_cb);
+
+/**
  * CLone file on server side.
  * Create new namespace entry and new object same as the existing one.
  */
@@ -384,7 +391,7 @@ int ccow_fsio_delete(ci_t * ci, inode_t parent, char *name);
  * @param mode access mode of new directory.
  * @param uid owner ID of new directory.
  * @param gid group ID of new directory.
- * @param inode pointer to unique file identifier of newly created node.
+ * @param inode pointer to unique file identifier of newly created node or NULL.
  * @returns 0 on success, or standard error code (errno(3)) if fail.
  */
 int ccow_fsio_mkdir(ci_t * ci, inode_t parent, char *name,
