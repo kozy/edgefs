@@ -1286,6 +1286,12 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 		goto out;
 	}
 
+	err = fsio_s3_cache_create(&ci->fsio_s3_cache);
+	if (err) {
+		log_error(fsio_lg, "Cannot initialize fsio_s3_cache");
+		goto out;
+	}
+
 	err = __create_root_obj(ci);
 	if (err) {
 		log_error(fsio_lg, "Cannot create root object");
@@ -1364,6 +1370,7 @@ ccow_fsio_delete_export(ci_t * ci)
 	ccowfs_inode_cache_term(ci);
 
 	fsio_list_cache_destroy(&ci->fsio_list_cache);
+	fsio_s3_cache_destroy(&ci->fsio_s3_cache);
 
 	/* Sync last stats changes. */
 	flusher_sync_fsstat(ci);

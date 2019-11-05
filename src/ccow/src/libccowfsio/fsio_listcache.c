@@ -87,7 +87,8 @@ fsio_list_cache_destroy(fsio_list_cache_t *fsio_list_cache) {
 		}
 	}
 
-	je_free(keys);
+	if (key_count)
+		je_free(keys);
 
 	hashtable_destroy(fsio_list_cache->fsio_list_cache_entry_ht);
 	fsio_list_cache->fsio_list_cache_entry_ht = NULL;
@@ -133,7 +134,8 @@ fsio_list_cache_clean(fsio_list_cache_t *fsio_list_cache) {
 		}
 	}
 
-	je_free(keys);
+	if (key_count)
+		je_free(keys);
 
 	log_trace(fsio_lg, "fsio_list_cache cleaned %u records from %u", num, key_count);
 

@@ -37,6 +37,7 @@
 #include "fsio_debug.h"
 #include "fsio_inode.h"
 #include "fsio_listcache.h"
+#include "fsio_s3cache.h"
 
 /* Bucket attributes used.
  * Except for the file_object_transparency all are inherited by the objects.
@@ -103,6 +104,7 @@ struct fsio_super {
 	pthread_mutex_t rename_mutex;
 
 	fsio_list_cache_t fsio_list_cache;
+	fsio_s3_cache_t fsio_s3_cache;
 
 	pthread_t flusher_thread;
 	int flusher_run;

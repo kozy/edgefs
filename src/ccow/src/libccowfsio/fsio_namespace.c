@@ -38,9 +38,32 @@
 #include "fsio_system.h"
 #include "fsio_common.h"
 #include "fsio_listcache.h"
+#include "fsio_s3cache.h"
 #include "fsio_namespace.h"
 #include "fsio_dir.h"
 #include "fsio_recovery.h"
+
+#define MAX_KEY_LEN 2048
+
+static int
+ccow_fsio_add_s3_cache(ci_t *ci, inode_t parent, inode_t child, char *name, uint512_t *vmchid)
+{
+	if (!ci) {
+		return -EINVAL;
+	}
+	if (!ci->fsio_s3_cache.fsio_s3_cache_entry_ht) {
+		return -ENOMEM;
+	}
+
+	fsio_s3_cache_entry_t fsio_s3_cache_entry;
+	int err = fsio_s3_cache_entry_init(&fsio_s3_cache_entry, parent, child, name, vmchid);
+	if (err) {
+		return err;
+	}
+
+	err = fsio_s3_cache_put(&ci->fsio_s3_cache, &fsio_s3_cache_entry);
+	return err;
+}
 
 /** FSIO NAMESPACE
  * Implements all the namespace related functions :
@@ -421,8 +444,8 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 	int eof = 0;
 	ccowfs_inode *parent_inode = NULL;
 	fsio_dir_entry *dir_entry = NULL;
-	char filter[MAX_NAME_LEN], marker[MAX_NAME_LEN], tmpMarker[MAX_NAME_LEN],
-		newMarker[MAX_NAME_LEN], dirMarker[MAX_NAME_LEN];
+	char filter[MAX_KEY_LEN], marker[MAX_KEY_LEN], tmpMarker[MAX_KEY_LEN],
+		newMarker[MAX_KEY_LEN], dirMarker[MAX_KEY_LEN];
 	ccow_completion_t c = NULL;
 	ccow_lookup_t iter = NULL;
 	struct s3dir *s3;
@@ -438,7 +461,7 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 		return (EINVAL);
 	}
 
-	if (parent_ino != CCOW_FSIO_S3OBJ_DIR_INODE && !(parent_ino &
+	 if (parent_ino != CCOW_FSIO_S3OBJ_DIR_INODE && !(parent_ino &
 	    FSIO_INODE_MEMONLY)) {
 		err = ccow_fsio_dir_readdir_cb4(ci, parent_ino, start, cb, ptr, eofptr);
 		return err;
@@ -470,6 +493,8 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 		goto out;
 	}
 
+	fsio_s3_cache_clean(&ci->fsio_s3_cache);
+
 	/**
 	 * S3OBJ_DIR is in memory directory. There is no representation on disk.
 	 * Add "." and ".." entries
@@ -496,15 +521,15 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 	 */
 	if (parent_ino & FSIO_INODE_MEMONLY) {
 		plen = strlen(s3->path) + 1;
-		strncpy(marker, s3->path, MAX_NAME_LEN);
+		strncpy(marker, s3->path, MAX_KEY_LEN);
 		marker[plen - 1] = '/';
 		marker[plen] = '\0';
 		strcat(marker, start ? start : "");
 	} else {
-		strncpy(marker, start ? start : "", MAX_NAME_LEN);
+		strncpy(marker, start ? start : "", MAX_KEY_LEN);
 	}
-	strncpy(filter, marker, MAX_NAME_LEN);
-	strncpy(newMarker, marker, MAX_NAME_LEN);
+	strncpy(filter, marker, MAX_KEY_LEN);
+	strncpy(newMarker, marker, MAX_KEY_LEN);
 
 	while (err == 0 && !eof) {
 		int read_count = 0;
@@ -517,7 +542,8 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 		char *e = NULL;
 		char *name = NULL;
 		inode_t child_ino;
-		char s3_encoded_name[MAX_NAME_LEN];
+		char s3_encoded_name[MAX_KEY_LEN];
+		uint512_t vmchid = uint512_null;
 
 		err = ccowfs_create_completion(ci, NULL, NULL, parent_ino, &c);
 		if (err) {
@@ -535,6 +561,8 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 
 		iov[0].iov_base = marker;
 		iov[0].iov_len = strlen(marker) + 1;
+
+		log_debug(fsio_lg, "Start  from marker: %s", marker);
 
 		memset(dir_entry, 0, MAX_READIR_ENTRIES_AT_A_TIME *
 		    sizeof(fsio_dir_entry));
@@ -582,11 +610,11 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 				}
 
 				/* last read element can be our new marker */
-				if (kv->key_size > 0 && kv->key_size < MAX_NAME_LEN) {
+				if (kv->key_size > 0 && kv->key_size < MAX_KEY_LEN) {
 					memcpy(tmpMarker, kv->key, kv->key_size);
 					tmpMarker[kv->key_size] = 0;
 					if (strcmp(tmpMarker, newMarker) > 0) {
-						strncpy(newMarker, tmpMarker, MAX_NAME_LEN);
+						strncpy(newMarker, tmpMarker, MAX_KEY_LEN);
 					}
 				}
 
@@ -616,7 +644,7 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 					dirMarker[plen+len+1] = 0xFF;
 					dirMarker[plen+len+2] = '\0';
 					if (strcmp(dirMarker, newMarker) > 0) {
-						strncpy(newMarker, dirMarker, MAX_NAME_LEN);
+						strncpy(newMarker, dirMarker, MAX_KEY_LEN);
 						log_debug(fsio_lg, "Updated marker: %s, by dir key: %s",
 							newMarker, (char *)kv->key);
 					}
@@ -650,7 +678,7 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 				log_debug(fsio_lg, "Parsing object %s marker %s",
 				    (char *)kv->key, newMarker);
 				err = parse_s3_obj_stats(ci, kv->value,
-				    kv->value_size, &s3_obj_stat);
+				    kv->value_size, &s3_obj_stat, &vmchid);
 				if (err) {
 					log_error(fsio_lg, "parse_s3_obj_stats "
 					    "failed. %s err: %d",
@@ -658,7 +686,20 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 					goto out;
 				}
 
-				child_ino = d ? d->ino : s3_obj_stat.st_ino;
+
+				if (!d) { // Add to cache for regular inode
+					child_ino = s3_obj_stat.st_ino;
+					log_info(fsio_lg, "find_s3_cache add bucket: %s, parent_ino: %lu, child_ino: %lu, name: %s",
+						ci->bid, parent_inode->ino, child_ino, kv->key);
+					err = ccow_fsio_add_s3_cache(ci, parent_inode->ino, child_ino, kv->key, &vmchid);
+					if (err) {
+						log_error(fsio_lg,"add s3 cache error %d", err);
+						err = 0;
+					}
+				} else {
+					child_ino = d->ino;
+					vmchid = uint512_null;
+				}
 
 				dir_entry[read_count].name = je_strdup(
 				    d ? d->name : kv->key + plen);
@@ -673,7 +714,9 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 				* Do not fetch the object attributes again.
 				* If the inode is not presetn in the cache, then add it.
 				*/
-				ccowfs_inode_cache_s3_inode(ci, child_ino, &s3_obj_stat);
+				log_debug(fsio_lg, "cache_s3_inode bucket: %s, parent_ino: %lu, child_ino: %lu, name: %s",
+						ci->bid, parent_inode->ino, child_ino, kv->key);
+				ccowfs_inode_cache_s3_inode(ci, child_ino, &s3_obj_stat, &vmchid);
 
 				/*
 				 * Don't check the error here.
@@ -689,7 +732,7 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 			iter = NULL;
 
 			eof = eof || (strcmp(marker, newMarker) == 0);
-			strncpy(marker, newMarker, MAX_NAME_LEN);
+			strncpy(marker, newMarker, MAX_KEY_LEN);
 
 			if (read_count) {
 				/*
@@ -719,6 +762,8 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 				break;
 		}
 	}
+
+	log_debug(fsio_lg, "List done: err: %d eof: %d", err, eof);
 
 	if (!err)
 		*eofptr = (bool)eof;
@@ -753,9 +798,9 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 	int err;
 	int eof = 0;
 	ccowfs_inode *parent_inode = NULL;
-	char filter[MAX_NAME_LEN], marker[MAX_NAME_LEN], tmpMarker[MAX_NAME_LEN],
-		newMarker[MAX_NAME_LEN], dirMarker[MAX_NAME_LEN];
-	char buf[MAX_NAME_LEN];
+	char filter[MAX_KEY_LEN], marker[MAX_KEY_LEN], tmpMarker[MAX_KEY_LEN],
+		newMarker[MAX_KEY_LEN], dirMarker[MAX_KEY_LEN];
+	char buf[MAX_KEY_LEN];
 	ccow_completion_t c = NULL;
 	ccow_lookup_t iter = NULL;
 	struct s3dir *s3;
@@ -814,14 +859,14 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 	 */
 	if (parent_ino & FSIO_INODE_MEMONLY) {
 		plen = strlen(s3->path) + 1;
-		strncpy(marker, s3->path, MAX_NAME_LEN);
+		strncpy(marker, s3->path, MAX_KEY_LEN);
 		marker[plen - 1] = '/';
 		marker[plen] = '\0';
 	} else {
 		strcpy(marker, "");
 	}
-	strncpy(filter, marker, MAX_NAME_LEN);
-	strncpy(newMarker, marker, MAX_NAME_LEN);
+	strncpy(filter, marker, MAX_KEY_LEN);
+	strncpy(newMarker, marker, MAX_KEY_LEN);
 
 	while (err == 0 && !eof) {
 		int read_count = 0;
@@ -834,7 +879,8 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 		char *e = NULL;
 		char *name = NULL;
 		inode_t child_ino;
-		char s3_encoded_name[MAX_NAME_LEN];
+		char s3_encoded_name[MAX_KEY_LEN];
+		uint512_t vmchid;
 
 		err = ccowfs_create_completion(ci, NULL, NULL, parent_ino, &c);
 		if (err) {
@@ -896,11 +942,11 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 				}
 
 				/* last read element can be our new marker */
-				if (kv->key_size > 0 && kv->key_size < MAX_NAME_LEN) {
+				if (kv->key_size > 0 && kv->key_size < MAX_KEY_LEN) {
 					memcpy(tmpMarker, kv->key, kv->key_size);
 					tmpMarker[kv->key_size] = 0;
 					if (strcmp(tmpMarker, newMarker) > 0) {
-						strncpy(newMarker, tmpMarker, MAX_NAME_LEN);
+						strncpy(newMarker, tmpMarker, MAX_KEY_LEN);
 					}
 				}
 
@@ -930,7 +976,7 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 					dirMarker[plen+len+1] = 0xFF;
 					dirMarker[plen+len+2] = '\0';
 					if (strcmp(dirMarker, newMarker) > 0) {
-						strncpy(newMarker, dirMarker, MAX_NAME_LEN);
+						strncpy(newMarker, dirMarker, MAX_KEY_LEN);
 						log_debug(fsio_lg, "Updated marker: %s, by dir key: %s",
 							newMarker, (char *)kv->key);
 					}
@@ -955,7 +1001,7 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 				}
 
 				err = parse_s3_obj_stats(ci, kv->value,
-				    kv->value_size, &s3_obj_stat);
+				    kv->value_size, &s3_obj_stat, &vmchid);
 				if (err) {
 					log_error(fsio_lg, "parse_s3_obj_stats "
 					    "failed. %s err: %d",
@@ -966,6 +1012,16 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 				child_ino = d ? d->ino : s3_obj_stat.st_ino;
 				log_debug(fsio_lg, "Parsing object %s ino: %lu",
 				    (char *)kv->key, child_ino);
+
+				if (!d) { // Add to cache for regular inode
+					log_info(fsio_lg, "find_s3_cache add bucket: %s, parent_ino: %lu, child_ino: %lu, name: %s",
+						ci->bid, parent_inode->ino, child_ino, kv->key);
+					err = ccow_fsio_add_s3_cache(ci, parent_inode->ino, child_ino, kv->key, &vmchid);
+					if (err) {
+						log_error(fsio_lg,"add s3 cache error %d", err);
+						err = 0;
+					}
+				}
 
 				read_count++;
 
@@ -985,7 +1041,7 @@ ccow_fsio_find_list(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int r
 				break;
 
 			eof = eof || (strcmp(marker, newMarker) == 0);
-			strncpy(marker, newMarker, MAX_NAME_LEN);
+			strncpy(marker, newMarker, MAX_KEY_LEN);
 
 			if (eof)
 				break;
@@ -1120,19 +1176,24 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 	struct iovec iov[2];
 	int err = 0;
 	inode_t ino;
-	char s3_decoded_name[MAX_NAME_LEN];
+	char s3_decoded_name[MAX_KEY_LEN];
 	char *obj_name = name;
 	struct s3dir *d = NULL;
+	uint512_t vmchid;
 
-	log_trace(fsio_lg, "%s: parent_inode: %lu, parent oid: %s, try_dir: %d, name: \"%s\"",
-	    __func__, parent_inode->ino, parent_inode->oid, try_dir, name);
+	log_trace(fsio_lg, "S3Look %s: bid: %s, parent_inode: %lu, parent oid: %s, try_dir: %d, name: \"%s\"",
+	    __func__, ci->bid, parent_inode->ino, parent_inode->oid, try_dir, name);
 
-	if (! strcmp(name, ".")){
-		*out_ino = CCOW_FSIO_S3OBJ_DIR_INODE;
+	if ( strlen(name) == 1 && !strcmp(name, ".")){
+		*out_ino = parent_inode->ino;
 		goto out;
 	}
-	else if (! strcmp(name, "..")) {
-		*out_ino = CCOW_FSIO_ROOT_INODE;
+	else if ( strlen(name) == 2 && !strcmp(name, "..")) {
+		if (parent_inode->ino == CCOW_FSIO_S3OBJ_DIR_INODE) {
+			*out_ino = CCOW_FSIO_ROOT_INODE;
+		} else {
+			*out_ino = CCOW_FSIO_S3OBJ_DIR_INODE;
+		}
 		goto out;
 	}
 
@@ -1142,7 +1203,7 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 	 * name to allow "/" in it.
 	 */
 	err = decode_s3_name(name, strlen(name),
-	    s3_decoded_name, MAX_NAME_LEN);
+	    s3_decoded_name, MAX_KEY_LEN);
 	if (err) {
 		log_error(fsio_lg,
 		    "decode_s3_name return %d for name :%s", err, name);
@@ -1159,11 +1220,35 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 	    parent_inode->ino & FSIO_INODE_MEMONLY) {
 		err = find_cached_s3dir_by_ino(ci, parent_inode->ino,
 		    &d);
-		if (!err)
+		if (!err) {
 			log_error(fsio_lg, "Can't find cached parent "
 			    "s3dir. ino: %lu, err: %d",
 			    parent_inode->ino, err);
+			err = ENOENT;
+			goto out;
+		}
 		sprintf(obj_name, "%s/%s", d->path, name);
+	}
+
+	// Look at s3 cache
+	char buf[MAX_KEY_LEN];
+	char *key;
+	inode_t res_ino;
+	if (obj_name) {
+		key = build_s3_key(parent_inode->ino, obj_name, buf);
+		err = fsio_s3_cache_get(&ci->fsio_s3_cache, key, &res_ino);
+		if (err) {
+			log_debug(fsio_lg, "find_s3_cache miss in cache bucket: %s, parent_ino: %lu, key: %s",
+					ci->bid, parent_inode->ino, key);
+			err = 0;
+		} else {
+			log_debug(fsio_lg, "find_s3_cache found in s3 cache bucket: %s, parent_ino: %lu, inode: %lu, key: %s",
+				ci->bid, parent_inode->ino, res_ino, key);
+			if (out_ino) {
+				*out_ino = res_ino;
+			}
+			goto out;
+		}
 	}
 
 	err = ccowfs_create_completion(ci, NULL, NULL, parent_inode->ino, &c);
@@ -1178,7 +1263,7 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 
 	err = ccow_get_list(ci->bid, ci->bid_size,
 	    parent_inode->oid, parent_inode->oid_size,
-	    c, iov, 1, 100, &iter);
+	    c, iov, 1, 2, &iter);
 	if (err) {
 		log_error(fsio_lg, "ccow_get_list return %d for inode :%lu",
 		    err, parent_inode->ino);
@@ -1200,6 +1285,8 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 
 		while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX,
 			    pos++)) != NULL) {
+			log_debug(fsio_lg, "ccow_get_list kv->key %s obj_name: %s",
+				kv->key, obj_name);
 
 			if (try_dir && obj_name && strncmp(obj_name, kv->key,
 			    strlen(obj_name)) == 0) {
@@ -1220,12 +1307,18 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 			}
 			if (obj_name && strcmp(obj_name, kv->key) == 0) {
 				err = parse_s3_obj_inode(kv->value,
-				    kv->value_size, &ino);
+				    kv->value_size, &ino, &vmchid);
 				if (err) {
 					log_error(fsio_lg,
 					    "parse_s3_obj_inode return %d inode :%lu",
 					    err, parent_inode->ino);
 					goto out;
+				}
+
+				err = ccow_fsio_add_s3_cache(ci, parent_inode->ino, ino, obj_name, &vmchid);
+				if (err) {
+					log_error(fsio_lg,"add s3 cache error %d", err);
+					err = 0;
 				}
 				if (out_ino) {
 					*out_ino = ino;
@@ -1246,16 +1339,19 @@ out:
 	if (err) {
 		ci->ccow_err = err;
 
-		if (err == -ENOENT || err == ENOENT)
+		if (err == -ENOENT || err == ENOENT) {
 			err = ENOENT;
-		else {
+			log_debug(fsio_lg, "ENOENT %s: parent_inode: %lu, name: \"%s\" ",
+				__func__, parent_inode->ino, name);
+		} else {
 			log_error(fsio_lg,
 			    "failed for bucket: %s inode: %lu name: %s err: %d",
 			    ci->bid, parent_inode->ino, name, err);
 		}
+	} else {
+		log_debug(fsio_lg, "completed %s: parent_inode: %lu, name: \"%s\" found inode: %lu",
+			__func__, parent_inode->ino, name, *out_ino);
 	}
-	log_debug(fsio_lg, "completed %s: parent_inode: %lu, name: \"%s\" found inode: %lu",
-	    __func__, parent_inode->ino, name, *out_ino);
 
 	return err;
 }
@@ -1281,6 +1377,8 @@ ccow_fsio_lookup(ci_t * ci, inode_t parent_ino, char *name, inode_t * ino)
 	}
 
 	if (parent_ino == CCOW_FSIO_S3OBJ_DIR_INODE || (parent_ino & FSIO_INODE_MEMONLY)) {
+		log_trace(fsio_lg, "s3_lookup %s: parent_ino: %lu, name: \"%s\"",
+			__func__, parent_ino, name);
 		err = __s3_lookup(ci, parent_inode, name, ino, false);
 		if (err && err != ENOENT)
 			log_error(fsio_lg, "__s3_lookup return %d for name: %s "
@@ -1288,6 +1386,8 @@ ccow_fsio_lookup(ci_t * ci, inode_t parent_ino, char *name, inode_t * ino)
 
 		if (err == ENOENT) {
 			/* Maybe it is dir. */
+			log_trace(fsio_lg, "s3_lookup dir %s: parent_ino: %lu, name: \"%s\"",
+				__func__, parent_ino, name);
 			err = __s3_lookup(ci, parent_inode, name, ino, true);
 			if (err && err != ENOENT)
 				log_error(fsio_lg, "__s3_lookup return %d for "
@@ -1295,6 +1395,8 @@ ccow_fsio_lookup(ci_t * ci, inode_t parent_ino, char *name, inode_t * ino)
 				    parent_ino);
 		}
 	} else {
+		log_trace(fsio_lg, "dir_lookup %s: parent_ino: %lu, name: \"%s\"",
+			__func__, parent_ino, name);
 		err = ccow_fsio_dir_lookup(ci, parent_inode, name, ino);
 		if (err && err != ENOENT)
 			log_error(fsio_lg, "ccow_fsio_dir_lookup return %d "
