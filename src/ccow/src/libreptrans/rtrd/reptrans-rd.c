@@ -713,6 +713,30 @@ rd_bloom_load(void *arg) {
 		if (!is_keycache_tt(ttag) && ttag != TT_NAMEINDEX)
 			continue;
 
+		if (is_log_tt(dev, ttag)) {
+			struct repdev_log* log = db->log;
+			MDB_txn* ltxn = NULL;
+			MDB_stat lstat;
+			err = mdb_txn_begin(log->env, NULL, MDB_RDONLY, &ltxn);
+			if (err)
+				log_error(lg, "Dev(%s) WAL txn begin error %d", dev->name, err);
+			else {
+				/**
+				* We are not allowed to build bloom filter when WAL isn't empty
+				* to avoid false negatives in the blob_query()
+				*/
+				mdb_stat(ltxn, log->dbi[ttag], &lstat);
+				if (lstat.ms_entries != 0) {
+					log_error(lg, "Dev(%s) blob_load WAL for ttag %s isn't empty %lu",
+						dev->name, type_tag_name[ttag], lstat.ms_entries);
+					err = -EINVAL;
+				}
+				mdb_txn_abort(ltxn);
+			}
+			if (err)
+				goto _exit;
+		}
+
 		const char* env_path = NULL;
 		struct repdev_rd *rd = dev->device_lfs;
 		mdb_env_get_path(rd->mdcache_env, &env_path);
@@ -847,17 +871,16 @@ _exit:
 		mdb_cursor_close(kcursor);
 	if (ktxn)
 		mdb_txn_abort(ktxn);
-	log_notice(lg, "Dev(%s/%02d): loaded %ld bloom filter keys"
+
+	uv_rwlock_wrlock(&db->bloom_lock);
+	if (!err && db->bloom_loaded == 0 && !dev->terminating) {
+		/* mark the filter as loaded */
+		db->bloom_loaded = 1;
+		log_notice(lg, "Dev(%s/%02d): loaded %ld bloom filter keys"
 			" (took ~ %"
 			PRIu64
 			" ms), err: %d", dev->name, db->part, entries,
 			(uv_hrtime() - before) / 1000000, err);
-
-	/* mark the filter as loaded */
-
-	uv_rwlock_wrlock(&db->bloom_lock);
-	if (!err && db->bloom_loaded == 0 && !dev->terminating) {
-		db->bloom_loaded = 1;
 	} else {
 		log_error(lg, "bloom loading failed, no bloom available for "
 			"Dev(%s)-part-%d", dev->name, db->part);
@@ -4688,6 +4711,7 @@ rd_log_delete_deferred(void *arg)
 	uint64_t start_ns = uv_hrtime();
 	size_t nbuf_cur = 0;
 	size_t delete_bulk_size = DEV_RD_DEL_DEFERRED_BULK;
+	size_t tot_del = 0;
 
 _repeat:
 	/* start log txn */
@@ -4712,7 +4736,8 @@ _repeat:
 			if (err && err != MDB_NOTFOUND)
 				break;
 			err = 0;
-			if (i > nbuf_cur + delete_bulk_size)
+			tot_del++;
+			if (i >= nbuf_cur + delete_bulk_size)
 				break;
 		}
 	} else {
@@ -4759,12 +4784,12 @@ _repeat:
 		goto _exit;
 	}
 
-	nbuf_cur = i + 1;
+	nbuf_cur = i + (is_dupsort_tt(ttag) ? 2 : 1);
 	if (nbuf_cur < rbkeys->nbufs)
 		goto _repeat;
 
 	log_debug(lg, "Dev(%s): LOG DEL: %s, deleted=%ld took=%ldus", dev->name,
-	    type_tag_name[ttag], rbkeys->nbufs, (uv_hrtime() - start_ns) / 1000);
+	    type_tag_name[ttag], tot_del, (uv_hrtime() - start_ns) / 1000);
 
 _exit:
 	if (log_txn)
@@ -4964,10 +4989,12 @@ _start:
 	/* walk all log records for this TT */
 	int mdcache_blocked = 0, keydb_blocked = 0;
 	int op = MDB_FIRST;
-	while ((err = mdb_cursor_get(log_cursor, &key, &data, op)) == 0 &&
-		rbkeys_i < (is_dupsort_tt(ttag) ? 2*n_log_entries : n_log_entries)
-		&& !commit_max_reached) {
+	while ((err = mdb_cursor_get(log_cursor, &key, &data, op)) == 0) {
 		op = MDB_NEXT;
+
+		size_t max_ent = is_dupsort_tt(ttag) ? n_log_entries*2 : n_log_entries;
+		if (commit_max_reached || rbkeys_i >= max_ent)
+			break;
 
 		MDB_val keyhv;
 		uint64_t kh;
@@ -11720,8 +11747,12 @@ rd_dev_close_nolock(struct repdev* dev) {
 	struct repdev_db *db = NULL;
 	uv_buf_t key;
 	uv_buf_t value;
+	int all_blooms_valid = 1;
+
 	for (int j = 0; j < rd->plevel; ++j) {
 		struct repdev_db *db = rd->db + j;
+		if (db->bloom_loaded <= 0)
+			all_blooms_valid = 0;
 		if (!db->bloom_load_thread)
 			continue;
 		rd_bloom_wait(db);
@@ -11730,8 +11761,9 @@ rd_dev_close_nolock(struct repdev* dev) {
 	/*
 	 * Do not store bloom in READONLY_FORCED because it might lead to
 	 * put races with `efscli device check`. LMDB bug?
+	 * Also, prevent storing of non-initialized bloom filters
 	 */
-	if (status == REPDEV_STATUS_ALIVE || status == REPDEV_STATUS_INIT) {
+	if (all_blooms_valid && (status == REPDEV_STATUS_ALIVE || status == REPDEV_STATUS_INIT)) {
 		int err = rd_dev_quiesce_bloom(dev);
 		if (err != 0)
 			log_error(lg, "failed or partial failure storing bloom filter(s)");

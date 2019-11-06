@@ -278,6 +278,67 @@ reptrans_put_getlast_version__test(void **state) {
 	assert_int_equal(err,-ENOENT);
 }
 
+static int
+ni_iterator(struct repdev *dev, type_tag_t ttag,
+	crypto_hash_t hash_type, uint512_t *key, uv_buf_t *val, void *param)
+{
+	size_t len = 0;
+	assert_true(reptrans_blob_query(dev, ttag, hash_type, key, &len) > 0);
+	return 0;
+}
+
+
+static void
+reptrans_blob_query__test(void **state) {
+	struct vmmetadata md;
+	rtbuf_t *rb_vers = NULL;
+	size_t lookups = 10000;
+	uint512_t* nhids = je_calloc(lookups, sizeof(uint512_t));
+
+	int err =  reptrans_init(0, NULL, NULL,
+		RT_FLAG_STANDALONE | RT_FLAG_CREATE, 1,
+		(char**)transport, NULL);
+
+	assert_true(err > 0);
+
+	if (err <= 0)
+		return;
+
+	err = libreptrans_enum();
+
+	assert_true(err > 0);
+
+	size_t i;
+	srand(get_timestamp_us());
+	uint512_t nhid = { { {rand(), 1}, {2, 3} }, { {4, 5}, {6, 7} } };
+	struct vlentry query = {
+		.uvid_timestamp = ~0ULL,
+		.generation = 0ULL
+	};
+	memset(&md, 0, sizeof(struct vmmetadata));
+	for (size_t i = 0; i < lookups; ++i) {
+		md.uvid_timestamp = get_timestamp_us() + 10000 - (rand() % 20000);
+		nhid.u.u.u = rand();
+		nhids[i] = nhid;
+		md.nhid = nhid;
+		md.replication_count = 3;
+		md.txid_generation = i;
+		assert_int_equal(reptrans_put_version(devices[0], &md, &nhid, 0), 0);
+	}
+
+	/*
+	* Iterate over the chunks collecting their CHIDs
+	*/
+	assert_int_equal(reptrans_iterate_blobs(devices[0], TT_NAMEINDEX,
+		ni_iterator, NULL, 0), 0);
+
+	for (size_t i = 0; i < lookups; ++i) {
+		reptrans_delete_blob(devices[0], TT_NAMEINDEX, HASH_TYPE_DEFAULT,
+			nhids + i);
+	}
+}
+
+
 
 int dd = 0;
 
@@ -1857,6 +1918,8 @@ main(int argc, char *argv[])
 		unit_test(reptrans_vbr_iterator_test),
 		unit_test(reptrans_teardown),
 		unit_test(reptrans_put_getlast_version__test),
+		unit_test(reptrans_teardown),
+		unit_test(reptrans_blob_query__test),
 		unit_test(reptrans_teardown),
 		unit_test(batch_incoming_queue_test),
 		unit_test(reptrans_teardown),
