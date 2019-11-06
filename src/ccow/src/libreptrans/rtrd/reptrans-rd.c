@@ -150,6 +150,28 @@ is_log_tt(struct repdev *dev, type_tag_t ttag)
 	}
 }
 
+static inline int
+is_datasync_tt(struct repdev *dev, type_tag_t ttag)
+{
+	/**
+	 *Do a sync transaction for sensitive metadata
+	 */
+	struct repdev_rd* rd = dev->device_lfs;
+	if (rd->env_sync_disable || rd->sync < 1)
+		return 0;
+
+	int rc = 0;
+	switch (ttag) {
+		case TT_VERIFICATION_QUEUE:
+		case TT_BATCH_QUEUE:
+		case TT_BATCH_INCOMING_QUEUE:
+			rc = 1;
+			break;
+		default:
+			rc = 0;
+	}
+	return rc;
+}
 
 static int
 rd_log_cmp(const MDB_val *a, const MDB_val *b, int (*blob_cmp)(const void *,
@@ -1375,12 +1397,13 @@ rd_mdcache_putdel_blob(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn,
 	int err;
 	struct repdev_rd *rd = dev->device_lfs;
 	MDB_txn *txn;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	const char* env_path = NULL;
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
 	if (!ext_txn) {
-		err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+		err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 		if (err) {
 			struct rd_fault_signature fs = {
 				.error = err,
@@ -1412,7 +1435,7 @@ rd_mdcache_putdel_blob(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn,
 				log_debug(lg, "Dev(%s): %s kh=%lx mdb_put: (%d) %s, ignored",
 				    dev->name, type_tag_name[ttag], *kh, err, mdb_strerror(err));
 				if (!ext_txn) {
-					err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+					err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 					if (err) {
 						struct rd_fault_signature fs = {
 							.error = err,
@@ -1502,11 +1525,12 @@ rd_mdcache_load(struct repdev *dev, type_tag_t ttag)
 	MDB_cursor *cursor = NULL;
 	int err = 0;
 	uint64_t entries = 0;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	const char* env_path = NULL;
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
-	err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+	err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 	if (err) {
 		if (err != EACCES) {
 			log_error(lg, "Get(%s): cannot begin txn mdcache_load: (%d) %s, env_path %s",
@@ -2085,13 +2109,14 @@ mdcache_adjust(mdcache_t *c, type_tag_t ttag, MDB_txn *ext_txn)
 	struct repdev_rd *rd = dev->device_lfs;
 	MDB_txn *txn;
 	int repeat = 0;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	const char* env_path = NULL;
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
 
 	if (!ext_txn) {
-		err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+		err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 		if (err) {
 			log_error(lg, "Dev(%s): mdcache mdb_txn_begin: (%d) %s, env_path %s",
 				dev->name, err, mdb_strerror(err), env_path);
@@ -2486,6 +2511,7 @@ rd_key_insert(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn, uint64_t *k
 	int err;
 	struct repdev_rd *rd = dev->device_lfs;
 	MDB_txn *txn;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	if (!rd->mdcache)
 		return 0;
@@ -2506,7 +2532,7 @@ rd_key_insert(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn, uint64_t *k
 	}
 
 	if (!ext_txn) {
-		err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+		err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 		if (err) {
 			log_error(lg, "Dev(%s): mdb_txn_begin: (%d) %s, env_path %s",
 				dev->name, err, mdb_strerror(err), env_path);
@@ -2581,6 +2607,7 @@ rd_key_set_attr(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn, uint64_t 
 	int err;
 	struct repdev_rd *rd = dev->device_lfs;
 	MDB_txn *txn;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	if (!rd->mdcache)
 		return 0;
@@ -2589,7 +2616,7 @@ rd_key_set_attr(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn, uint64_t 
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
 	if (!ext_txn) {
-		err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+		err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 		if (err) {
 			log_error(lg, "Dev(%s): mdcache mdb_txn_begin: (%d) %s, env_path %s",
 				dev->name, err, mdb_strerror(err), env_path);
@@ -2656,6 +2683,7 @@ rd_key_remove(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn, uint64_t *k
 	int err;
 	struct repdev_rd *rd = dev->device_lfs;
 	MDB_txn* txn = ext_txn;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	if (!rd->mdcache)
 		return 0;
@@ -2664,7 +2692,7 @@ rd_key_remove(struct repdev *dev, type_tag_t ttag, MDB_txn *ext_txn, uint64_t *k
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
 	if (!txn) {
-		err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+		err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &txn);
 		if (err) {
 			log_error(lg, "Dev(%s): mdcache mdb_txn_begin: (%d) %s, env_path %s",
 				dev->name, err, mdb_strerror(err), env_path);
@@ -2942,7 +2970,7 @@ rd_rebuild_mdcache(struct repdev* dev) {
 	const char* env_path = NULL;
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
-	err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn);
+	err = mdb_txn_begin(rd->mdcache_env, NULL, MDB_TXN_SYNC, &txn);
 	if (err) {
 		log_error(lg, "Dev(%s): mdcache mdb_txn_begin: (%d) %s, env_path %s",
 			dev->name, err, mdb_strerror(err), env_path);
@@ -3226,7 +3254,7 @@ rd_mdoffload_migrate(struct repdev* dev, type_tag_t ttag) {
 		int plevel = PLEVEL_HASHCALC(&chid, (rd->plevel - 1));
 		struct repdev_db* db = rd->db + plevel;
 		if (!txn_main[plevel]) {
-			err = mdb_txn_begin(db->env[0], NULL, 0, &txn_main[plevel]);
+			err = mdb_txn_begin(db->env[0], NULL, MDB_TXN_SYNC, &txn_main[plevel]);
 			if (err) {
 				log_error(lg, "Dev(%s) main mdb_txn_begin: %s (%d)",
 					dev->name, mdb_strerror(err), err);
@@ -3270,7 +3298,7 @@ rd_mdoffload_migrate(struct repdev* dev, type_tag_t ttag) {
 							dev->name, mdb_strerror(err), err);
 						goto _exit;
 					}
-					err = mdb_txn_begin(db->env[0], NULL, 0, &txn_main[i]);
+					err = mdb_txn_begin(db->env[0], NULL, MDB_TXN_SYNC, &txn_main[i]);
 					if (err) {
 						log_error(lg, "Dev(%s) main mdb_txn_begin: %s (%d)",
 							dev->name, mdb_strerror(err), err);
@@ -3321,7 +3349,7 @@ rd_mdoffload_migrate(struct repdev* dev, type_tag_t ttag) {
 		goto _exit;
 	}
 	/* Drop the mdoffload table*/
-	err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &txn_offload);
+	err = mdb_txn_begin(rd->mdcache_env, NULL, MDB_TXN_SYNC, &txn_offload);
 	if (err) {
 		log_error(lg, "Dev(%s) mdcache mdb_txn_begin: %s (%d)",
 			dev->name, mdb_strerror(err), err);
@@ -4488,7 +4516,7 @@ rd_del_hashcount_entry(struct repdev *dev)
 	const char* env_path = NULL;
 	mdb_env_get_path(DEV_ENV(db, TT_HASHCOUNT), &env_path);
 
-	err = mdb_txn_begin(DEV_ENV(db, TT_HASHCOUNT), NULL, 0, &txn);
+	err = mdb_txn_begin(DEV_ENV(db, TT_HASHCOUNT), NULL, MDB_TXN_SYNC, &txn);
 	if (err) {
 		log_error(lg,
 		    "Dev(%s): rd_del_hashcount_entry mdb_txn_begin: (%d) %s, env_path %s plevel %d",
@@ -4551,7 +4579,7 @@ rd_put_hashcount_entry(struct repdev *dev, MDB_val* key, MDB_val* data)
 	mdb_env_get_path(DEV_ENV(db, TT_HASHCOUNT), &env_path);
 
 _retry:
-	err = mdb_txn_begin(DEV_ENV(db, TT_HASHCOUNT), NULL, 0, &txn);
+	err = mdb_txn_begin(DEV_ENV(db, TT_HASHCOUNT), NULL, MDB_TXN_SYNC, &txn);
 	if (err) {
 		log_error(lg,
 		    "Dev(%s): rd_put_hashcount_entry mdb_txn_begin: (%d) %s path %s part %d",
@@ -4712,10 +4740,11 @@ rd_log_delete_deferred(void *arg)
 	size_t nbuf_cur = 0;
 	size_t delete_bulk_size = DEV_RD_DEL_DEFERRED_BULK;
 	size_t tot_del = 0;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 _repeat:
 	/* start log txn */
-	err = rdlog_txn_begin(log, 0, &log_txn);
+	err = rdlog_txn_begin(log, txn_flag, &log_txn);
 	if (err) {
 		log_error(lg, "Get(%s): cannot begin log_delete %s log_txn: (%d) %s env_path %s",
 		    dev->name, type_tag_name[ttag], err, mdb_strerror(err), log->path);
@@ -4843,6 +4872,7 @@ rd_log_flush_thread(void *arg)
 	uv_mutex_unlock(&db->log_flush_lock);
 	dev->flushing |= (1 << ttag);
 	dev->flushing_part |= (1 << db->part);
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 _start:
 	commit_size = 0;
@@ -4908,7 +4938,7 @@ _start:
 	const char* main_env_path = NULL;
 	mdb_env_get_path(main_env, &main_env_path);
 	/* start main TT txn */
-	err = mdb_txn_begin(main_env, NULL, 0, &main_txn);
+	err = mdb_txn_begin(main_env, NULL, txn_flag, &main_txn);
 	if (err) {
 		if (++db->flush_error_count[ttag] > DEV_RD_FLUSH_ERROR_MAX) {
 			log_error(lg, "Get(%s): cannot begin mdb log_flush main_txn: (%d) %s env_path %s part %d",
@@ -4949,7 +4979,7 @@ _start:
 			mdb_env_get_path(rd->mdcache_env, &md_env_path);
 
 			/* start keys table txn */
-			err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &md_txn);
+			err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &md_txn);
 			if (err) {
 				md_txn = NULL;
 				if (++db->flush_error_count[ttag] > DEV_RD_FLUSH_ERROR_MAX) {
@@ -5779,6 +5809,7 @@ rd_log_append(struct repdev *dev, struct repdev_log *log, type_tag_t ttag,
 	struct repdev_db *db = log->db;
 	MDB_dbi dbi = log->dbi[ttag];
 	size_t len = rtbuf_len(rb);
+	int txn_flags = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	data.mv_size = len;
 
@@ -5799,7 +5830,7 @@ rd_log_append(struct repdev *dev, struct repdev_log *log, type_tag_t ttag,
 	 * can implement sharded log_flush() later on..
 	 */
 _again:
-	err = rdlog_txn_try_begin(log, 0, &txn);
+	err = rdlog_txn_try_begin(log, txn_flags, &txn);
 	if (err) {
 		/* Returns EBUSY when log is being recovered, we should
 		 * write to the main db this time. The EAGAIN when no more
@@ -5939,7 +5970,7 @@ _again:
 		}
 
 		/* reopen read-write txn again and do append */
-		err = rdlog_txn_try_begin(log, 0, &txn);
+		err = rdlog_txn_try_begin(log, txn_flags, &txn);
 		if (err) {
 			assert(err != EAGAIN);
 			if (err != EBUSY) {
@@ -6244,6 +6275,8 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 		 */
 	}
 
+	int txn_flags = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
+
 	err = rd_kv_validate(ttag, &key, &data);
 	if (err) {
 		err = -EINVAL;
@@ -6255,7 +6288,7 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 	const char* env_path = NULL;
 	mdb_env_get_path(DEV_ENV(db, ttag), &env_path);
 
-	err = mdb_txn_begin(DEV_ENV(db, ttag), NULL, 0, &txn);
+	err = mdb_txn_begin(DEV_ENV(db, ttag), NULL, txn_flags, &txn);
 	if (err) {
 		struct rd_fault_signature fs = {
 			.error = err,
@@ -6309,7 +6342,7 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 		if (overwrite && !dev->wal_disabled) {
 			MDB_txn *log_txn = NULL;
 			do {
-			err = rdlog_txn_try_begin(log, 0, &log_txn);
+			err = rdlog_txn_try_begin(log, txn_flags, &log_txn);
 				if (err) {
 					/* Returns EBUSY when log is being recovered, we should
 					 * write to the main db this time. The EAGAIN when no more
@@ -6476,6 +6509,7 @@ rd_set_blob_attr(struct repdev *dev, type_tag_t ttag,
 	msgpack_p *ptk = NULL;
 	MDB_val keyhv;
 	uint64_t kh;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	err = pthread_rwlock_tryrdlock(&rd->guard);
 	if (err)
@@ -6550,7 +6584,7 @@ rd_set_blob_attr(struct repdev *dev, type_tag_t ttag,
 		/*
 		 * Set attribute to the chunk directly into main TT data store
 		 */
-		err = mdb_txn_begin(DEV_ENV(db, ttag), NULL, 0, &txn);
+		err = mdb_txn_begin(DEV_ENV(db, ttag), NULL, txn_flag, &txn);
 		if (err) {
 			struct rd_fault_signature fs = {
 				.error = err,
@@ -7362,6 +7396,7 @@ rd_delete_blob_value(struct repdev *dev, type_tag_t ttag,
 	size_t deleted = 0;
 	rtbuf_t* rb = NULL;
 	size_t del_size = 0;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	struct repdev_rd *rd = dev->device_lfs;
 	assert(is_dupsort_tt(ttag));
@@ -7436,7 +7471,7 @@ rd_delete_blob_value(struct repdev *dev, type_tag_t ttag,
 	const char* env_path = NULL;
 	mdb_env_get_path(env, &env_path);
 
-	err = mdb_txn_begin(env, NULL, 0, &txn);
+	err = mdb_txn_begin(env, NULL, txn_flag, &txn);
 	if (err) {
 		struct rd_fault_signature fs = {
 			.error = err,
@@ -7568,6 +7603,7 @@ rd_delete_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	MDB_val keyhv;
 	uint64_t kh;
 	size_t del_size = 0;
+	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
 
 	err = pthread_rwlock_tryrdlock(&rd->guard);
 	if (err)
@@ -7633,7 +7669,7 @@ rd_delete_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 			mdb_env_get_path(rd->mdcache_env, &env_path);
 
 			MDB_txn *md_txn;
-			err = mdb_txn_begin(rd->mdcache_env, NULL, 0, &md_txn);
+			err = mdb_txn_begin(rd->mdcache_env, NULL, txn_flag, &md_txn);
 			if (err) {
 				log_error(lg, "Dev(%s): md_txn mdb_txn_begin: (%d) %s env_path %s", dev->name,
 				    err, mdb_strerror(err), env_path);
@@ -7670,7 +7706,7 @@ rd_delete_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	const char* env_path = NULL;
 	mdb_env_get_path(rd->mdcache_env, &env_path);
 
-	err = mdb_txn_begin(env, NULL, 0, &txn);
+	err = mdb_txn_begin(env, NULL, txn_flag, &txn);
 	if (err) {
 		struct rd_fault_signature fs = {
 			.error = err,
@@ -11872,7 +11908,7 @@ rd_sync_bloom_to_lmdb(struct repdev_db *db, void *arg) {
 	data.mv_data = db->bloom;
 
 	int err;
-	if (mdb_txn_begin(DEV_ENV(db, TT_HASHCOUNT), NULL, 0, &txn) != 0)
+	if (mdb_txn_begin(DEV_ENV(db, TT_HASHCOUNT), NULL, MDB_TXN_SYNC, &txn) != 0)
 		return PART_WALK_TERMINATE;
 
 	if ((err = mdb_put(txn, DEV_SHARD(db, TT_HASHCOUNT, 0), &key, &data,
