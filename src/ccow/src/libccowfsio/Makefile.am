@@ -23,7 +23,7 @@
 ##
 lib_LTLIBRARIES = libccowfsio.la
 
-libccowfsio_la_SOURCES = fsio_common.c fsio_disk.c fsio_file.c fsio_flusher.c fsio_inode.c fsio_namespace.c fsio_s3_transparency.c fsio_system.c fsio_debug.c fsio_control_thread.c fsio_snapshot.c fsio_clone.c fsio_dir.c fsio_cache.c fsio_recovery.c tc_pool.c fsio_listcache.c
+libccowfsio_la_SOURCES = fsio_common.c fsio_disk.c fsio_file.c fsio_flusher.c fsio_inode.c fsio_namespace.c fsio_s3_transparency.c fsio_system.c fsio_debug.c fsio_control_thread.c fsio_snapshot.c fsio_clone.c fsio_dir.c fsio_cache.c fsio_recovery.c tc_pool.c fsio_listcache.c fsio_s3cache.c
 
 libccowfsio_la_CFLAGS = -I$(top_srcdir)/src/libreplicast -I$(top_srcdir)/src/libccowfsio/include
 

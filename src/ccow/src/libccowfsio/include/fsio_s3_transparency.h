@@ -46,14 +46,14 @@ int get_object_root_dir(ci_t *ci, char **name);
  * Parse inode number for the S3 objects.
  * Use the value from the bucket btree to get the inode number.
  */
-int parse_s3_obj_inode(void *value, size_t value_size, inode_t * ino);
+int parse_s3_obj_inode(void *value, size_t value_size, inode_t * ino, uint512_t *vmchid);
 
 /**
  * Parse inode stats for the S3 objects.
  * Use the value from the bucket btree to get the inode stats.
  */
 int parse_s3_obj_stats(ci_t *ci, void *value, size_t value_size,
-    struct stat *stat);
+    struct stat *stat, uint512_t *vmchid);
 
 /**
  * Get the object name.
@@ -65,7 +65,7 @@ int get_s3_obj_name(ci_t *ci, char *ino_str, char **oid);
  * Get the object attributes as stats.
  * Lookup the btree on the INODE_OBJECT_LOOKUP by inode number
  */
-int get_s3_obj_stats(ci_t *ci, char *ino_str, struct stat *stat);
+int get_s3_obj_stats(ci_t *ci, char *ino_str, struct stat *stat, uint512_t *vmchid);
 
 /**
  * Return latest bucket's generation. Used for dynamic invalidation

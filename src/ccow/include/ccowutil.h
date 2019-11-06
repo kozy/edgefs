@@ -840,6 +840,10 @@ atomic_set_uint64(uint64_t* ptr, uint64_t value) {
 
 static inline char *
 hash_id_to_buffer(uint512_t *hash_id, char *buf) {
+	if (!hash_id) {
+		buf[0] = 0;
+		return buf;
+	}
 	char hash[UINT512_BYTES*2+1];
 	uint512_dump(hash_id, hash, UINT512_BYTES*2+1);
 	memcpy(buf, hash, UINT512_BYTES*2+1);

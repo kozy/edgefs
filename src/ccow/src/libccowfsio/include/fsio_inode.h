@@ -199,6 +199,7 @@ typedef struct __ccowfs_inode__
 	struct stat stat;
 	int dirty;
 	uint64_t genid;
+	uint512_t vmchid;
 	uint32_t snap_count;
 	uint64_t logical_size;;
 	uint64_t prev_logical_size;;
@@ -330,7 +331,7 @@ int ccowfs_inode_get_by_ino_for_recovery(ci_t * ci, inode_t inode_no,
  * No actual disk operation.
  */
 int ccowfs_inode_cache_s3_inode(ci_t * ci, inode_t inode_no,
-    struct stat *stat);
+    struct stat *stat, uint512_t *vmchid);
 
 /** ccowfs_namespace_inode_lock:
   *        Take write lock on the inode at namespace level.

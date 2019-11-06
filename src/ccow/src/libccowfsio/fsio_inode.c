@@ -58,6 +58,7 @@
 #define INODE_HASH_TABLE_MAX_LOAD_FACTOR (0.05)
 #define INODE_S3DIR_EXPIRE_TIMEOUT_US (180ULL * 1000000ULL)
 #define INODE_EXPIRE_TIMEOUT_US (5ULL * 1000000ULL)
+#define INODE_S3_EXPIRE_TIMEOUT_US (120ULL * 1000000ULL)
 
 #define MD_MODE					0x0001
 #define MD_UID					0x0002
@@ -621,6 +622,8 @@ __fetch_inode_done(fetch_inode_args * cb_args)
 					isdir = 1;
 			} else if (strcmp(key, RT_SYSKEY_TX_GENERATION_ID) == 0) {
 				ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, &inode->genid);
+			} else if (strcmp(key, RT_SYSKEY_VM_CONTENT_HASH_ID) == 0) {
+				memcpy(&inode->vmchid, kv->value, sizeof(uint512_t));
 			} else if (strcmp(key, X_FILE_MODE) == 0) {
 				ccow_iterator_kvcast(CCOW_KVTYPE_UINT16, kv,
 				    &stat->st_mode);
@@ -801,7 +804,7 @@ __fetch_inode_from_disk(ccowfs_inode * inode, int sync, int recovery)
 		sync = 1;
 
 	if (INODE_IS_S3OBJ(inode->ino)) {
-		err = get_s3_obj_stats(inode->ci, inode->ino_str, &inode->stat);
+		err = get_s3_obj_stats(inode->ci, inode->ino_str, &inode->stat, &inode->vmchid);
 		if (! err) {
 			assert(inode->ready == 0);
 			atomic_set_uint64(&inode->ready, 1);
@@ -1064,7 +1067,8 @@ __create_inmemory_inode(ci_t *ci, inode_t ino, int flags,
 	else
 		inode->read_only = 0;
 
-	inode->expire_us = get_timestamp_us() + INODE_EXPIRE_TIMEOUT_US;
+	inode->expire_us = get_timestamp_us() +
+		(INODE_IS_S3OBJ(inode->ino) ? INODE_S3_EXPIRE_TIMEOUT_US : INODE_EXPIRE_TIMEOUT_US);
 
 	QUEUE_INIT(&inode->dirty_q);
 	QUEUE_INIT(&inode->list_q);
@@ -1885,12 +1889,20 @@ out:
 }
 
 static int
-ccowfs_inode_expire_check(ccowfs_inode *inode)
+ccowfs_inode_expire_check(ccowfs_inode *inode, uint512_t *vmchid)
 {
+	if (INODE_IS_S3OBJ(inode->ino)) {
+		if (vmchid && (uint512_cmp(vmchid, &inode->vmchid) == 0)) {
+			inode->expire_us = get_timestamp_us() + INODE_S3_EXPIRE_TIMEOUT_US;
+			return 0;
+		}
+	}
+
 	uint64_t newts = get_timestamp_us();
 	int expired = inode->expire_us < newts;
 	if (expired) {
-		inode->expire_us = newts + INODE_EXPIRE_TIMEOUT_US;
+		inode->expire_us = newts +
+			(INODE_IS_S3OBJ(inode->ino) ? INODE_S3_EXPIRE_TIMEOUT_US :  INODE_EXPIRE_TIMEOUT_US);
 
 		/* additionally for files, verify genid */
 		if (INODE_IS_FILE(inode->ino)) {
@@ -1908,7 +1920,7 @@ ccowfs_inode_expire_check(ccowfs_inode *inode)
 
 static int
 __ccowfs_inode_get_by_ino_private(ci_t * ci, inode_t ino,
-    ccowfs_inode ** out_inode, struct stat *in_stat, int recovery)
+    ccowfs_inode ** out_inode, struct stat *in_stat, uint512_t *vmchid, int recovery)
 {
 	int err = 0;
 	ccowfs_inode *inode = NULL;
@@ -1977,7 +1989,7 @@ get_inode:
 			 * This inode needs to be invalidated. Remove, and re-fetch.
 			 */
 			if (atomic_get_uint64(&inode->refcount) == 1 &&
-			    !inode->dirty && ccowfs_inode_expire_check(inode)) {
+			    !inode->dirty && ccowfs_inode_expire_check(inode, vmchid)) {
 				__remove_inode_from_hash_table_locked(inode);
 				__inode_free(inode);
 				inode = NULL;
@@ -2056,6 +2068,8 @@ get_inode:
 			    "__create_inmemory_inode return error");
 			goto out;
 		}
+
+
 		allocated = 1;
 
 		/*
@@ -2090,6 +2104,9 @@ get_inode:
 
 			assert(inode->ready == 0);
 			atomic_inc64(&inode->ready);
+			if (vmchid) {
+				memcpy(&inode->vmchid, vmchid, sizeof(uint512_t));
+			}
 			goto out;
 		}
 
@@ -2134,15 +2151,15 @@ ccowfs_inode_get_by_ino(ci_t * ci, inode_t ino, ccowfs_inode ** out_inode)
 {
 
 	log_trace(fsio_lg, "ci: %p, ino: %lu, out_inode: %p", ci, ino, out_inode);
-	return __ccowfs_inode_get_by_ino_private(ci, ino, out_inode, NULL, 0);
+	return __ccowfs_inode_get_by_ino_private(ci, ino, out_inode, NULL, NULL, 0);
 }
 
 int
-ccowfs_inode_cache_s3_inode(ci_t * ci, inode_t ino, struct stat *stat)
+ccowfs_inode_cache_s3_inode(ci_t * ci, inode_t ino, struct stat *stat, uint512_t *vmchid)
 {
 
 	log_trace(fsio_lg, "ci: %p, ino: %lu, stat: %p", ci, ino, stat);
-	return __ccowfs_inode_get_by_ino_private(ci, ino, NULL, stat, 0);
+	return __ccowfs_inode_get_by_ino_private(ci, ino, NULL, stat, vmchid, 0);
 }
 
 /* get inodes for recovery handler, allows return of inodes with link count 0 */
@@ -2152,7 +2169,7 @@ ccowfs_inode_get_by_ino_for_recovery(ci_t * ci, inode_t ino,
 {
 
 	log_trace(fsio_lg, "ci: %p, ino: %lu, out_inode: %p", ci, ino, out_inode);
-	return __ccowfs_inode_get_by_ino_private(ci, ino, out_inode, NULL, 1);
+	return __ccowfs_inode_get_by_ino_private(ci, ino, out_inode, NULL, NULL, 1);
 }
 
 int

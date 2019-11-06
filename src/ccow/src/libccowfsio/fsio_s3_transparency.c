@@ -171,7 +171,7 @@ out:
 }
 
 int
-parse_s3_obj_inode(void *value, size_t value_size, inode_t * ino)
+parse_s3_obj_inode(void *value, size_t value_size, inode_t * ino, uint512_t *vmchid)
 {
 	int err;
 	s3_obj_attrs attrs = { 0 };
@@ -186,6 +186,9 @@ parse_s3_obj_inode(void *value, size_t value_size, inode_t * ino)
 	}
 
 	*ino = attrs.ino;
+
+	memcpy(vmchid, &attrs.vmchid, sizeof(uint512_t));
+
 	assert(INODE_IS_S3OBJ(*ino));
 
 out:
@@ -197,7 +200,7 @@ out:
 
 int
 parse_s3_obj_stats(ci_t * ci, void *value, size_t value_size,
-    struct stat *stat)
+    struct stat *stat, uint512_t *vmchid)
 {
 	int err;
 	struct timespec time;
@@ -228,10 +231,12 @@ parse_s3_obj_stats(ci_t * ci, void *value, size_t value_size,
 	stat->st_mtime = time.tv_sec;
 	stat->st_ctime = time.tv_sec;
 
+	memcpy(vmchid, &attrs.vmchid, sizeof (uint512_t));
+
 	assert(INODE_IS_S3OBJ(stat->st_ino));
 
 out:
-	log_debug(fsio_lg, "completed ci: %p, value: %p, value_size: %lu, "
+	log_trace(fsio_lg, "completed ci: %p, value: %p, value_size: %lu, "
 	    "stat: %p", ci, value, value_size, stat);
 
 	return err;
@@ -449,7 +454,7 @@ out:
 }
 
 int
-get_s3_obj_stats(ci_t * ci, char *ino_str, struct stat *stat)
+get_s3_obj_stats(ci_t * ci, char *ino_str, struct stat *stat, uint512_t *vmchid)
 {
 	int err;
 	struct ccow_metadata_kv *kv = NULL;
@@ -460,6 +465,7 @@ get_s3_obj_stats(ci_t * ci, char *ino_str, struct stat *stat)
 	int pos = 0;
 	struct iovec iov;
 	char *obj_name = NULL;
+
 
 	log_trace(fsio_lg, "ci: %p, ino_str: \"%s\", stat: %p", ci, ino_str,
 	    stat);
@@ -516,7 +522,7 @@ get_s3_obj_stats(ci_t * ci, char *ino_str, struct stat *stat)
 			}
 			if (strcmp(kv->key, obj_name) == 0) {
 				err = parse_s3_obj_stats(ci, kv->value,
-					kv->value_size, stat);
+					kv->value_size, stat, vmchid);
 				goto out;
 			}
 		}
