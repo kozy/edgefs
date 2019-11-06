@@ -455,10 +455,8 @@ ccowd_rt_disks(int *numdisks)
 		char *namekey = disk_json->u.object.values[j].name;
 		if (strcmp(namekey, "devices") == 0) {
 			json_value *v = disk_json->u.object.values[j].value;
-			for (size_t k = 0; k < v->u.object.length; k++) {
-				char *diskname = v->u.object.values[j].name;
-				nd++;
-			}
+			nd = v->u.object.length;
+			break;
 		}
 	}
 	*numdisks = nd;
