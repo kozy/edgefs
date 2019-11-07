@@ -50,7 +50,8 @@
 #define REPLIES_CNT(_r) ( \
     (_r)->reply_count + (_r)->err_count + \
     (((_r)->reqtype == GET_REQ_TYPE_NAMED && \
-     (_r)->fddelta >= 0 && (_r)->reply_count > 0 && (_r)->ngcount > 1) ? \
+     (_r)->fddelta >= 0 && (_r)->reply_count > 0 && (_r)->ngcount > 1 && \
+     (_r)->tc->sync_put_named > 1) ? \
      ((_r)->tc->sync_put_named - 2) : 0))
 
 void client_getcommon_init(struct state *st);
