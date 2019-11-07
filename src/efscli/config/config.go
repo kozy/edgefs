@@ -234,6 +234,7 @@ func ConfigNode() {
 				// lookup by CNAME first
 				if cname != "" {
 					nodeName = cname
+					nodeName = strings.Split(cname, ".")[0]
 					_, err = efsutil.LookupDNS(cname)
 					if err != nil {
 						// no luck, lookup by supplied FQDN
