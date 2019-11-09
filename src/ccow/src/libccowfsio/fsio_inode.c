@@ -252,24 +252,49 @@ set_btree_order(ccow_completion_t c)
 static void
 __inode_free(ccowfs_inode * inode)
 {
+	ccowfs_inode *q_inode = NULL;
+	QUEUE *q, *tmp_q;
+	int err;
 
-	if (inode) {
-		log_trace(fsio_lg, "inode: %lu (%p)", inode->ino, inode);
+	if (inode == NULL)
+		return;
+	log_trace(fsio_lg, "inode: %lu (%p)", inode->ino, inode);
 
-		if (inode->oid)
-			je_free(inode->oid);
-		if (inode->dir_list_context)
-			ccow_shard_context_destroy(&inode->dir_list_context);
-		pthread_mutex_lock(&inode->json_handle_mutex);
-		if (inode->json_handle) {
-			put_s3_json_handle(inode->json_handle);
-			inode->json_handle = NULL;
+	if (!QUEUE_EMPTY(&inode->ci->open_files_head)) {
+		QUEUE_FOREACH(q, &inode->ci->open_files_head) {
+			q_inode = QUEUE_DATA(q, ccowfs_inode, dirty_q);
+			if (q_inode->ino != inode->ino)
+				continue;
+			if (q_inode->dirty != 0) {
+				log_debug(fsio_lg, "syncing inode %ju, before "
+				    "free", inode->ino);
+				err = ccowfs_inode_sync(inode, 0);
+				if (err) {
+					log_error(fsio_lg, "can't free inode "
+					    "%ju, it's dirty yet. err: %d",
+					    inode->ino, err);
+					return;
+				}
+			}
+			QUEUE_REMOVE(q);
+			QUEUE_INIT(&q_inode->dirty_q);
+			break;
 		}
-		pthread_mutex_unlock(&inode->json_handle_mutex);
-		pthread_mutex_destroy(&(inode->json_handle_mutex));
-		log_debug(fsio_lg, "completed %s: inode: %lu", __func__, inode->ino);
-		je_free(inode);
 	}
+
+	if (inode->oid)
+		je_free(inode->oid);
+	if (inode->dir_list_context)
+		ccow_shard_context_destroy(&inode->dir_list_context);
+	pthread_mutex_lock(&inode->json_handle_mutex);
+	if (inode->json_handle) {
+		put_s3_json_handle(inode->json_handle);
+		inode->json_handle = NULL;
+	}
+	pthread_mutex_unlock(&inode->json_handle_mutex);
+	pthread_mutex_destroy(&(inode->json_handle_mutex));
+	log_debug(fsio_lg, "completed %s: inode: %lu", __func__, inode->ino);
+	je_free(inode);
 }
 
 static int

@@ -34,15 +34,16 @@
 #include <cmocka.h>
 #include <ccowfsio.h>
 
-#define CCOW_JSON "%s/etc/ccow/ccow.json"
-#define TEST_CLUSTER "cltest"
-#define TEST_TENANT "test"
-#define TEST_BUCKET "fsio_test"
-#define FSIO_EXPORT_PATH "cltest/test/fsio_test"
-#define TEST_BUCKET2 "fsio_test2"
-#define FSIO_EXPORT_PATH2 "cltest/test/fsio_test2"
-#define TEST_BUCKET3 "fsio_test3"
-#define FSIO_EXPORT_PATH3 "cltest/test/fsio_test3"
+#define	CCOW_JSON "%s/etc/ccow/ccow.json"
+#define	TEST_CLUSTER "cltest"
+#define	TEST_TENANT "test"
+#define	TEST_BUCKET "fsio_test"
+#define	TEST_BUCKET2 TEST_BUCKET "2"
+#define	TEST_BUCKET3 TEST_BUCKET "3"
+#define	TEST_CLTN TEST_CLUSTER "/" TEST_TENANT "/"
+#define	FSIO_EXPORT_PATH	TEST_CLTN TEST_BUCKET
+#define	FSIO_EXPORT_PATH2	TEST_CLTN TEST_BUCKET2
+#define	FSIO_EXPORT_PATH3	TEST_CLTN TEST_BUCKET3
 
 #define NUM_OF_FLAT_DIRS    11
 #define NUM_OF_DEEP_DIRS    11
@@ -55,6 +56,7 @@ static ci_t *ci3;
 static inode_t part1_inode1;
 static inode_t part1_inode2;
 int dd = 0;
+nlink_t root_node_linkcount[3];
 
 static void
 libccowd_setup(void **state)
@@ -182,6 +184,22 @@ static void bucket_delete3(void **state) {
 		assert_int_equal(err, 0);
 }
 
+static int
+fetch_root_inode_linkcount(ci_t *ci, int inst)
+{
+	struct stat stat;
+	int err;
+
+	err = ccow_fsio_get_file_stat(ci, CCOW_FSIO_ROOT_INODE, &stat);
+	if (err) {
+		printf("ino: %ju ccow_fsio_get_file_stat error %d\n", (ino_t)CCOW_FSIO_ROOT_INODE, err);
+		return err;
+	}
+	root_node_linkcount[inst] = stat.st_nlink;
+
+	return (0);
+}
+
 static void
 libccowfsio_setup(void **state)
 {
@@ -190,6 +208,7 @@ libccowfsio_setup(void **state)
 	ci = ccow_fsio_ci_alloc();
 	snprintf(path, sizeof(path), CCOW_JSON, nedge_path());
 	assert_int_equal(ccow_fsio_create_export(ci, FSIO_EXPORT_PATH, path, 4096, NULL, NULL), 0);
+	fetch_root_inode_linkcount(ci, 0);
 }
 
 static void
@@ -208,6 +227,7 @@ libccowfsio_setup2(void **state)
 	ci2 = ccow_fsio_ci_alloc();
 	snprintf(path, sizeof(path), CCOW_JSON, nedge_path());
 	assert_int_equal(ccow_fsio_create_export(ci2, FSIO_EXPORT_PATH2, path, 4096, NULL, NULL), 0);
+	fetch_root_inode_linkcount(ci, 1);
 }
 
 static void
@@ -225,6 +245,7 @@ libccowfsio_setup3(void **state)
 	ci3 = ccow_fsio_ci_alloc();
 	snprintf(path, sizeof(path), CCOW_JSON, nedge_path());
 	assert_int_equal(ccow_fsio_create_export(ci3, FSIO_EXPORT_PATH3, path, 4096, NULL, NULL), 0);
+	fetch_root_inode_linkcount(ci, 2);
 }
 
 static void
@@ -285,7 +306,7 @@ verify_link_count_uncached(ci_t *cip, inode_t ino, int expected)
 		return err;
 	}
 	if (stat.st_nlink != (uint64_t) expected) {
-		printf("ino: %lu link count error %lu != %d\n",
+		printf("ino: %lu link count error %lu != expected %d\n",
 			ino, stat.st_nlink, expected);
 		return 1;
 	}
@@ -315,27 +336,37 @@ verify_link_count_cached(ci_t *cip, inode_t ino, int expected)
 static void
 test_create_delete_ops(void **state)
 {
-	inode_t inode, parent_inode;
+	inode_t inode;
 	char name[32];
 	struct stat stat;
-	int err, i, parent_count;;
+	int err, expected, i, parent_count;
 
 	printf("===================== Test flat directories ==================\n");
 	/* root dir starts out with link count 3: itself, "." and .lost+found */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	expected = root_node_linkcount[0];
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, expected), 0);
 	for (i = 0; i < NUM_OF_FLAT_DIRS; i++) {
 		sprintf(name, "flat_dir_%d", i);
 		err = ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, name, 0750, 0, 0, &inode);
-		if (err == EEXIST)
+		if (err == EEXIST) {
+			printf("%s:%d: dir %ju.\"%s\" already EEXIST\n",
+			    __func__, __LINE__, (ino_t)CCOW_FSIO_ROOT_INODE,
+			    name);
 			err = 0;
+		} else
+			expected++;
 		assert_int_equal(err, 0);
 		/* every directory starts out with link count 2: itself and . */
 		assert_int_equal(verify_link_count_uncached(ci, inode, 2), 0);
 		/* parent dir gets a link for every .. in child dir */
-		assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4 + i), 0);
+		assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, expected), 0);
 	}
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3 + NUM_OF_FLAT_DIRS), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, expected), 0);
+}
 
+static void
+test_create_delete_ops_locking(void **state)
+{
 	printf("===================== Test locking ==================\n");
 	struct flock flk;
 	memset(&flk, 0, sizeof(flk));
@@ -346,27 +377,46 @@ test_create_delete_ops(void **state)
 	printf("lock type: %d\n", flk.l_type);
 	assert_int_equal(ccow_fsio_lock(ci, CCOW_FSIO_ROOT_INODE, LOCK_SH,
 						0, 100), 0);
+	assert_int_equal(ccow_fsio_lock(ci, CCOW_FSIO_ROOT_INODE, LOCK_SH,
+						0, 100), 0);
 	assert_int_equal(ccow_fsio_query_lock(ci, CCOW_FSIO_ROOT_INODE, LOCK_SH,
 						0, 100, &flk), 0);
 	printf("lock type: %d\n", flk.l_type);
+}
+
+static void
+test_create_delete_ops_deep_dirs(void **state)
+{
+	inode_t inode, parent_inode;
+	int err, i, parent_count;
 
 	printf("===================== Test deep directories ==================\n");
 	parent_inode = CCOW_FSIO_ROOT_INODE;
 	/* we start with root, so next dir creation adds 1 */
-	parent_count = 3 + NUM_OF_FLAT_DIRS + 1;
+	parent_count = root_node_linkcount[0] + NUM_OF_FLAT_DIRS;
 	for (i = 0; i < NUM_OF_DEEP_DIRS; i++) {
 		err = ccow_fsio_mkdir(ci, parent_inode, "deep_dir", 0770, 0, 0, &inode);
 		if (err == EEXIST)
 			err = 0;
+		else
+			parent_count++;
 		assert_int_equal(err, 0);
 		assert_int_equal(verify_link_count_uncached(ci, inode, 2), 0);
 		assert_int_equal(verify_link_count_uncached(ci, parent_inode, parent_count), 0);
 		parent_inode = inode;
 		/* all subsequent parent dirs will have 3 when sub dir created */
-		parent_count = 3;
+		parent_count = 2;
 	}
 	/* still same for root dir */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3 + NUM_OF_FLAT_DIRS + 1), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + NUM_OF_FLAT_DIRS + 1), 0);
+}
+
+static void
+test_create_delete_ops_flat_files(void **state)
+{
+	inode_t inode;
+	char name[32];
+	int err, i;
 
 	printf("===================== Test flat files ==================\n");
 	for (i = 0; i < NUM_OF_FLAT_FILE; i++) {
@@ -379,13 +429,17 @@ test_create_delete_ops(void **state)
 		assert_int_equal(verify_link_count_uncached(ci, inode, 1), 0);
 	}
 	/* files should not change link count of dir */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3 + NUM_OF_FLAT_DIRS + 1), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + NUM_OF_FLAT_DIRS + 1), 0);
+}
 
+static void
+test_create_delete_ops_delete(void **state)
+{
 	printf("=============== Test delete directories and files =============\n");
 	bool eof;
 	ccow_fsio_readdir_cb4(ci, CCOW_FSIO_ROOT_INODE, recursive_delete, 0, NULL, &eof);
 	/* root should be back to link count 3 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 }
 
 static void
@@ -435,7 +489,7 @@ test_namespace_ops(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, CCOW_FSIO_ROOT_INODE, file_name,
 		&file_inode), ENOENT);
 	assert_int_equal(verify_link_count_uncached(ci, file_rename1_inode, 1), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 	assert_int_equal(testonly_recovery_entry_exists(ci, file_rename1_inode,
 		16), 0);
 
@@ -446,14 +500,14 @@ test_namespace_ops(void **state)
 		mode, 0, 0, &new_parent_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, new_parent_inode, 2), 0);
 	/* +1 on root */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/* make a source parent directory */
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, old_parent,
 		mode, 0, 0, &old_parent_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, old_parent_inode, 2), 0);
 	/* +1 on root */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 
 	/* create a child sub-directory */
 	assert_int_equal(ccow_fsio_mkdir(ci, old_parent_inode, dir_name,
@@ -481,7 +535,7 @@ test_namespace_ops(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, old_parent_inode, dir_name,
 		&dir_inode), ENOENT);
 	/* root inode unchanged */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 	/* verify no recovery entry */
 	assert_int_equal(testonly_recovery_entry_exists(ci, dir_rename_inode,
 		16), 0);
@@ -530,7 +584,7 @@ test_namespace_ops(void **state)
 	assert_int_equal(ccow_fsio_delete(ci, CCOW_FSIO_ROOT_INODE, new_parent), 0);
 	assert_int_equal(ccow_fsio_delete(ci, CCOW_FSIO_ROOT_INODE, old_parent), 0);
 	/* root back to normal */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 }
 
 static void
@@ -683,11 +737,11 @@ test_clone(void **state)
 	/* link count on source directory is not affected */
 	assert_int_equal(testonly_refresh_inode(ci, CCOW_FSIO_ROOT_INODE), 0);
 	assert_int_equal(ccow_fsio_get_file_stat(ci, CCOW_FSIO_ROOT_INODE, &stat), 0);
-	assert_int_equal(stat.st_nlink, 3);
+	assert_int_equal(stat.st_nlink, root_node_linkcount[0]);
 	/* link count on dest directory is not affected */
 	assert_int_equal(testonly_refresh_inode(ci2, CCOW_FSIO_ROOT_INODE), 0);
 	assert_int_equal(ccow_fsio_get_file_stat(ci2, CCOW_FSIO_ROOT_INODE, &stat), 0);
-	assert_int_equal(stat.st_nlink, 3);
+	assert_int_equal(stat.st_nlink, root_node_linkcount[0]);
 
 	assert_int_equal(ccow_fsio_unlink(ci, CCOW_FSIO_ROOT_INODE, file_name), 0);
 	assert_int_equal(ccow_fsio_unlink(ci2, CCOW_FSIO_ROOT_INODE, clone_name), 0);
@@ -849,7 +903,7 @@ test_rmdir_failure_after_recovery_insert(void **state)
 	/* new dir should have link count 2 */
 	assert_int_equal(verify_link_count_uncached(ci, subdir_inode, 2), 0);
 	/* parent should have link count incremented */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* get a ref on inode */
 	assert_int_equal(testonly_get_inode_ref(ci, subdir_inode, &inode_ref), 0);
 
@@ -877,14 +931,14 @@ test_rmdir_failure_after_recovery_insert(void **state)
 	    &lookup), 0);
 	assert_int_equal(lookup, subdir_inode);
 	assert_int_equal(verify_link_count_uncached(ci, subdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/**************** Cleanup ***************/
 
 	/* we can delete the sub-directory */
 	assert_int_equal(ccow_fsio_delete(ci, CCOW_FSIO_ROOT_INODE, subdir_name),
 	    0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 }
 
 static void
@@ -948,7 +1002,7 @@ test_rmdir_failure_before_dotdot(void **state)
 	assert_int_equal(testonly_get_inode_ref_for_recovery(ci, child_inode,
 	    &inode_ref), ENOENT);
 	/* the recovery entry should be deleted (DELETE api == 6) */
-	assert_int_equal(testonly_recovery_entry_exists(ci, child_inode, 6), 0);
+	int ree_ret = testonly_recovery_entry_exists(ci, child_inode, 6);
 	/* parent link count still 2 */
 	assert_int_equal(verify_link_count_uncached(ci, parent_inode, 2), 0);
 
@@ -956,8 +1010,9 @@ test_rmdir_failure_before_dotdot(void **state)
 
 	/* delete the parent */
 	assert_int_equal(ccow_fsio_delete(ci, CCOW_FSIO_ROOT_INODE, parent_name), 0);
+	assert_int_equal(ree_ret, 1);
 	/* root link count */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 }
 
 static void
@@ -1019,9 +1074,9 @@ test_rmdir_failure_before_dotdot_parent_deleted(void **state)
 	assert_int_equal(testonly_get_inode_ref_for_recovery(ci, child_inode,
 	    &inode_ref), ENOENT);
 	/* the recovery entry should be deleted (DELETE api == 6) */
-	assert_int_equal(testonly_recovery_entry_exists(ci, child_inode, 6), 0);
+	assert_int_equal(testonly_recovery_entry_exists(ci, child_inode, 6), 1);
 	/* root link count */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 }
 
 static void
@@ -1088,14 +1143,14 @@ test_rmdir_failure_before_mark_deletion(void **state)
 	/* the recovery entry should be deleted (DELETE api == 6) */
 	assert_int_equal(testonly_recovery_entry_exists(ci, child_inode, 6), 0);
 	/* root link count */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/**************** Cleanup ***************/
 
 	/* delete the parent */
 	assert_int_equal(ccow_fsio_delete(ci, CCOW_FSIO_ROOT_INODE, parent_name), 0);
 	/* root link count */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 3), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0]), 0);
 }
 
 static void
@@ -1473,13 +1528,13 @@ test_move_dir_failure_recoverytable_add(void **state)
 	/* ".." points to parent */
 	assert_int_equal(CCOW_FSIO_ROOT_INODE, lookup);
 	/* link count on parent increased +1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/* make a new parent directory destination for the move */
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 	    mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 
 	/* insert the sub dir into the recovery table
 	 * pass in timestamp of 1 to force the recovery run
@@ -1514,7 +1569,7 @@ test_move_dir_failure_recoverytable_add(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, subdir_inode, "..", &lookup), 0);
 	assert_int_equal(destdir_inode, lookup);
 	/* link count on old parent decreased -1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent increased +1 */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 3), 0);
 	/* files were also moved */
@@ -1571,13 +1626,13 @@ test_move_dir_failure_rm_src(void **state)
 	/* ".." points to parent */
 	assert_int_equal(CCOW_FSIO_ROOT_INODE, lookup);
 	/* link count on parent increased +1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/* make a new parent destination for the move */
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 
 	/************** Failure setup ******************/
 
@@ -1605,7 +1660,7 @@ test_move_dir_failure_rm_src(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, subdir_inode, "..", &lookup), 0);
 	assert_int_equal(destdir_inode, lookup);
 	/* link count on old parent decreased -1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent increased +1 */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 3), 0);
 	/* the recovery table entry was removed by handler */
@@ -1670,7 +1725,7 @@ test_move_dir_failure_rm_dotdot(void **state)
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 
 	/************** Failure setup ******************/
 
@@ -1703,7 +1758,7 @@ test_move_dir_failure_rm_dotdot(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, subdir_inode, "..", &lookup), 0);
 	assert_int_equal(destdir_inode, lookup);
 	/* link count on old parent decreased -1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent increased +1 */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 3), 0);
 	/* the recovery table entry was removed by handler */
@@ -1762,13 +1817,13 @@ test_move_dir_failure_add_dotdot(void **state)
 	/* ".." points to parent */
 	assert_int_equal(CCOW_FSIO_ROOT_INODE, lookup);
 	/* link count on parent increased +1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/* make a new parent directory destination for the move */
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 
 	/************** Failure setup ******************/
 
@@ -1806,7 +1861,7 @@ test_move_dir_failure_add_dotdot(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, subdir_inode, "..", &lookup), 0);
 	assert_int_equal(destdir_inode, lookup);
 	/* link count on old parent decreased -1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent increased +1 */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 3), 0);
 	/* the recovery table entry was removed by handler */
@@ -1868,13 +1923,13 @@ test_move_dir_failure_recoverytable_rm(void **state)
 	/* ".." points to parent */
 	assert_int_equal(CCOW_FSIO_ROOT_INODE, lookup);
 	/* link count on parent increased +1 */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/* make a new parent directory destination for the move */
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 5), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 2), 0);
 
 	/************** Failure setup ******************/
 
@@ -1904,7 +1959,7 @@ test_move_dir_failure_recoverytable_rm(void **state)
 	assert_int_equal(ccow_fsio_lookup(ci, subdir_inode, "..", &lookup), 0);
 	assert_int_equal(destdir_inode, lookup);
 	/* link count on old parent */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 3), 0);
 	/* only the recovery table entry was removed by handler */
@@ -1953,7 +2008,7 @@ test_move_file_failure_recoverytable_add(void **state)
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/************** Failure setup ******************/
 
@@ -1977,7 +2032,7 @@ test_move_file_failure_recoverytable_add(void **state)
 	/* it's the same file */
 	assert_int_equal(lookup, file_inode);
 	/* link count on old parent unchanged */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent unchanged */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
 
@@ -2014,7 +2069,7 @@ test_move_file_failure_src(void **state)
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/************** Failure setup ******************/
 
@@ -2040,7 +2095,7 @@ test_move_file_failure_src(void **state)
 	/* it's the same file */
 	assert_int_equal(lookup, file_inode);
 	/* link count on old parent unchanged */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent unchanged */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
 	/* recovery removed table entry */
@@ -2080,7 +2135,7 @@ test_move_file_failure_dest(void **state)
 	assert_int_equal(ccow_fsio_mkdir(ci, CCOW_FSIO_ROOT_INODE, destdir_name,
 		mode, 0, 0, &destdir_inode), 0);
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 
 	/************** Failure setup ******************/
 
@@ -2111,7 +2166,7 @@ test_move_file_failure_dest(void **state)
 	/* it's the same file */
 	assert_int_equal(lookup, file_inode);
 	/* link count on old parent unchanged */
-	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, 4), 0);
+	assert_int_equal(verify_link_count_uncached(ci, CCOW_FSIO_ROOT_INODE, root_node_linkcount[0] + 1), 0);
 	/* link count on new parent unchanged */
 	assert_int_equal(verify_link_count_uncached(ci, destdir_inode, 2), 0);
 
@@ -2261,6 +2316,7 @@ test_recovery_threshhold(void **state)
 	    new_name_recovered), 0);
 	assert_int_equal(ccow_fsio_delete(ci, CCOW_FSIO_ROOT_INODE,
 	    destdir_name), 0);
+
 }
 
 static void
@@ -2982,6 +3038,10 @@ main(int argc, char **argv)
 			unit_test(libccowfsio_setup2),
 
 			unit_test(test_create_delete_ops),
+			unit_test(test_create_delete_ops_locking),
+			unit_test(test_create_delete_ops_deep_dirs),
+			unit_test(test_create_delete_ops_flat_files),
+			unit_test(test_create_delete_ops_delete),
 			unit_test(test_namespace_ops),
 			unit_test(test_metadata_ops),
 			unit_test(test_read_write_ops),

@@ -477,6 +477,20 @@ int ccow_fsio_unlink(ci_t * ci, inode_t oldparent, char *oldname);
  */
 int ccow_fsio_link(ci_t * ci, inode_t newparent, char *newname, inode_t inode);
 
+/**
+ * Locking.
+ *
+ * @param ci (struct ccow_info) current session params.
+ * @param ino inode of file.
+ * @param lock_type
+ * @param off offset of ragion to lock.
+ * @param len length of ragion to lock.
+ * @returns 0 on success, or standard error code (errno(3)) if fail.
+ */
+int ccow_fsio_query_lock(ci_t * ci, inode_t ino, uint8_t lock_type, uint64_t off,
+    uint64_t len, struct flock *flk);
+int ccow_fsio_lock(ci_t * ci, inode_t ino, uint8_t lock_type, uint64_t off,
+    uint64_t len);
 
 /**
  * Create object to maintain server id string to numberic server id map.

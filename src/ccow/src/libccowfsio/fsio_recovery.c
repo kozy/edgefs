@@ -879,8 +879,8 @@ ccowfs_recovery_handler(ci_t *ci)
 	    RECOVERY_HANDLER_MAX_ENTRIES, &iter);
 	if (err) {
 		log_error(fsio_lg,
-		    "ccow_sharded_list_get return error %d", err);       
-	}           
+		    "ccow_sharded_list_get return error %d", err);
+	}
 
 	if (iter != NULL) {
 		struct ccow_metadata_kv *kv = NULL;
@@ -962,7 +962,7 @@ testonly_recovery_entry_exists(ci_t *ci, inode_t ino, int type)
 	iov[0].iov_base = NULL;
 
 	ccow_t tc;
-	
+
 	err = tc_pool_get_tc(ci->tc_pool_handle, ino, &tc);
 	if (err) {
 		log_error(fsio_lg, "Failed to get TC. err: %d", err);
@@ -1010,7 +1010,7 @@ testonly_recovery_insert_moved(ci_t *ci, inode_t child_ino,
 {
 	int err;
 	char ino_str[22];
-	
+
 	log_trace(fsio_lg, "ci: %p, ino: %lu, src_ino: %lu, dest_ino: %lu, "
 	    "old_name: %s, new_name: %s, linkcount: %lu, timestamp: %lu", ci,
 	    child_ino, src_ino, dest_ino, old_name, new_name, linkcount,
@@ -1035,7 +1035,7 @@ testonly_recovery_insert_deleted(ci_t *ci, inode_t ino, inode_t parent_ino,
 {
 	int err;
 	char ino_str[22];
-	
+
 	log_trace(fsio_lg, "ci: %p, ino: %lu, parent_ino: %lu, name: %s, "
 	    "linkcount: %lu, timestamp: %lu", ci, ino, parent_ino, name,
 	    linkcount, timestamp);
@@ -1058,7 +1058,7 @@ testonly_recovery_remove_entry(ci_t *ci, inode_t ino)
 {
 	char ino_str[22];
 	sprintf(ino_str, "%" PRIu64, (uint64_t)ino);
-	
+
 	return __remove_recovery_entry(ci, ino_str, ino);
 }
 
