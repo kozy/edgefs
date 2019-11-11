@@ -357,6 +357,7 @@ struct repdev_rd {
     int readahead;
     int hdd_readahead;
     int writemap;
+    int env_sync_disable;
     uint64_t bcache_wbc_threshold_mb;
     uint64_t bcache_wbc_flush_mb;
     int direct;

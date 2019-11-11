@@ -2269,12 +2269,18 @@ ccow_daemon_init(struct ccowd_params *params)
 	}
 #endif
 
-	const rlim_t stack_size = 32L * 1024L * 1024L;
+	rlim_t stack_size = 16L * 1024L * 1024L;
+	char* ss_str = getenv("CCOWD_STACK_SIZE");
+	if (ss_str) {
+		size_t ss = strtoll(ss_str, NULL, 10);
+		if (ss)
+			stack_size = ss;
+	}
 	struct rlimit stack_limits;
 	int res = getrlimit(RLIMIT_STACK, &stack_limits);
 
 	if (res == 0) {
-		if (stack_limits.rlim_cur < stack_size) {
+		if (stack_limits.rlim_cur != stack_size) {
 			log_info(lg, "stack size was %d", (int) stack_limits.rlim_cur);
 			log_info(lg, "setting stack size to %d", (int) stack_size);
 			stack_limits.rlim_cur = stack_size;

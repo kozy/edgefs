@@ -573,9 +573,11 @@ reptrans_ng_recv(enum rt_proto_id id, struct repwqe *wqe, rtbuf_t** rt_out) {
 	uv_buf_t buf;
 	uint512_t hid;
 
-	if (RT_PROTO_ID(msg) != id || RT_PROTO_VER(msg) != reptrans_get_ngproto_version(id))
-		return RT_PROTO_VER(msg);
-
+	if (RT_PROTO_ID(msg) != id || RT_PROTO_VER(msg) != reptrans_get_ngproto_version(id)) {
+		int err = RT_PROTO_VER(msg);
+		if (!err)
+			err = -EIO;
+	}
 	buf.base = repwqe_payload(wqe);
 	buf.len = repwqe_payload_len(wqe);
 	rtbuf_t *rt = rtbuf_init_mapped(&buf, 1);

@@ -11,7 +11,7 @@ ulimit -c unlimited
 ulimit -n 65536
 
 # CCOW Daemon needs more memory on stack
-ulimit -s 32768
+ulimit -s 16384
 
 LDFLAGS=-L$NEDGE_HOME/lib; export LDFLAGS
 CFLAGS="-I$NEDGE_HOME/include -I$NEDGE_HOME/include/ccow"; export CFLAGS

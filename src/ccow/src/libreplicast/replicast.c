@@ -2306,7 +2306,8 @@ replicast_get_context(struct replicast *robj, enum replicast_opcode opcode,
 static inline void
 free_buf_cb(void *data, int err, int ctx_valid)
 {
-	je_free(data);
+	if (data)
+		je_free(data);
 }
 
 static inline void
@@ -2394,9 +2395,11 @@ replicast_process_recv(struct replicast *robj, const uv_buf_t buf,
 		    (struct repmsg_generic *)&errmsg,
 		    (struct repmsg_generic *)msg, NULL, 0, NULL, free_buf_cb,
 		    buf.base, NULL);
-
+		/*
+		 * The buffer will freed by free_buf_cb() when
+		 * replicast_send() is done
+		 */
 		msgpack_unpack_free(u);
-		je_free(buf.base);
 		return;
 	}
 
