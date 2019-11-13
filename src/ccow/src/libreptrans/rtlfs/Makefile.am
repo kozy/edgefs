@@ -23,7 +23,7 @@
 ##
 lib_LTLIBRARIES = librtlfs.la
 
-librtlfs_la_SOURCES = reptrans-lfs.c payload-s3.c
+librtlfs_la_SOURCES = reptrans-lfs.c
 
 librtlfs_la_CFLAGS = -I$(top_srcdir)/src/libflexhash \
 			-I$(top_srcdir)/src/libreplicast \
@@ -34,4 +34,4 @@ librtlfs_la_CFLAGS = -I$(top_srcdir)/src/libflexhash \
 			-I$(top_srcdir)/src/libtrlog \
 			-I$(top_srcdir)/src/libccow
 
-librtlfs_la_LDFLAGS = -llmdb -lcurl
+librtlfs_la_LDFLAGS = -llmdb

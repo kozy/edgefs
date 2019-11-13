@@ -935,6 +935,8 @@ reptrans_bump_rowusage(struct repdev *dev, const uint512_t *chid, size_t size);
 void
 reptrans_drop_rowusage(struct repdev *dev, const uint512_t *chid, size_t size);
 
+size_t
+reptrans_rowusage_full(struct repdev *dev);
 
 void reptrans_request_space_reclaim(struct repdev *dev);
 int reptans_request_space_reclaim__async(struct repdev* dev);

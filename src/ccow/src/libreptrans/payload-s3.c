@@ -127,7 +127,7 @@ payload_s3_hash_sha256_hex_gen(char *in, size_t in_len, char *out, size_t out_si
 }
 
 static int
-payload_s3_sign_request(struct payload_s3 *ctx, char *objname, char *method,
+payload_s3_sign_request(struct payload_s3 *ctx, const char *objname, char *method,
     char *date_header, char *auth_header)
 {
 	char datetime[32];
@@ -252,7 +252,7 @@ payload_s3_memread_callback(void *ptr, size_t size, size_t nmemb, void *userp)
 }
 
 int
-payload_s3_put(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *data)
+payload_s3_put(struct payload_s3 *ctx, const char* key, uv_buf_t *data)
 {
 	CURL *curl;
 	CURLcode res;
@@ -261,14 +261,12 @@ payload_s3_put(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *data)
 	char date_header[32];
 	char auth_header[256];
 	char errbuf[CURL_ERROR_SIZE];
-	char chidbuf[UINT512_BYTES * 2 + 1];
 	struct curl_slist *headers = NULL;
 	int err = 0;
 
-	uint512_dump(chid, chidbuf, UINT512_BYTES * 2 + 1);
-	sprintf(url, "%s/%s", ctx->bucket_url, chidbuf);
+	sprintf(url, "%s/%s", ctx->bucket_url, key);
 
-	payload_s3_sign_request(ctx, chidbuf, "PUT", date_header, auth_header);
+	payload_s3_sign_request(ctx, key, "PUT", date_header, auth_header);
 	headers = curl_slist_append(headers, "content-type: application/octet-stream");
 	headers = curl_slist_append(headers, auth_header);
 	headers = curl_slist_append(headers, date_header);
@@ -339,7 +337,7 @@ payload_s3_memwrite_callback(void *contents, size_t size, size_t nmemb, void *us
 }
 
 int
-payload_s3_get(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *outbuf)
+payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf)
 {
 	CURL *curl;
 	CURLcode res;
@@ -347,14 +345,12 @@ payload_s3_get(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *outbuf)
 	char date_header[32];
 	char auth_header[256];
 	char errbuf[CURL_ERROR_SIZE];
-	char chidbuf[UINT512_BYTES * 2 + 1];
 	struct curl_slist *headers = NULL;
 	int err = 0;
 
-	uint512_dump(chid, chidbuf, UINT512_BYTES * 2 + 1);
-	sprintf(url, "%s/%s", ctx->bucket_url, chidbuf);
+	sprintf(url, "%s/%s", ctx->bucket_url, key);
 
-	payload_s3_sign_request(ctx, chidbuf, "GET", date_header, auth_header);
+	payload_s3_sign_request(ctx, key, "GET", date_header, auth_header);
 	headers = curl_slist_append(headers, auth_header);
 	headers = curl_slist_append(headers, date_header);
 	headers = curl_slist_append(headers, "x-amz-content-sha256: UNSIGNED-PAYLOAD");
@@ -402,7 +398,7 @@ payload_s3_get(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *outbuf)
 }
 
 int
-payload_s3_delete(struct payload_s3 *ctx, const uint512_t *chid)
+payload_s3_delete(struct payload_s3 *ctx, const char *key)
 {
 	CURL *curl;
 	CURLcode res;
@@ -410,14 +406,12 @@ payload_s3_delete(struct payload_s3 *ctx, const uint512_t *chid)
 	char date_header[32];
 	char auth_header[256];
 	char errbuf[CURL_ERROR_SIZE];
-	char chidbuf[UINT512_BYTES * 2 + 1];
 	struct curl_slist *headers = NULL;
 	int err = 0;
 
-	uint512_dump(chid, chidbuf, UINT512_BYTES * 2 + 1);
-	sprintf(url, "%s/%s", ctx->bucket_url, chidbuf);
+	sprintf(url, "%s/%s", ctx->bucket_url, key);
 
-	payload_s3_sign_request(ctx, chidbuf, "DELETE", date_header, auth_header);
+	payload_s3_sign_request(ctx, key, "DELETE", date_header, auth_header);
 	headers = curl_slist_append(headers, auth_header);
 	headers = curl_slist_append(headers, date_header);
 	headers = curl_slist_append(headers, "x-amz-content-sha256: UNSIGNED-PAYLOAD");
@@ -491,11 +485,13 @@ payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_
 	int fd = open(keyfile, 0);
 	if (fd == -1) {
 		je_free(ctx);
+		log_error(lg, "Cannot open the key file %s", keyfile);
 		return -errno;
 	}
 	if (read(fd, &key[0], 256) == -1) {
 		close(fd);
 		je_free(ctx);
+		log_error(lg, "Cannot read the key file %s", keyfile);
 		return -errno;
 	}
 	close(fd);
@@ -505,6 +501,7 @@ payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_
 	char *secret = strtok_r(NULL, ",", &saveptr);
 	if (!access || !secret) {
 		je_free(ctx);
+		log_error(lg, "Key file format not recognized");
 		return -EBADF;
 	}
 	char secret_trimmed[256];

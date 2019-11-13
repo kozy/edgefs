@@ -335,6 +335,8 @@ struct rd_metaloc {
 	int retries;
 };
 
+struct payload_s3;
+
 struct repdev_rd {
     struct repdev_db *db;
     int opened; /* Set when the VDEV has all environment opened */
@@ -365,6 +367,11 @@ struct repdev_rd {
     int mdcache_enable;
     uint64_t bloom_ttag_put_counter;
     pthread_rwlock_t guard;
+    char *payload_s3_bucket_url;
+    char *payload_s3_region;
+    char *payload_s3_key_file;
+    size_t payload_s3_capacity;
+    struct payload_s3 *s3_ctx;
 };
 
 struct repdev_log {

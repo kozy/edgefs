@@ -27,7 +27,7 @@
 
 #include <curl/curl.h>
 
-#define EDGE_USER_AGENT "EdgeRTLFS/1.0"
+#define EDGE_USER_AGENT "EdgeRTRD/1.0"
 
 struct payload_s3 {
 	int ssl_en;
@@ -44,8 +44,8 @@ struct payload_s3 {
 
 int payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_out);
 void payload_s3_destroy(struct payload_s3 *ctx);
-int payload_s3_put(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *data);
-int payload_s3_get(struct payload_s3 *ctx, const uint512_t *chid, uv_buf_t *outbuf);
-int payload_s3_delete(struct payload_s3 *ctx, const uint512_t *chid);
+int payload_s3_put(struct payload_s3 *ctx, const char* key, uv_buf_t *data);
+int payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf);
+int payload_s3_delete(struct payload_s3 *ctx, const char* key);
 
 #endif

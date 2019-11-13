@@ -296,6 +296,32 @@ struct compactify_status {
 	time_t		done_at;
 };
 
+/**
+ * Set of macros and functions to wrap chunk payloads stored in AWS S3
+ * We keep locally only small payload marker and the chunk size.
+ */
+#define STUB_PUT_PAYLOAD_MAGIC "neDGe_sTuB_PuT_PayLoAd"
+#define STUB_PUT_PAYLOAD_MAGIC_SIZE (strlen(STUB_PUT_PAYLOAD_MAGIC) + 1)
+#define STUB_PUT_PAYLOAD_SIZE (STUB_PUT_PAYLOAD_MAGIC_SIZE + sizeof(uint64_t))
+#define IS_STUB_PUT_PAYLOAD(_v) ((_v).mv_size >= STUB_PUT_PAYLOAD_SIZE && \
+    memcmp((_v).mv_data, STUB_PUT_PAYLOAD_MAGIC, STUB_PUT_PAYLOAD_MAGIC_SIZE) == 0)
+
+static inline void
+stub_payload_pack(char *val, uint64_t size)
+{
+	memcpy(val, STUB_PUT_PAYLOAD_MAGIC, STUB_PUT_PAYLOAD_MAGIC_SIZE);
+	memcpy(((uint8_t *)val + STUB_PUT_PAYLOAD_MAGIC_SIZE), &size, sizeof(uint64_t));
+}
+
+static inline void
+stub_payload_unpack(char *data, uint64_t *psize)
+{
+	memcpy(psize, (data + STUB_PUT_PAYLOAD_MAGIC_SIZE), sizeof(uint64_t));
+}
+
+void
+reptrans_make_s3_key(struct repdev* dev, const uint512_t* chid, char* out, size_t bsize);
+
 typedef int  (*reptrans_blob_callback)(struct repdev *dev, type_tag_t ttag,
 	crypto_hash_t hash_type, uint512_t *key, uv_buf_t *val, void *param);
 

@@ -46,7 +46,7 @@
 #include "replicast.h"
 #include "auditd.h"
 #include "ccowd-impl.h"
-#include "payload-s3.h"
+#include  <payload-s3.h>
 
 #include <sys/user.h>
 #include <sys/mman.h>
@@ -97,12 +97,6 @@ struct repdev_db;
 #define KEY_CACHE_MAX (64*1024*1024) / sizeof(key_cache_entry_t)
 
 #define LFS_NO_FREE_SPACE(err) (err == MDB_MAP_FULL || err == ENOSPC || err == MDB_MAP_RESIZED)
-
-#define STUB_PUT_PAYLOAD_MAGIC "neDGe_sTuB_PuT_PayLoAd"
-#define STUB_PUT_PAYLOAD_MAGIC_SIZE (strlen(STUB_PUT_PAYLOAD_MAGIC) + 1)
-#define STUB_PUT_PAYLOAD_SIZE (STUB_PUT_PAYLOAD_MAGIC_SIZE + sizeof(uint64_t))
-#define IS_STUB_PUT_PAYLOAD(_v) ((_v).mv_size >= STUB_PUT_PAYLOAD_SIZE && \
-    memcmp((_v).mv_data, STUB_PUT_PAYLOAD_MAGIC, STUB_PUT_PAYLOAD_MAGIC_SIZE) == 0)
 
 /* MD offload uses separate environment */
 #define DEV_ENVS 2
@@ -207,19 +201,6 @@ lfs_dev_load_bloom(struct repdev *rdev);
 
 int
 lfs_dev_quiesce_bloom(struct repdev *rdev);
-
-static inline void
-lfs_stub_payload_pack(MDB_val *val, uint64_t size)
-{
-	memcpy((char *)val->mv_data, STUB_PUT_PAYLOAD_MAGIC, STUB_PUT_PAYLOAD_MAGIC_SIZE);
-	memcpy(((uint8_t *)val->mv_data + STUB_PUT_PAYLOAD_MAGIC_SIZE), &size, sizeof(uint64_t));
-}
-
-static inline void
-lfs_stub_payload_unpack(char *data, uint64_t *psize)
-{
-	memcpy(psize, (data + STUB_PUT_PAYLOAD_MAGIC_SIZE), sizeof(uint64_t));
-}
 
 static inline int
 is_log_tt(struct repdev *dev, type_tag_t ttag)
@@ -1839,10 +1820,12 @@ _start:
 					if (use_s3) {
 						int is_magic = IS_STUB_PUT_PAYLOAD(data);
 						if (!is_magic) {
+							char buff[PATH_MAX];
+							reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
 							uv_buf_t ubd = { .base = data.mv_data, .len = data.mv_size };
-							err = payload_s3_put(lfs->s3_ctx, &chid, &ubd);
+							err = payload_s3_put(lfs->s3_ctx, buff, &ubd);
 						}
-						lfs_stub_payload_pack(&data_out, data.mv_size);
+						stub_payload_pack(data_out.mv_data, data.mv_size);
 					} else
 						memcpy((char *)data_out.mv_data, data.mv_data, data.mv_size);
 				}
@@ -2184,7 +2167,7 @@ lfs_log_append(struct repdev *dev, struct repdev_log *log, type_tag_t ttag,
 		if (data.mv_data) {
 			if (ttag == TT_CHUNK_PAYLOAD && lfs->s3_ctx &&
 			    rb->nbufs == 1 && rb->bufs[0].base == NULL) {
-				lfs_stub_payload_pack(&data, len);
+				stub_payload_pack(data.mv_data, len);
 			} else {
 				size_t copied = 0;
 				for (int i = 0; i < (int)rb->nbufs; i++) {
@@ -2695,7 +2678,7 @@ _repeat:
 		uv_buf_t ent;
 		int use_s3 = (ttag == TT_CHUNK_PAYLOAD && lfs->s3_ctx);
 		if (repeat && use_s3 && rb && IS_STUB_PUT_PAYLOAD(data)) {
-			lfs_stub_payload_unpack(data.mv_data, &s3_reallen);
+			stub_payload_unpack(data.mv_data, &s3_reallen);
 			if (!s3_reallen || s3_reallen > REPLICAST_CHUNK_SIZE_MAX) {
 				log_error(lg, "Get(%s): cannot parse payload length",
 				    dev->name);
@@ -2710,7 +2693,9 @@ _repeat:
 					log_warn(lg, "Get(%s): err=%d s3 payload retry %d",
 					    dev->name, err, s3_retry);
 				}
-				err = payload_s3_get(lfs->s3_ctx, chid, &ent);
+				char buff[PATH_MAX];
+				reptrans_make_s3_key(dev, chid, buff, sizeof(buff));
+				err = payload_s3_get(lfs->s3_ctx, buff, &ent);
 				if (!err && ent.len != s3_reallen) {
 					log_warn(lg, "Get(%s): wrong payload length, "
 					    "exp %ld got %ld", dev->name, s3_reallen, ent.len);
@@ -2728,7 +2713,7 @@ _repeat:
 					goto _exit;
 				}
 				/* stat request - update mv_size to the proper value */
-				lfs_stub_payload_unpack(data.mv_data, &data.mv_size);
+				stub_payload_unpack(data.mv_data, &data.mv_size);
 			}
 			ent.len = data.mv_size;
 			ent.base = data.mv_data;
@@ -3326,7 +3311,7 @@ _repeat:;
 			use_s3 = IS_STUB_PUT_PAYLOAD(data);
 			if (use_s3) {
 				uint64_t psize = 0;
-				lfs_stub_payload_unpack(data.mv_data, &psize);
+				stub_payload_unpack(data.mv_data, &psize);
 				del_size += psize;
 			} else
 				del_size += data_empty.mv_size;
@@ -3345,7 +3330,9 @@ _repeat:;
 			if (del_cnt)
 				reptrans_drop_hashcount(dev, chid, del_cnt);
 			if (use_s3) {
-				err = payload_s3_delete(lfs->s3_ctx, chid);
+				char buff[PATH_MAX];
+				reptrans_make_s3_key(dev, chid, buff, sizeof(buff));
+				err = payload_s3_delete(lfs->s3_ctx, buff);
 				if (err) {
 					/* ignore error, something went wrong on the network */
 					err = 0;

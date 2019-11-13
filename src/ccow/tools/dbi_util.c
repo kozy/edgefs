@@ -713,7 +713,7 @@ du_check_dbi_read(const char* env_path, const char* dbi_name, int opts,
 			char buf[16];
 			size_t n = val.mv_size > 16 ? 16 : val.mv_size;
 			memcpy(buf, val.mv_data, n);
-		} else if (level == 3 && is_value_hashed(dbi_name)) {
+		} else if (level == 3 && is_value_hashed(dbi_name) && !IS_STUB_PUT_PAYLOAD(val)) {
 			/* Some values have theirs hashID as part of a key.
 			 * We can verify a payload in this case.
 			 * Note: this operation takes a very long while
