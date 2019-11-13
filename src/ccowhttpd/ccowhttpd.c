@@ -1567,7 +1567,7 @@ main(int argc, char **argv)
 
 	setpriority(PRIO_PROCESS, getpid(), -15);
 
-	const rlim_t stack_size = 32L * 1024L * 1024L;
+	const rlim_t stack_size = 16L * 1024L * 1024L;
 	struct rlimit stack_limits;
 	int res = getrlimit(RLIMIT_STACK, &stack_limits);
 
