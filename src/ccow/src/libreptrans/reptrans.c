@@ -4424,8 +4424,8 @@ _replicate_vbrs:;
 			err = reptrans_enqueue_batch_request(dev, NULL, &vreq);
 #endif
 			if (err)
-				log_error(lg, "Dev(%s) VBR replication: enqueue batch req err %d",
-					dev->name, err);
+				log_error(lg, "Dev(%s) VBR replication: enqueue batch req err %d, VDEV %016lX%016lX, chunk type %s",
+					dev->name, err, ci_vbr.vdevs[i].u, ci_vbr.vdevs[i].l, type_tag_name[chunk_ttag]);
 			err = 0;
 		}
 	}
