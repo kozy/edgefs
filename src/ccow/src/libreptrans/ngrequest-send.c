@@ -307,7 +307,8 @@ ngrequest__send(struct state *st)
 	send_addr.sin6_scope_id = ccow_daemon->if_indexes[0];
 
 	if (!send_addr.sin6_port) {
-		log_error(lg, "Dev(%s) couldn't find target VDEV", dev->name);
+		log_error(lg, "Dev(%s) couldn't find target VDEV %016lX%106lX, row %u",
+			dev->name, r->target_vdev.u, r->target_vdev.l, r->fhrow);
 		state_next(st, EV_ERR);
 		return;
 	}
