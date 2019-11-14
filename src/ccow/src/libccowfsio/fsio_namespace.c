@@ -1188,11 +1188,7 @@ __s3_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 		*out_ino = CCOW_FSIO_S3OBJ_DIR_INODE;
 		goto out;
 	} else if ( strlen(name) == 2 && !strcmp(name, "..")) {
-		if (parent_inode->ino == CCOW_FSIO_S3OBJ_DIR_INODE) {
-			*out_ino = CCOW_FSIO_ROOT_INODE;
-		} else {
-			*out_ino = CCOW_FSIO_S3OBJ_DIR_INODE;
-		}
+		*out_ino = CCOW_FSIO_ROOT_INODE;
 		goto out;
 	}
 
