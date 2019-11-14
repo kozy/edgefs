@@ -882,7 +882,7 @@ reptrans_dev_override_status(struct repdev *dev, repdev_status_t status) {
 	if (status != prev) {
 		dev->status_changed_expires = 0;
 		dev->status = status;
-		if (prev != REPDEV_STATUS_INIT && status != REPDEV_STATUS_INIT) {
+		if (status != REPDEV_STATUS_INIT) {
 			dev->status_changed = 1;
 			dev->status_changed_expires = get_timestamp_us() + REPDEV_STATE_EXPIRATION_TIMEOUT_US;
 			log_notice(lg, "Dev(%s) status changed %s -> %s", dev->name,

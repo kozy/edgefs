@@ -62,6 +62,44 @@
 #define CMD_REBUILD_RDKEYS_SIGNATURE "rebuildRdKeys"
 #define CMD_DISK_REPLACE_SIGNATURE "diskReplace"
 
+#define DEV_RD_CLOSED       0
+#define DEV_RD_TRANSITION   1
+#define DEV_RD_OPENED       2
+
+static int
+rd_get_opened(struct repdev_rd *rd) {
+	return __sync_fetch_and_add(&rd->opening, 0);
+}
+
+static int
+rd_is_opened(struct repdev_rd *rd) {
+	return rd_get_opened(rd) == DEV_RD_OPENED;
+}
+
+static int
+rd_is_closed(struct repdev_rd *rd) {
+	return rd_get_opened(rd) == DEV_RD_CLOSED;
+}
+
+static void
+rd_set_opened(struct repdev_rd *rd, int val) {
+	assert(val >= DEV_RD_CLOSED);
+	assert(val <= DEV_RD_OPENED);
+	int old;
+	do {
+		old = rd->opening;
+	} while (!__sync_bool_compare_and_swap(&rd->opening, old, val));
+}
+
+static int
+rd_switch_opened(struct repdev_rd *rd, int from, int to) {
+	assert(from >= DEV_RD_CLOSED);
+	assert(from <= DEV_RD_OPENED);
+	assert(to >= DEV_RD_CLOSED);
+	assert(to <= DEV_RD_OPENED);
+	return __sync_bool_compare_and_swap(&rd->opening, from, to);
+}
+
 static int rd_drop_outdated_handler(struct repdev* dev, int cmd_index, const struct rd_metaloc* meta);
 static int rd_validate_rdkeys_handler(struct repdev* dev, int cmd_index, const struct rd_metaloc* meta);
 static int rd_mdoffload_migrate_handler(struct repdev* dev, int cmd_index, const struct rd_metaloc* meta);
@@ -473,19 +511,6 @@ _exit:
 			dev->name, path);
 	je_free(path);
 	return err;
-}
-
-static int
-rd_is_opened(struct repdev_rd *rd) {
-	return __sync_fetch_and_add(&rd->opened, 0);
-}
-
-static void
-rd_set_opened(struct repdev_rd *rd, int val) {
-	int old;
-	do {
-		old = rd->opened;
-	} while (!__sync_bool_compare_and_swap(&rd->opened, old, val));
 }
 
 static int
@@ -4853,7 +4878,7 @@ rd_log_flush_thread(void *arg)
 	struct repdev_rd *rd = dev->device_lfs;
 	struct repdev_db *db = log->db;
 	repdev_status_t status = reptrans_dev_get_status(dev);
-	if (!rd_is_opened(rd) || status == REPDEV_STATUS_UNAVAILABLE
+	if (rd_is_closed(rd) || status == REPDEV_STATUS_UNAVAILABLE
 		|| status == REPDEV_STATUS_READONLY_FAULT
 		|| status == REPDEV_STATUS_READONLY_FORCED) {
 		uv_mutex_lock(&db->log_flush_lock);
@@ -10579,10 +10604,11 @@ rd_dev_open_envs(struct repdev* dev) {
 	int is_new = rd->metaloc.version == 0;
 	int maintenance = rd->metaloc.state == rdstateMaintenance;
 
-	if (rd_is_opened(rd)) {
-		log_notice(lg, "Dev(%s) already opened", dev->name);
-		return 0;
-	}
+	/* Put device into transitional state*/
+	int done = rd_switch_opened(rd, DEV_RD_CLOSED, DEV_RD_TRANSITION);
+	if (!done)
+		return -EINVAL;
+
 	/*
 	 * Parts location initialization
 	 */
@@ -10839,7 +10865,6 @@ rd_dev_open_envs(struct repdev* dev) {
 		err = 0;
 	}
 
-
 	/* flush the WALs if any and update HC table too */
 
 	for (int j = 0; j < rd->plevel; ++j) {
@@ -10916,6 +10941,11 @@ rd_dev_open_envs(struct repdev* dev) {
 	}
 
 _exit:
+	if (err)
+		rd_set_opened(rd, DEV_RD_CLOSED);
+	else
+		rd_set_opened(rd, DEV_RD_OPENED);
+
 	return err;
 }
 
@@ -11523,19 +11553,19 @@ static int
 rd_dev_open(struct repdev* dev) {
 	struct repdev_rd* rd = dev->device_lfs;
 	int err = 0;
-	if (rd_is_opened(rd))
-		return -EEXIST;
 	/*
 	 * Take a common lock. It will be acquired when
 	 * there are no LMDB operations in progress
 	 */
 	pthread_rwlock_wrlock(&rd->guard);
+	if (!rd_is_closed(rd)) {
+		pthread_rwlock_unlock(&rd->guard);
+		return -EEXIST;
+	}
 	err = rd_dev_open_envs(dev);
 	pthread_rwlock_unlock(&rd->guard);
-	if (!err) {
-		rd_set_opened(rd, 1);
+	if (!err)
 		(void)rd_dev_stat_refresh(dev);
-	}
 	return err;
 }
 
@@ -11553,15 +11583,17 @@ rd_dev_reopen(struct repdev* dev) {
 	pthread_rwlock_wrlock(&rd->guard);
 	if (rd_is_opened(rd)) {
 		rd_dev_close_nolock(dev);
-		rd_set_opened(rd, 0);
+		rd_set_opened(rd, DEV_RD_CLOSED);
+	} else if (!rd_is_closed(rd)) {
+		/* Device initialization must be in progress */
+		pthread_rwlock_unlock(&rd->guard);
+		return -EINPROGRESS;
 	}
-
+	reptrans_dev_override_status(dev, REPDEV_STATUS_INIT);
 	err = rd_dev_open_envs(dev);
 	pthread_rwlock_unlock(&rd->guard);
-	if (!err) {
-		rd_set_opened(rd, 1);
+	if (!err)
 		(void)rd_dev_stat_refresh(dev);
-	}
 	return err;
 }
 
@@ -11945,6 +11977,9 @@ rd_dev_log_flush(struct repdev *dev, uint32_t flags) {
 		rd_dev_faulted(dev, &fs);
 		return;
 	}
+	int err = pthread_rwlock_tryrdlock(&rd->guard);
+	if (err)
+		return;
 
 	for (int j = 0; j < rd->plevel; ++j) {
 		struct repdev_db *db = rd->db + j;
@@ -11999,11 +12034,17 @@ rd_dev_log_flush(struct repdev *dev, uint32_t flags) {
 			rd->flushed_bytes = 0;
 		}
 	}
+	pthread_rwlock_unlock(&rd->guard);
 }
 
 static int
 rd_dev_ctl(struct repdev* dev, int op, void* arg) {
+	struct repdev_rd* rd = dev->device_lfs;
 	if (op == vdevCtlFlush) {
+
+		if (!rd_is_opened(rd))
+			return -EBUSY;
+
 		uint32_t flags = 0;
 		memcpy(&flags, arg, sizeof(uint32_t));
 		rd_dev_log_flush(dev, flags);
@@ -12022,7 +12063,6 @@ rd_dev_ctl(struct repdev* dev, int op, void* arg) {
 			struct rd_metaloc meta = {0};
 			snprintf(fname, PATH_MAX, "/dev/disk/by-id/%s", dev->name);
 			char mbuf[RD_METALOC_SIZE];
-			struct repdev_rd* rd = dev->device_lfs;
 			/* the metaloc could be modified until we were slipping */
 
 			uv_buf_t ml_ub = {.len = sizeof(mbuf), .base = mbuf};
@@ -12053,6 +12093,7 @@ rd_dev_ctl(struct repdev* dev, int op, void* arg) {
 				rd->metaloc.n_cmds = meta.n_cmds;
 				rd->metaloc.state = meta.state;
 			}
+			reptrans_dev_override_status(dev, REPDEV_STATUS_INIT);
 		}
 		if (status == REPDEV_STATUS_READONLY_FORCED) {
 			/**
@@ -12133,11 +12174,11 @@ rd_dev_close(struct repdev* dev) {
 	uv_buf_t value;
 
 	/*
-	 * Only one thread is allowed to set rd->opened = 2
+	 * Only one thread is allowed to set VDEV to the DEV_RD_INITIALIZING state
 	 * Other will fail to avoid concurrent close.
 	 * As well, they will fail if the device had been closed already
 	 */
-	int res = __sync_bool_compare_and_swap(&rd->opened, 1, 2);
+	int res = rd_switch_opened(rd, DEV_RD_OPENED, DEV_RD_TRANSITION);
 	if (!res)
 		return 0; /* Is closing in another thread or already closed */
 	/* To not wait forever limit lock time to 10 min */
@@ -12148,8 +12189,7 @@ rd_dev_close(struct repdev* dev) {
 	if (err)
 		return err;
 	rd_dev_close_nolock(dev);
-	res = __sync_bool_compare_and_swap(&rd->opened, 2, 0);
-	assert(res);
+	rd_set_opened(rd, DEV_RD_CLOSED);
 	pthread_rwlock_unlock(&rd->guard);
 	return 0;
 }
@@ -12532,7 +12572,7 @@ rd_set_unavailable(struct repdev* dev, struct rd_fault_signature* fs, int sync) 
 	struct repdev_rd* rd = dev->device_lfs;
 	int err = 0;
 
-	if (rd_is_opened(rd) != 1)
+	if (!rd_is_opened(rd))
 		return 0;
 
 	if (fs) {

@@ -339,7 +339,7 @@ struct payload_s3;
 
 struct repdev_rd {
     struct repdev_db *db;
-    int opened; /* Set when the VDEV has all environment opened */
+    int opening; /* Device opening state */
     struct rd_metaloc metaloc;
     MDB_env *mdcache_env;
     MDB_dbi mdcache_dbi[TT_LAST];
