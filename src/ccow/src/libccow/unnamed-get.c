@@ -339,12 +339,16 @@ unnamedget_process_payload(struct state *st)
 		/*
 		 * Read Chunk Reference list (Payload CHID + Offset + Length)
 		 */
-		err = replicast_get_refs(r->rb, &op->vm_reflist, 0);
-		if (err) {
-			log_error(lg, "UNNAMED GET chunk reference list error: %d", err);
-			ccow_fail_io(st->io, err);
-			state_next(st, EV_ERR);
-			return;
+		if (!op->metadata.object_deleted) {
+			err = replicast_get_refs(r->rb, &op->vm_reflist, 0);
+			if (err) {
+				log_error(lg, "UNNAMED GET chunk reference list error: %d", err);
+				ccow_fail_io(st->io, err);
+				state_next(st, EV_ERR);
+				return;
+			}
+		} else {
+			op->vm_reflist = NULL;
 		}
 
 		if (op->iter) {
