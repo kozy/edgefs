@@ -42,7 +42,7 @@
 #include "json.h"
 #include "reptrans.h"
 #include "ccowd-impl.h"
-
+#include <payload-s3.h>
 #include <sys/user.h>
 #include "reptrans-rd.h"
 
@@ -61,6 +61,44 @@
 #define CMD_MDOFFLOAD_MIGRATE_SIGNATURE "mdoffloadMigrate"
 #define CMD_REBUILD_RDKEYS_SIGNATURE "rebuildRdKeys"
 #define CMD_DISK_REPLACE_SIGNATURE "diskReplace"
+
+#define DEV_RD_CLOSED       0
+#define DEV_RD_TRANSITION   1
+#define DEV_RD_OPENED       2
+
+static int
+rd_get_opened(struct repdev_rd *rd) {
+	return __sync_fetch_and_add(&rd->opening, 0);
+}
+
+static int
+rd_is_opened(struct repdev_rd *rd) {
+	return rd_get_opened(rd) == DEV_RD_OPENED;
+}
+
+static int
+rd_is_closed(struct repdev_rd *rd) {
+	return rd_get_opened(rd) == DEV_RD_CLOSED;
+}
+
+static void
+rd_set_opened(struct repdev_rd *rd, int val) {
+	assert(val >= DEV_RD_CLOSED);
+	assert(val <= DEV_RD_OPENED);
+	int old;
+	do {
+		old = rd->opening;
+	} while (!__sync_bool_compare_and_swap(&rd->opening, old, val));
+}
+
+static int
+rd_switch_opened(struct repdev_rd *rd, int from, int to) {
+	assert(from >= DEV_RD_CLOSED);
+	assert(from <= DEV_RD_OPENED);
+	assert(to >= DEV_RD_CLOSED);
+	assert(to <= DEV_RD_OPENED);
+	return __sync_bool_compare_and_swap(&rd->opening, from, to);
+}
 
 static int rd_drop_outdated_handler(struct repdev* dev, int cmd_index, const struct rd_metaloc* meta);
 static int rd_validate_rdkeys_handler(struct repdev* dev, int cmd_index, const struct rd_metaloc* meta);
@@ -473,19 +511,6 @@ _exit:
 			dev->name, path);
 	je_free(path);
 	return err;
-}
-
-static int
-rd_is_opened(struct repdev_rd *rd) {
-	return __sync_fetch_and_add(&rd->opened, 0);
-}
-
-static void
-rd_set_opened(struct repdev_rd *rd, int val) {
-	int old;
-	do {
-		old = rd->opened;
-	} while (!__sync_bool_compare_and_swap(&rd->opened, old, val));
 }
 
 static int
@@ -4122,22 +4147,25 @@ rd_lmdb_stat(struct repdev *dev)
 	if (status == REPDEV_STATUS_UNAVAILABLE)
 		return -ENODEV;
 
-	err = rd_get_size(dev->path, &blk, &ssz);
-	if (!err) {
-		physical_capacity = blk * ssz;
-	} else {
-		dev->stats.used = 0;
-		if (err == -ENOENT) {
-			struct rd_fault_signature fs = {
-				.error = err,
-				.source = 'm',
-				.plevel = 0
-			};
-			rd_dev_faulted(dev, &fs);
-			err = -ENODEV;
+	if (!rd->s3_ctx) {
+		err = rd_get_size(dev->path, &blk, &ssz);
+		if (!err) {
+			physical_capacity = blk * ssz;
+		} else {
+			dev->stats.used = 0;
+			if (err == -ENOENT) {
+				struct rd_fault_signature fs = {
+					.error = err,
+					.source = 'm',
+					.plevel = 0
+				};
+				rd_dev_faulted(dev, &fs);
+				err = -ENODEV;
+			}
+			goto out;
 		}
-		goto out;
-	}
+	} else
+		physical_capacity = capacity = rd->payload_s3_capacity;
 
 	key_cache_stat_t keycache_stats_aggr = { 0, 0, 0 };
 	size_t ttag_entries[TT_LAST] = {0};
@@ -4147,7 +4175,6 @@ rd_lmdb_stat(struct repdev *dev)
 	 * is smaller than partition. Also, the disk can keep a WAL.
 	 * A more precise way to calculate real size is to sum the mapsize of each plevel.
 	 */
-	capacity = 0;
 
 	for (int pl = 0; pl < rd->plevel; ++pl) {
 		db = rd->db + pl;
@@ -4157,7 +4184,8 @@ rd_lmdb_stat(struct repdev *dev)
 
 		MDB_envinfo env_info;
 		mdb_env_info(db->env[0], &env_info);
-		capacity += env_info.me_mapsize;
+		if (!rd->s3_ctx)
+			capacity += env_info.me_mapsize;
 
 		keycache_stats_aggr.hit += db->key_cache->stats.hit;
 		keycache_stats_aggr.miss += db->key_cache->stats.miss;
@@ -4232,6 +4260,17 @@ rd_lmdb_stat(struct repdev *dev)
 		if (txn != offload_txn)
 			mdb_txn_abort(offload_txn);
 	}
+
+	if (rd->s3_ctx) {
+		/* For S3 payload use different approach because the main DB
+		 * contains only stubs which doesn't reflect actual data size.
+		 */
+		size_t dcap = reptrans_rowusage_full(dev);
+		ttag_size[TT_CHUNK_PAYLOAD] = dcap
+			- ttag_size[TT_CHUNK_MANIFEST]
+			- ttag_size[TT_PARITY_MANIFEST];
+	}
+
 	for (int tt = TT_NAMEINDEX; tt < TT_LAST; tt++) {
 		if (!(dev->journal && is_mdoffload_tt(dev, tt))) {
 			total_used_space += ttag_size[tt];
@@ -4839,7 +4878,7 @@ rd_log_flush_thread(void *arg)
 	struct repdev_rd *rd = dev->device_lfs;
 	struct repdev_db *db = log->db;
 	repdev_status_t status = reptrans_dev_get_status(dev);
-	if (!rd_is_opened(rd) || status == REPDEV_STATUS_UNAVAILABLE
+	if (rd_is_closed(rd) || status == REPDEV_STATUS_UNAVAILABLE
 		|| status == REPDEV_STATUS_READONLY_FAULT
 		|| status == REPDEV_STATUS_READONLY_FORCED) {
 		uv_mutex_lock(&db->log_flush_lock);
@@ -5113,6 +5152,16 @@ _start:
 				if (err)
 					goto _check_err;
 
+				if (ttag == TT_CHUNK_PAYLOAD && rd->s3_ctx &&
+					IS_STUB_PUT_PAYLOAD(del_val)) {
+					char buff[PATH_MAX];
+					reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
+
+					int rc = payload_s3_delete(rd->s3_ctx, buff);
+					if (rc)
+						log_error(lg, "Dev(%s) cannot delete S3 payload %d", dev->name, err);
+				}
+
 				err = mdb_cursor_del(main_cursor[shard], 0);
 				if (err)
 					goto _check_err;
@@ -5157,13 +5206,26 @@ _start:
 					status == REPDEV_STATUS_READONLY_FORCED ||
 					status == REPDEV_STATUS_READONLY_FAULT;
 				if (!skip && !force_readonly) {
-					MDB_val data_out = { .mv_data = NULL, .mv_size = data.mv_size };
+					int use_s3 = (ttag == TT_CHUNK_PAYLOAD && rd->s3_ctx &&
+					    dev->payload_put_min_kb * 1024 <= data.mv_size);
+
+					MDB_val data_out = { .mv_data = NULL,
+						.mv_size = use_s3 ? STUB_PUT_PAYLOAD_SIZE : data.mv_size };
+
 					unsigned int flags = MDB_SETATTR | MDB_RESERVE;
 					flags |= (dev->rt->flags & RT_FLAG_ALLOW_OVERWRITE) ?
 							 0 : MDB_NOOVERWRITE;
 					err = mdb_cursor_put_attr(main_cursor[shard], &key, &data_out, attr, flags);
 					if (!err) {
-						memcpy((char *)data_out.mv_data, data.mv_data, data.mv_size);
+						if (use_s3) {
+							char buff[PATH_MAX];
+							reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
+							uv_buf_t ubd = { .base = data.mv_data, .len = data.mv_size };
+							err = payload_s3_put(rd->s3_ctx, buff, &ubd);
+							stub_payload_pack(data_out.mv_data, data.mv_size);
+						} else
+							memcpy((char *)data_out.mv_data, data.mv_data, data.mv_size);
+
 						if (is_hashcount_data_type_tag(ttag))
 							reptrans_bump_hashcount(dev, &chid, 1);
 						if (is_rowusage_data_type_tag(ttag))
@@ -5800,7 +5862,7 @@ rd_log_flush(struct repdev_log *log, type_tag_t ttag)
 static int
 rd_log_append(struct repdev *dev, struct repdev_log *log, type_tag_t ttag,
 		crypto_hash_t hash_type, uv_buf_t *keybuf, const rtbuf_t *rb,
-		uint64_t attr)
+		uint64_t attr, int nowait)
 {
 	int err = 0, again_cnt = 0;
 	MDB_txn *txn = NULL;
@@ -5894,6 +5956,14 @@ _again:
 			wait_cnt++;
 
 			uv_mutex_lock(&db->log_flush_lock);
+			if (nowait && db->log_flush_cnt) {
+				/*
+				 * Don't wait for flush,
+				 * allow direct put to main TT
+				 */
+				uv_mutex_unlock(&db->log_flush_lock);
+				return -EBUSY;
+			}
 			err = uv_cond_timedwait(&db->log_flush_condvar,
 			    &db->log_flush_lock, 100000LL); // 100us
 			if (err >= 0)
@@ -6241,6 +6311,10 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 	}
 	rt_set_thread_vdev_context(dev);
 
+	int use_s3 = (ttag == TT_CHUNK_PAYLOAD && rd->s3_ctx &&
+		dev->payload_put_min_kb * 1024 <= len);
+
+
 	err = rd_key_encode(dev, ttag, hash_type, chid, &ptk, &db, &dbi,
 	    &log);
 	if (err)
@@ -6256,13 +6330,14 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 	if (!overwrite && is_log_tt(dev, ttag) && (rtbuf_len(rb) < dev->journal_maxchunksize)) {
 		/* For dupsort operations use attr as follow:
 		 * 0 - delete entry, 1 - put entry
+		 * For S3 payload do not wait for WAL flush, prefer direct insert
 		 */
 		int cnt = 5;
 		if (is_dupsort_tt(ttag))
 			attr = 1;
 		do {
 			err = rd_log_append(dev, log, ttag, hash_type, &keybuf,
-				rb, attr);
+				rb, attr, use_s3);
 		} while (err == -EFAULT && --cnt);
 
 		assert (err != -EEXIST);
@@ -6377,19 +6452,49 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 			}
 			err = 0;
 		}
+
+		if (use_s3) {
+			assert(attr);
+
+			rtbuf_t* rbf = (rtbuf_t*)rb;
+			if (rb->nbufs > 1) {
+				rbf = rtbuf_serialize(rbf);
+				if (!rbf) {
+					log_error(lg, "Dev(%s) malloc error", dev->name);
+					err = -ENOENT;
+					goto _exit;
+				}
+			}
+			char buff[PATH_MAX];
+			reptrans_make_s3_key(dev, chid, buff, sizeof(buff));
+			err = payload_s3_put(rd->s3_ctx, buff, &rbf->bufs[0]);
+			if (rbf != rb)
+				rtbuf_destroy(rbf);
+			if (err) {
+				log_error(lg, "Dev(%s) S3 payload put error %d",
+					dev->name, err);
+				goto _exit;
+			}
+			/* Put on disk only stubs */
+			data.mv_size = STUB_PUT_PAYLOAD_SIZE;
+		}
+
 		unsigned int flags = MDB_RESERVE;
 		flags |= overwrite ? 0 : MDB_NOOVERWRITE;
 		err = mdb_put_attr(txn, dbi, &key, &data, attr, flags);
 		if (err == MDB_KEYEXIST && attr) {
 			err = mdb_set_attr(txn, dbi, &key, NULL, attr);
 		} else if (!err) {
-			size_t copied = 0;
-			for (int i = 0; i < (int)rb->nbufs; i++) {
-				memcpy((char *)data.mv_data + copied, rtbuf(rb, i).base,
-				    rtbuf(rb, i).len);
-				copied += rtbuf(rb, i).len;
+			if (use_s3)
+				stub_payload_pack(data.mv_data, len);
+			else {
+				size_t copied = 0;
+				for (int i = 0; i < (int)rb->nbufs; i++) {
+					memcpy((char *)data.mv_data + copied, rtbuf(rb, i).base,
+					    rtbuf(rb, i).len);
+					copied += rtbuf(rb, i).len;
+				}
 			}
-			put_len = copied;
 		}
 		if (err) {
 			mdb_err = err;
@@ -6441,8 +6546,8 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 	} else if (!mdb_err) {
 		if (is_hashcount_data_type_tag(ttag))
 			reptrans_bump_hashcount(dev, chid, 1);
-		if (is_rowusage_data_type_tag(ttag))
-			reptrans_bump_rowusage(dev, chid, put_len);
+		if (len && is_rowusage_data_type_tag(ttag))
+			reptrans_bump_rowusage(dev, chid, len);
 	}
 
 _exit:
@@ -6551,7 +6656,7 @@ rd_set_blob_attr(struct repdev *dev, type_tag_t ttag,
 		int cnt = 5;
 		do {
 			err = rd_log_append(dev, log, ttag, hash_type, &keybuf, &rb,
-				attr);
+				attr, 0);
 		} while (err == -EFAULT && --cnt);
 
 		assert (err != -EEXIST);
@@ -6691,6 +6796,8 @@ rd_log_lookup(struct repdev *dev, struct repdev_db *db, struct repdev_log *log,
 	size_t dupcount = 0;
 	int dupcount_noent = 0;
 	int mapped = rd->zerocopy >= 2;
+	int use_s3 = 0;
+
 
 	/* For dupsort TT we keep a hash table for blobs scheduled for removal
 	 * and a two linked list of values (log and main) in order to merge
@@ -6879,26 +6986,78 @@ _repeat:
 				err = MDB_NOTFOUND;
 				goto _exit;
 			}
+			if (repeat && (ttag == TT_CHUNK_PAYLOAD) && rd->s3_ctx && IS_STUB_PUT_PAYLOAD(data)) {
+				type_tag_t tt;
+				crypto_hash_t ht;
+				uint512_t chid;
+
+				/* Fetch CHID */
+				err = reptrans_key_decode(dev, keybuf->base, keybuf->len,
+					&tt, &ht, &chid);
+				assert(!err);
+
+				/* get value size */
+				uint64_t psize;
+				stub_payload_unpack(data.mv_data, &psize);
+
+				if (filter_cb == rd_stat_filter) {
+					/* found and we doing just stat_blob() - done */
+					filter_cb(arg, NULL, &psize, 0);
+					err = 0;
+					goto _exit;
+				}
+
+				data.mv_size = psize;
+				/* Allocate a buffer for S3 payload */
+				uv_buf_t ub = { .base = je_malloc(psize), .len = psize };
+				if (!ub.base) {
+					err = -ENOMEM;
+					log_error(lg, "Dev(%s) out of memory", dev->name);
+					goto _exit;
+				}
+
+				/* get the payload */
+				char buff[PATH_MAX];
+				reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
+				err = payload_s3_get(rd->s3_ctx, buff, &ub);
+				if (err) {
+					je_free(ub.base);
+					log_error(lg, "Dev(%s) S3 payload get error %d", dev->name, err);
+					goto _exit;
+				}
+				use_s3 = 1;
+				data.mv_size = ub.len;
+				data.mv_data = ub.base;
+			}
 		}
 
 		uv_buf_t ent = { .len = data.mv_size, .base = data.mv_data };
 		if (filter_cb) {
 			/* Skip the entry if filter has failed */
 			err = filter_cb(arg, (void **)&ent.base, &ent.len, 0);
-			if (err < 0)
+			if (err < 0) {
+				if (use_s3)
+					je_free(ent.base);
 				goto _exit;
+			}
 		}
 		if (rb) {
 			if (rd->zerocopy >= 1)
-				err = rtbuf_add_mapped(rb, &ent, 1);
+				if (use_s3)
+					err = rtbuf_add(rb, &ent, 1);
+				else
+					err = rtbuf_add_mapped(rb, &ent, 1);
 			else {
 				err = rtbuf_add_alloc(rb, &ent, 1);
-				if (repeat == 1 && ttag == TT_CHUNK_PAYLOAD) {
+				if (repeat == 1 && ttag == TT_CHUNK_PAYLOAD && !use_s3) {
 					void *aligned_addr = (void*)((((uint64_t)ent.base)>>12UL)<<12UL);
 					madvise(aligned_addr, ent.len, MADV_DONTNEED);
 				}
+				if (use_s3)
+					je_free(ent.base);
 			}
-		}
+		} else if (use_s3)
+			je_free(ent.base);
 		if (err) {
 			log_error(lg, "Get(%s): out of memory on log_lookup: %d",
 			    dev->name, err);
@@ -7434,7 +7593,7 @@ rd_delete_blob_value(struct repdev *dev, type_tag_t ttag,
 			 */
 			int cnt = 5;
 			do {
-				err = rd_log_append(dev, log, ttag, hash_type, &keybuf, rbl, 0);
+				err = rd_log_append(dev, log, ttag, hash_type, &keybuf, rbl, 0, 0);
 			} while (err == -EFAULT && --cnt);
 
 			if (err) {
@@ -7614,6 +7773,8 @@ rd_delete_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 		goto _exit;
 	}
 
+	int use_s3 = (ttag == TT_CHUNK_PAYLOAD) && rd->s3_ctx;
+
 	rt_set_thread_vdev_context(dev);
 	err = rd_key_encode(dev, ttag, hash_type, chid, &ptk, &db, &dbi_main,
 	    &log);
@@ -7633,11 +7794,11 @@ rd_delete_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 		 */
 		int cnt = 5;
 		do {
-			err = rd_log_append(dev, log, ttag, hash_type, &keybuf, rb, 0);
+			err = rd_log_append(dev, log, ttag, hash_type, &keybuf, rb, 0, 0);
 		} while (err == -EFAULT && --cnt);
 
 		rtbuf_destroy(rb);
-		if (!err || err != -ENOSPC || err != -EBUSY) {
+		if (!err || (err != -ENOSPC && err != -EBUSY)) {
 			if (err) {
 				log_error(lg, "Get(%s): rd_log_append() returned %d",
 					dev->name, err);
@@ -7740,6 +7901,15 @@ rd_delete_blob(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	MDB_val data_empty = { .mv_size = 0, .mv_data = NULL };
 	err = mdb_cursor_get(cnt_cursor, &key, &data_empty, MDB_SET_KEY);
 	if (!err) {
+		if (use_s3 && IS_STUB_PUT_PAYLOAD(data_empty)) {
+			char buff[PATH_MAX];
+			reptrans_make_s3_key(dev, chid, buff, sizeof(buff));
+			stub_payload_unpack(data_empty.mv_data, &del_size);
+			err = payload_s3_delete(rd->s3_ctx, buff);
+			if (err)
+				log_error(lg, "Dev(%s) cannot delete S3 payload %d",
+					dev->name, err);
+		}
 		if (ttag == TT_NAMEINDEX)
 			mdb_cursor_count(cnt_cursor, &nameindex_cnt);
 		int flag = is_dupsort_tt(ttag) ? MDB_NODUPDATA : 0;
@@ -8069,6 +8239,29 @@ rd_iterate_blobs_shard(struct repdev *dev, type_tag_t ttag,
 			    (rbv && !rbv->nbufs))
 				continue;
 
+			if (ttag == TT_CHUNK_PAYLOAD && want_values && rd->s3_ctx) {
+				MDB_val val = {.mv_data = rbv->bufs[i].base, .mv_size = rbv->bufs[i].len};
+				if (IS_STUB_PUT_PAYLOAD(val)) {
+					uint64_t vlen = 0;
+					char buff[PATH_MAX];
+					reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
+					stub_payload_unpack(data.mv_data, &vlen);
+					uv_buf_t ub = {.base = je_malloc(vlen), .len = vlen};
+					err = payload_s3_get(rd->s3_ctx, buff, &ub);
+					if (err) {
+						log_error(lg, "Dev(%s) couldn't fetch S3 payload: %d",
+							dev->name, err);
+						rtbuf_destroy(rb);
+						rtbuf_destroy(rbv);
+						rtbuf_destroy(rbl);
+						return err;
+					}
+					/* Replace stub payload with the real one */
+					je_free(rbv->bufs[i].base);
+					rbv->bufs[i] = ub;
+				}
+			}
+
 			err = reptrans_imsort_add_kv(sh,
 			    key_hash_type, &chid,
 			    rbv ? &rbv->bufs[i] : NULL,
@@ -8107,6 +8300,7 @@ rd_log_fetch_entries(struct repdev* dev, struct repdev_db *db, type_tag_t ttag,
 	uint64_t* deleted = res ? (uint64_t*)res->base : NULL;
 	uint64_t n = res ? res->len : 0;
 	MDB_txn* log_txn = NULL;
+	struct repdev_rd *rd = dev->device_lfs;
 
 	assert(is_dupsort_tt(ttag) == 0);
 
@@ -8223,8 +8417,27 @@ rd_log_fetch_entries(struct repdev* dev, struct repdev_db *db, type_tag_t ttag,
 							dev->name, type_tag_name[ttag], err);
 					} else {
 						uv_buf_t val = {.len = data.mv_size, .base = data.mv_data };
+						int use_s3 = 0;
+						if (ttag == TT_CHUNK_PAYLOAD && want_values && rd->s3_ctx && IS_STUB_PUT_PAYLOAD(data)) {
+							uint64_t vlen = 0;
+							char buff[PATH_MAX];
+							reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
+							stub_payload_unpack(data.mv_data, &vlen);
+							uv_buf_t ub = {.base = je_malloc(vlen), .len = vlen};
+							err = payload_s3_get(rd->s3_ctx, buff, &ub);
+							if (err) {
+								log_error(lg, "Dev(%s) couldn't fetch S3 payload: %d",
+									dev->name ,err);
+								je_free(ub.base);
+								goto _exit;
+							}
+							val = ub;
+							use_s3 = 1;
+						}
 						err = reptrans_imsort_add_kv(sh, ht, &chid,
 							want_values ? &val : NULL, new_etry);
+						if (use_s3)
+							je_free(val.base);
 						new_etry = 0;
 						if (err)
 							log_error(lg, "Dev(%s) cannot append log's data to imsort: %d",
@@ -8662,6 +8875,30 @@ _next_shard:
 				if (err || key_ttag != ttag ||
 				    (rbv && !rbv->nbufs))
 					continue;
+
+				if (ttag == TT_CHUNK_PAYLOAD && want_values && rd->s3_ctx) {
+					MDB_val val = {.mv_data = rbv->bufs[i].base, .mv_size = rbv->bufs[i].len};
+					if (IS_STUB_PUT_PAYLOAD(val)) {
+						uint64_t vlen = 0;
+						char buff[PATH_MAX];
+						reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
+						stub_payload_unpack(data.mv_data, &vlen);
+						uv_buf_t ub = {.base = je_malloc(vlen), .len = vlen};
+						err = payload_s3_get(rd->s3_ctx, buff, &ub);
+						if (err) {
+							log_error(lg, "Dev(%s) couldn't fetch S3 payload: %d",
+								dev->name, err);
+							rtbuf_destroy(rb);
+							rtbuf_destroy(rbv);
+							rtbuf_destroy(rbl);
+							return err;
+						}
+						/* Replace stub payload with the real one */
+						je_free(rbv->bufs[i].base);
+						rbv->bufs[i] = ub;
+					}
+				}
+
 				err = callback(dev, ttag, key_hash_type, &chid,
 				    rbv ? &rbv->bufs[i] : NULL, param);
 				if (!rd_is_opened(rd))
@@ -10367,10 +10604,11 @@ rd_dev_open_envs(struct repdev* dev) {
 	int is_new = rd->metaloc.version == 0;
 	int maintenance = rd->metaloc.state == rdstateMaintenance;
 
-	if (rd_is_opened(rd)) {
-		log_notice(lg, "Dev(%s) already opened", dev->name);
-		return 0;
-	}
+	/* Put device into transitional state*/
+	int done = rd_switch_opened(rd, DEV_RD_CLOSED, DEV_RD_TRANSITION);
+	if (!done)
+		return -EINVAL;
+
 	/*
 	 * Parts location initialization
 	 */
@@ -10627,7 +10865,6 @@ rd_dev_open_envs(struct repdev* dev) {
 		err = 0;
 	}
 
-
 	/* flush the WALs if any and update HC table too */
 
 	for (int j = 0; j < rd->plevel; ++j) {
@@ -10704,6 +10941,11 @@ rd_dev_open_envs(struct repdev* dev) {
 	}
 
 _exit:
+	if (err)
+		rd_set_opened(rd, DEV_RD_CLOSED);
+	else
+		rd_set_opened(rd, DEV_RD_OPENED);
+
 	return err;
 }
 
@@ -10742,6 +10984,12 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 	struct repdev_bg_config* bg_cfg = NULL;
 	struct repdev_rd* rd = NULL;
 	long blk = 0, ssz = 0;
+	char *payload_s3_bucket_url = NULL;
+	char *payload_s3_key_file = NULL;
+	char *payload_s3_region = NULL;
+	uint32_t payload_s3_min_kb = 1;
+	size_t payload_s3_capacity = 0;
+
 
 	snprintf(fname, PATH_MAX, "/dev/disk/by-id/%s", meta->device);
 	char *kdevname = realpath(fname, NULL);
@@ -10932,6 +11180,51 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 				continue;
 			}
 			keycache_size_max = v->u.integer;
+		} else if (strcmp(namekey, "payload_s3_bucket_url") == 0) {
+			if (v->type != json_string) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_bucket_url is not a string",
+				    name);
+				err = 1;
+				continue;
+			}
+			payload_s3_bucket_url = je_strdup(v->u.string.ptr);
+		} else if (strcmp(namekey, "payload_s3_key_file") == 0) {
+			if (v->type != json_string) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_key_file is not a string",
+				    name);
+				err = 1;
+				continue;
+			}
+			payload_s3_key_file = je_strdup(v->u.string.ptr);
+		} else if (strcmp(namekey, "payload_s3_region") == 0) {
+			if (v->type != json_string) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_region is not a string",
+				    name);
+				err = 1;
+				continue;
+			}
+			payload_s3_region = je_strdup(v->u.string.ptr);
+		} else if (strcmp(namekey, "payload_s3_min_kb") == 0) {
+			if (v->type != json_integer) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_min_kb is not an "
+				    "integer", name);
+				err = 1;
+				continue;
+			}
+			payload_s3_min_kb = v->u.integer;
+		} else if (strcmp(namekey, "payload_s3_capacity") == 0) {
+			if (v->type != json_integer) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_capacity is not an "
+				    "integer", name);
+				err = 1;
+				continue;
+			}
+			payload_s3_capacity = v->u.integer;
 		}
 	}
 	size_t n_opts;
@@ -11046,6 +11339,43 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 	rd->direct = direct;
 	rd->mdcache_enable = mdcache_enable;
 	rd->zerocopy = zerocopy;
+	rd->payload_s3_bucket_url = payload_s3_bucket_url;
+	rd->payload_s3_key_file = payload_s3_key_file;
+	rd->payload_s3_region = payload_s3_region;
+	rd->payload_s3_capacity = payload_s3_capacity;
+	if (!rd->s3_ctx && rd->payload_s3_bucket_url) {
+		if (journal) {
+			/* We do not support external journal when S3 offload is enabled
+			 * Use all-SSD configuration instead
+			 */
+			log_error(lg, "Dev(%s) external journal is not supported when S3 payload is enabled", name);
+			err = -ENODEV;
+			goto _exit;
+		}
+		if (!rd->payload_s3_key_file) {
+			log_error(lg, "Dev(%s) S3 keyfile is not defined", name);
+			err = -ENODEV;
+			goto _exit;
+		}
+		if (!rd->payload_s3_region) {
+			log_notice(lg, "Dev(%s) S3 region is not defined", name);
+			rd->payload_s3_region = "";
+		}
+		if (!rd->payload_s3_capacity) {
+			log_notice(lg, "Dev(%s) S3 payload capacity is not defined. Using default value (1TB)", dev->name);
+			rd->payload_s3_capacity = 1024UL*1024UL*1024UL*1024UL;
+		}
+		err = payload_s3_init(rd->payload_s3_bucket_url,
+			rd->payload_s3_region, rd->payload_s3_key_file,
+			&rd->s3_ctx);
+		if (err) {
+			log_error(lg, "Dev(%s) S3 payload init error %d", name, err);
+			goto _exit;
+		}
+		dev->payload_put_min_kb = payload_s3_min_kb;
+		log_notice(lg, "Dev(%s) S3 payload enabled. The min. chunk size %u kB, capacity %lu MB",
+			name, payload_s3_min_kb, rd->payload_s3_capacity/(1024LU*1024LU));
+	}
 
 	if (dev->path)
 		free(dev->path);
@@ -11223,19 +11553,19 @@ static int
 rd_dev_open(struct repdev* dev) {
 	struct repdev_rd* rd = dev->device_lfs;
 	int err = 0;
-	if (rd_is_opened(rd))
-		return -EEXIST;
 	/*
 	 * Take a common lock. It will be acquired when
 	 * there are no LMDB operations in progress
 	 */
 	pthread_rwlock_wrlock(&rd->guard);
+	if (!rd_is_closed(rd)) {
+		pthread_rwlock_unlock(&rd->guard);
+		return -EEXIST;
+	}
 	err = rd_dev_open_envs(dev);
 	pthread_rwlock_unlock(&rd->guard);
-	if (!err) {
-		rd_set_opened(rd, 1);
+	if (!err)
 		(void)rd_dev_stat_refresh(dev);
-	}
 	return err;
 }
 
@@ -11253,15 +11583,17 @@ rd_dev_reopen(struct repdev* dev) {
 	pthread_rwlock_wrlock(&rd->guard);
 	if (rd_is_opened(rd)) {
 		rd_dev_close_nolock(dev);
-		rd_set_opened(rd, 0);
+		rd_set_opened(rd, DEV_RD_CLOSED);
+	} else if (!rd_is_closed(rd)) {
+		/* Device initialization must be in progress */
+		pthread_rwlock_unlock(&rd->guard);
+		return -EINPROGRESS;
 	}
-
+	reptrans_dev_override_status(dev, REPDEV_STATUS_INIT);
 	err = rd_dev_open_envs(dev);
 	pthread_rwlock_unlock(&rd->guard);
-	if (!err) {
-		rd_set_opened(rd, 1);
+	if (!err)
 		(void)rd_dev_stat_refresh(dev);
-	}
 	return err;
 }
 
@@ -11645,6 +11977,9 @@ rd_dev_log_flush(struct repdev *dev, uint32_t flags) {
 		rd_dev_faulted(dev, &fs);
 		return;
 	}
+	int err = pthread_rwlock_tryrdlock(&rd->guard);
+	if (err)
+		return;
 
 	for (int j = 0; j < rd->plevel; ++j) {
 		struct repdev_db *db = rd->db + j;
@@ -11699,11 +12034,17 @@ rd_dev_log_flush(struct repdev *dev, uint32_t flags) {
 			rd->flushed_bytes = 0;
 		}
 	}
+	pthread_rwlock_unlock(&rd->guard);
 }
 
 static int
 rd_dev_ctl(struct repdev* dev, int op, void* arg) {
+	struct repdev_rd* rd = dev->device_lfs;
 	if (op == vdevCtlFlush) {
+
+		if (!rd_is_opened(rd))
+			return -EBUSY;
+
 		uint32_t flags = 0;
 		memcpy(&flags, arg, sizeof(uint32_t));
 		rd_dev_log_flush(dev, flags);
@@ -11722,7 +12063,6 @@ rd_dev_ctl(struct repdev* dev, int op, void* arg) {
 			struct rd_metaloc meta = {0};
 			snprintf(fname, PATH_MAX, "/dev/disk/by-id/%s", dev->name);
 			char mbuf[RD_METALOC_SIZE];
-			struct repdev_rd* rd = dev->device_lfs;
 			/* the metaloc could be modified until we were slipping */
 
 			uv_buf_t ml_ub = {.len = sizeof(mbuf), .base = mbuf};
@@ -11753,6 +12093,7 @@ rd_dev_ctl(struct repdev* dev, int op, void* arg) {
 				rd->metaloc.n_cmds = meta.n_cmds;
 				rd->metaloc.state = meta.state;
 			}
+			reptrans_dev_override_status(dev, REPDEV_STATUS_INIT);
 		}
 		if (status == REPDEV_STATUS_READONLY_FORCED) {
 			/**
@@ -11818,6 +12159,11 @@ rd_dev_close_nolock(struct repdev* dev) {
 	}
 	if (!(dev->rt->flags & RT_FLAG_RDHOLD))
 		rd_mdcache_close(dev);
+
+	if (rd->s3_ctx) {
+		payload_s3_destroy(rd->s3_ctx);
+		rd->s3_ctx = NULL;
+	}
 }
 
 static int
@@ -11828,11 +12174,11 @@ rd_dev_close(struct repdev* dev) {
 	uv_buf_t value;
 
 	/*
-	 * Only one thread is allowed to set rd->opened = 2
+	 * Only one thread is allowed to set VDEV to the DEV_RD_INITIALIZING state
 	 * Other will fail to avoid concurrent close.
 	 * As well, they will fail if the device had been closed already
 	 */
-	int res = __sync_bool_compare_and_swap(&rd->opened, 1, 2);
+	int res = rd_switch_opened(rd, DEV_RD_OPENED, DEV_RD_TRANSITION);
 	if (!res)
 		return 0; /* Is closing in another thread or already closed */
 	/* To not wait forever limit lock time to 10 min */
@@ -11843,8 +12189,7 @@ rd_dev_close(struct repdev* dev) {
 	if (err)
 		return err;
 	rd_dev_close_nolock(dev);
-	res = __sync_bool_compare_and_swap(&rd->opened, 2, 0);
-	assert(res);
+	rd_set_opened(rd, DEV_RD_CLOSED);
 	pthread_rwlock_unlock(&rd->guard);
 	return 0;
 }
@@ -12227,7 +12572,7 @@ rd_set_unavailable(struct repdev* dev, struct rd_fault_signature* fs, int sync) 
 	struct repdev_rd* rd = dev->device_lfs;
 	int err = 0;
 
-	if (rd_is_opened(rd) != 1)
+	if (!rd_is_opened(rd))
 		return 0;
 
 	if (fs) {
@@ -12381,9 +12726,13 @@ rd_erase(struct reptrans *rt, struct _json_value *o, const erase_opt_t* opts) {
 		const char* jname = strlen(meta->journal) ? meta->journal : NULL;
 		int jindex = -1;
 		int metaloc_restore = meta->version >= DEV_RD_VERSION_EXT_METALOC;
+		char* s3_url = NULL;
+
+		json_value *d = devices->u.array.values[i];
 
 		if (opts->name && strcmp(opts->name, name))
 			continue;
+
 		err = 0;
 		if (opts->journal_group) {
 			if (!jg) {
@@ -12664,6 +13013,20 @@ _mlrestore:
 			if (err) {
 				log_error(lg, "Unable to store the metaloc on %s",
 					meta->device);
+			}
+		}
+		if (!err) {
+			/* Looking for S3 url */
+			for (size_t j = 0; j < d->u.object.length; j++) {
+				char *namekey = d->u.object.values[j].name;
+				json_value *v = d->u.object.values[j].value;
+				if (strcmp(namekey, "payload_s3_bucket_url") == 0 &&
+					strlen(v->u.string.ptr) > 0 && uint128_cmp(&meta->vdev_id, &uint128_null)) {
+					char vdevbuf[UINT128_STR_BYTES];
+					uint128_dump(&meta->vdev_id, vdevbuf, UINT128_STR_BYTES);
+					log_notice(lg, "Dev(%s) the S3 folder %s/%s needs to be removes manually",
+						meta->device, v->u.string.ptr, vdevbuf);
+				}
 			}
 		}
 		if (real_name)

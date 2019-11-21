@@ -331,6 +331,7 @@ unnamedput_srv_one_blob(struct putcommon_srv_req *req, struct repctx *ctx,
 		    CRYPTO_ENC_EN(req->hash_type)) {
 			rb = ccowd_host_encrypt(ccow_daemon->enc_ctx, rb);
 		}
+#if 0
 		if (tt == TT_CHUNK_PAYLOAD && dev->payload_put_min_kb &&
 		    !req->min && dev->payload_put_min_kb * 1024 <= rtbuf_len(rb)) {
 			/* If this device is not "min" then we not suppose to
@@ -340,6 +341,7 @@ unnamedput_srv_one_blob(struct putcommon_srv_req *req, struct repctx *ctx,
 			rtbuf_destroy(rb);
 			rb = rtbuf_init(&empty_buf, 1);
 		}
+#endif
 		err = reptrans_put_blob_with_attr(dev, tt, req->hash_type, rb,
 		    &msg_pp->content_hash_id, 0, reptrans_get_timestamp(dev));
 		if (err) {

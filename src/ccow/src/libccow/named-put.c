@@ -313,8 +313,6 @@ vm_unencode_request(struct state *st) {
 
 	req->chid = op->vmchid;
 	req->offset = 0;
-	req->hash_type = op->metadata.hash_type;
-	req->compress_type = op->metadata.compress_type;
 	req->ng_chid = op->metadata.nhid;
 
 	err = ccow_start_io(get_io);

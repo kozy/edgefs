@@ -21,6 +21,12 @@ type RTDevice struct {
 	Sync              int    `json:"sync"`
 	Detached          int    `json:"detached"`
 	WalDisabled       int    `json:"wal_disabled,omitempty"`
+	PayloadS3URL      string `json:"payload_s3_bucket_url,omitempty"`
+	PayloadS3Region   string `json:"payload_s3_region,omitempty"`
+	PayloadS3MinKb    int    `json:"payload_s3_min_kb,omitempty"`
+	PayloadS3Capacity int    `json:"payload_s3_capacity,omitempty"`
+	PayloadS3Secret   string `json:"payload_s3_key_file,omitempty"`
+
 }
 
 type RTDevices struct {

@@ -610,6 +610,10 @@ typedef enum {
 	/**
 	 * Attach a VDEV to its key-value backend(s)
 	 * Force device alive state, but DO NOT preserve it
+	 *
+	 * A NOTE for disk engines which use the a bloom filter.The filter
+	 * needs a rebuild upon attach because the content of a detached VDEV
+	 * could be modified during maintenance.
 	 */
 	vdevCtlAttach,
 	/**
@@ -935,6 +939,8 @@ reptrans_bump_rowusage(struct repdev *dev, const uint512_t *chid, size_t size);
 void
 reptrans_drop_rowusage(struct repdev *dev, const uint512_t *chid, size_t size);
 
+size_t
+reptrans_rowusage_full(struct repdev *dev);
 
 void reptrans_request_space_reclaim(struct repdev *dev);
 int reptans_request_space_reclaim__async(struct repdev* dev);

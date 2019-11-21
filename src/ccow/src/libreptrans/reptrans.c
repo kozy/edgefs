@@ -882,7 +882,7 @@ reptrans_dev_override_status(struct repdev *dev, repdev_status_t status) {
 	if (status != prev) {
 		dev->status_changed_expires = 0;
 		dev->status = status;
-		if (prev != REPDEV_STATUS_INIT && status != REPDEV_STATUS_INIT) {
+		if (status != REPDEV_STATUS_INIT) {
 			dev->status_changed = 1;
 			dev->status_changed_expires = get_timestamp_us() + REPDEV_STATE_EXPIRATION_TIMEOUT_US;
 			log_notice(lg, "Dev(%s) status changed %s -> %s", dev->name,
@@ -7658,6 +7658,14 @@ reptrans_bump_rowusage(struct repdev *dev, const uint512_t *chid, size_t size)
 	uv_mutex_unlock(&dev->hc_mutex);
 }
 
+size_t
+reptrans_rowusage_full(struct repdev *dev) {
+	size_t ret = 0;
+	for (size_t i = 0; i < HASHCOUNT_TAB_LENGTH; i++)
+		ret += dev->stats.rowusage[i];
+	return ret;
+}
+
 void
 reptrans_drop_hashcount(struct repdev *dev, const uint512_t *chid, size_t hc_cnt)
 {
@@ -10806,3 +10814,11 @@ reptrans_get_fd_targets_number(int domain) {
 	ccowd_fhready_unlock(FH_LOCK_READ);
 	return fd_item_count;
 }
+
+void
+reptrans_make_s3_key(struct repdev* dev, const uint512_t* chid, char* out, size_t bsize) {
+	char chidbuf[UINT512_STR_BYTES];
+	uint512_dump(chid, chidbuf, UINT512_STR_BYTES);
+	snprintf(out, bsize, "%016lX%016lX/%s", dev->vdevid.u, dev->vdevid.l, chidbuf);
+}
+
