@@ -3688,8 +3688,10 @@ flexhash_fhserver_vdevs(volatile struct flexhash *fhtable, struct fhserver *fhse
 		*vdevcount = 0;
 		return NULL;
 	}
+	pthread_mutex_lock(&fhtable->vdevstore->mutex);
 	struct fhdev *fhdev = fhserver->vdevlist.devlist;
 	if ((!fhdev) && (fhserver->nr_vdevs <= 0)) {
+		pthread_mutex_unlock(&fhtable->vdevstore->mutex);
 		*vdevcount = 0;
 		je_free(retvdev);
 		return NULL;
@@ -3718,7 +3720,7 @@ flexhash_fhserver_vdevs(volatile struct flexhash *fhtable, struct fhserver *fhse
 		fhdev = fhdev->next;
 		i++;
 	}
-
+	pthread_mutex_unlock(&fhtable->vdevstore->mutex);
 	*vdevcount = i;
 	return retvdev;
 }
