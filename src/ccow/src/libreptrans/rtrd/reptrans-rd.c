@@ -11912,7 +11912,7 @@ rd_probe(json_value *opts, struct reptrans *rt)
 			log_info(lg, "Replicast transport over Raw Disk now initialized");
 		}
 		/* now, start rdhold daemon if we should */
-		if (err > 0 && getenv("HOST_HOSTNAME") != NULL &&
+		if (err > 0 && getenv("HOST_HOSTNAME") == NULL &&
 		    !(rt->flags & RT_FLAG_STANDALONE || rt->flags & RT_FLAG_RDONLY) &&
 		    !(rt->flags & RT_FLAG_RDHOLD)) {
 			struct stat st;
