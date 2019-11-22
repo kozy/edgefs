@@ -726,15 +726,6 @@ unnamedput_srv_compound(struct putcommon_srv_req *req) {
 			    CRYPTO_ENC_EN(hash_type)) {
 				rb = ccowd_host_encrypt(ccow_daemon->enc_ctx, rb);
 			}
-			if (ttag == TT_CHUNK_PAYLOAD && dev->payload_put_min_kb &&
-			    !req->min && dev->payload_put_min_kb * 1024 <= rtbuf_len(rb)) {
-				/* If this device is not "min" then we not suppose to
-				 * actually write payload but we need to create a
-				 * placeholder in the local vdev */
-				uv_buf_t empty_buf = { .base = NULL, .len = rtbuf_len(rb) };
-				rtbuf_destroy(rb);
-				rb = rtbuf_init(&empty_buf, 1);
-			}
 			err = reptrans_put_blob_with_attr(dev, ttag,
 			    hash_type, rb, &chid, 0,
 			    reptrans_get_timestamp(dev));
