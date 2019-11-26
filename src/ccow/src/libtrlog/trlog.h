@@ -36,7 +36,7 @@
 #include "hashtable.h"
 #include "msgpackalt.h"
 
-#define TRLOG_MARKER_MAXSIZE	(1 * 1024 * 1024)
+#define TRLOG_MARKER_MAXSIZE	(16 * 1024)
 #define MARKER_RECORD_MAXSIZE	1024
 
 #define	TRLOG_OBJ_CREATE	0x0001

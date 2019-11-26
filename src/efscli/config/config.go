@@ -83,6 +83,7 @@ type CcowTenant struct {
 	SyncPut          int `json:"sync_put,omitempty"`
 	SyncPutNamed     int `json:"sync_put_named,omitempty"`
 	CommitWait       int `json:"sync_put_commit_wait"`
+	ChunkSize        int `json:"chunkmap_chunk_size,omitempty"`
 }
 
 type CcowNetwork struct {

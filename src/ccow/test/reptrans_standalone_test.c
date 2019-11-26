@@ -31,6 +31,8 @@
 #include "common.h"
 #include "reptrans.h"
 #include "ccow-impl.h"
+#include "../src/libreptrans/payload-s3.h"
+#include "../src/libreptrans/rtrd/reptrans-rd.h"
 
 
 #define TRANS_RTRD	"rtrd"
@@ -1884,6 +1886,118 @@ put_perf_test(void **state) {
 	je_free(buffer);
 }
 
+struct chid_qe {
+	uint512_t chid;
+	size_t size;
+	struct chid_qe* next;
+};
+
+struct get_queue_arg {
+	struct repdev* dev;
+	struct chid_qe* head;
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+	int term;
+
+};
+
+#define NTHR 16
+
+static void*
+get_thr(void* arg) {
+	struct get_queue_arg* p = arg;
+	uint512_t chid = uint512_null;
+	size_t size;
+	char buff[PATH_MAX];
+	while (1) {
+		pthread_mutex_lock(&p->lock);
+		while (!p->head && !p->term)
+			pthread_cond_wait(&p->cond, &p->lock);
+		if (!p->head) {
+			pthread_mutex_unlock(&p->lock);
+			return NULL;
+		}
+		struct chid_qe* q = p->head;
+		chid = q->chid;
+		size = q->size;
+		p->head = q->next;
+		je_free(q);
+		pthread_mutex_unlock(&p->lock);
+
+		reptrans_make_s3_key(p->dev, &chid, buff, sizeof(buff));
+
+		struct repdev_rd *rd = p->dev->device_lfs;
+		uv_buf_t ub = {.base = je_malloc(size), .len = size };
+		int err = payload_s3_get(rd->s3_ctx, buff, &ub);
+		if (err) {
+			log_error(lg, "payload_s3_get error %d, key %s", err, buff);
+		}
+	}
+	return 0;
+}
+
+static int
+get_queue_append(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
+	uint512_t *key, uv_buf_t *val, void *param) {
+	struct get_queue_arg* p = param;
+	struct blob_stat bstat = { .size = 0};
+
+	int err = reptrans_blob_stat(dev, ttag, hash_type, key, &bstat);
+	assert_int_equal(0,reptrans_blob_stat(dev, ttag, hash_type, key, &bstat));
+
+	if (bstat.size < 256*1024)
+		return 0;
+
+	pthread_mutex_lock(&p->lock);
+	struct chid_qe* qe = je_malloc(sizeof(*qe));
+	qe->chid = *key;
+	qe->size = bstat.size;
+	qe->next = p->head;
+	p->head = qe;
+	pthread_cond_signal(&p->cond);
+	pthread_mutex_unlock(&p->lock);
+	return 0;
+}
+
+static void
+iterate_get_perf_test(void **state) {
+	int err =  reptrans_init(0, NULL, NULL,
+		RT_FLAG_STANDALONE | RT_FLAG_CREATE | RT_FLAG_RDONLY, 1, (char**)transport, NULL);
+
+	assert_true(err > 0);
+	if (err <= 0)
+		return;
+
+	int ndev = libreptrans_enum();
+	assert_true(ndev > 0);
+
+	if (ndev <= 0)
+		return;
+	for (int i = 0; i < ndev; i++) {
+		struct repdev* dev = devices[i];
+		struct vm_get_arg arg = {.rb = NULL };
+
+		struct get_queue_arg qarg = {.dev = dev, .head = NULL, .term = 0 };
+		pthread_mutex_init(&qarg.lock, NULL);
+		pthread_cond_init(&qarg.cond, NULL);
+		pthread_t thr[NTHR];
+		for (size_t i = 0; i < NTHR; i++)
+			pthread_create(thr + i, NULL, get_thr, &qarg);
+
+		reptrans_iterate_blobs(dev, TT_CHUNK_PAYLOAD, get_queue_append, &qarg, 0);
+		while (qarg.head != NULL)
+			usleep(100000);
+		pthread_mutex_lock(&qarg.lock);
+		qarg.term = 1;
+		pthread_cond_broadcast(&qarg.cond);
+		pthread_mutex_unlock(&qarg.lock);
+
+		for (size_t i = 0; i < NTHR; i++)
+			pthread_join(thr[i], NULL);
+		pthread_mutex_destroy(&qarg.lock);
+		pthread_cond_destroy(&qarg.cond);
+	}
+}
 int
 main(int argc, char *argv[])
 {
@@ -1905,7 +2019,9 @@ main(int argc, char *argv[])
 
 
 	const UnitTest tests[] = {
-#if 0
+#if 1
+		unit_test(iterate_get_perf_test),
+		unit_test(reptrans_teardown),
 		unit_test(put_perf_test),
 		unit_test(reptrans_teardown),
 #endif

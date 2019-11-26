@@ -246,6 +246,7 @@ simple_get_file(void **state)
 
 
 		printf("read offset %lu\n", pos*chunk_size);
+		uint64_t ts = get_timestamp_us();
 		err = ccow_get_cont(c, iov + pos, iolen, pos*chunk_size, 1, &cnt);
 		
 		if (!err)
@@ -254,7 +255,9 @@ simple_get_file(void **state)
 		if (err != 0) {
 			printf("ERROR: ccow_wait returned err = %d \n", err);
 			break;
-              	}
+		} else
+			printf("offset %lX, perf %.3f MB/s\n", pos*chunk_size,
+				(double)(iolen*chunk_size)/(get_timestamp_us() - ts));
 		pos += iolen;
 	}
 	ccow_finalize(c, NULL);
