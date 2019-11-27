@@ -287,7 +287,7 @@ slg_state__send(struct state *st)
 
 	struct repmsg_server_list_get msg;
 	memset(&msg, 0, sizeof (msg));
-	msg.maximum_immediate_content_size = REPLICAST_DGRAM_MAXLEN;
+	msg.maximum_immediate_content_size = replicast_payload_size_max(netobj->robj[0]);
 	msg.maximum_number_of_delegated_gets = REPLICAST_GETS_MAX;
 	msg.reception_window = 0; // FIXME
 	msg.parent_serverid = r->serverid;

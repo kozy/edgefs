@@ -79,6 +79,7 @@ ccow_network_parse_config(struct ccow *tc, struct ccow_network *netobj)
 	int server_port = CCOW_NETWORK_PORT;
 	int broker_port = CCOW_BROKER_PORT;
 	int mc_ttl = CCOW_NETWORK_MC_TTL;
+	int noipfrag = CCOW_NETWORK_NOIPFRAG;
 
 	size_t j;
 	for (j = 0; j < network->u.object.length; j++) {
@@ -160,6 +161,14 @@ ccow_network_parse_config(struct ccow *tc, struct ccow_network *netobj)
 				return -EINVAL;
 			}
 			mc_ttl = v->u.integer;
+		} else if (strncmp(namekey, "no_ipfrag", 9) == 0) {
+			if (v->type != json_integer) {
+				log_error(lg,
+					"Syntax error: no_ipfrag is not an integer"
+					": -EINVAL");
+				return -EINVAL;
+			}
+			noipfrag = !!v->u.integer;
 		}
 	}
 
@@ -343,6 +352,7 @@ ccow_network_parse_config(struct ccow *tc, struct ccow_network *netobj)
 	netobj->mc_ttl = mc_ttl;
 	if (unix_socket)
 		netobj->unix_socket_addr = je_strdup(unix_socket);
+	netobj->noipfrag = noipfrag;
 
 	return 0;
 }
@@ -374,7 +384,8 @@ ccow_network_init(struct ccow *tc)
 	    netobj->broker_port, netobj->unix_socket_addr,
 	    netobj->broker_ip4addr ? netobj->broker_ip4addr : netobj->broker_ip6addr[0],
 	    netobj->broker_ip4addr ? netobj->broker_ip4addr : "::", CCOW_TRCV_MCBASE_PORT,
-	    netobj->mc_ttl, tc);
+	    netobj->mc_ttl, netobj->noipfrag ? REPLICAST_FLAG_NOIPFRAG : 0,
+	    tc);
 	if (!netobj->robj[0]) {
 		ccow_gunlock();
 		je_free(netobj->server_ip6addr);

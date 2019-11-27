@@ -206,7 +206,7 @@ struct mcjoin_queue_entry {
 #define COMPOUND_HDR_RESERVED	1024
 #define COMPOUND_HDR_SIZE	128
 #define COMPOUND_MAX_CHUNKS	5*1024
-#define COMPOUND_SIZE_MAX	(REPLICAST_CHUNK_SIZE_MAX-COMPOUND_HDR_SIZE) /* TODO: figure out why 8Mb+65536 bytes doesn't work */
+#define COMPOUND_SIZE_MAX(robj)	(replicast_chunk_size_max((robj))-COMPOUND_HDR_SIZE)
 
 
 struct repdev_bg_config {

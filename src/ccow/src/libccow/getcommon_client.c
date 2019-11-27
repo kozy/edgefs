@@ -1442,6 +1442,7 @@ client_getcommon_send_accept_rt(struct state *st)
 	struct ccow *tc = r->tc;
 	struct ccow_network *netobj = tc->netobj;
 	int err = 0;
+	int chunk_size = replicast_fragment_size(netobj->robj[0]);
 
 	log_trace(lg, "st %p seqid %d.%d inexec: %d", st,
 	    ctx->sequence_cnt, ctx->sub_sequence_cnt, r->inexec);
@@ -1516,8 +1517,8 @@ client_getcommon_send_accept_rt(struct state *st)
 	}
 	// based on the content length we figure out how many datagrams
 	// we are supposed to receive
-	r->nbufs = (r->content_length/BUF_CHUNK_SIZE);
-	r->nbufs += ((r->content_length % BUF_CHUNK_SIZE) > 0) ? 1 : 0;
+	r->nbufs = (r->content_length/chunk_size);
+	r->nbufs += ((r->content_length % chunk_size) > 0) ? 1 : 0;
 
 	r->rt_req_start = get_timestamp_us() + (avg_rtt >> 1);
 

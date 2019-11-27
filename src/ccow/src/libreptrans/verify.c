@@ -1170,7 +1170,6 @@ reptrans_verify_batch_all_filter(void *arg, void **data, size_t *size, int set)
 #define MAX_BATCH_SIZE 100000
 #define MAX_BATCH_LIMIT_SSD 1000
 #define MAX_BATCH_LIMIT_HDD 200
-#define MAX_PACKET_SIZE (48 * 1024 - 40)
 #define MAX_VERQ_LIMIT 10000
 
 int
@@ -1190,6 +1189,7 @@ reptrans_verify_queue(verify_work_t *work)
 	if (err && (err == -ENODEV || err == -EACCES)) {
 		return 0;
 	}
+	size_t max_tr_size = replicast_fragment_size(dev->robj) - 40;
 
 	work->bytes_sent = 0;
 	verify_state_t* vs = work->job->state;
@@ -1288,8 +1288,7 @@ reptrans_verify_queue(verify_work_t *work)
 				 */
 				continue;
 			}
-			if ((msgpack_get_len(p) + rtbuf(rb, j).len) <=
-				MAX_PACKET_SIZE) {
+			if ((msgpack_get_len(p) + rtbuf(rb, j).len) <= max_tr_size) {
 				err = msgpack_put_buffer(p, &rb->bufs[j]);
 				assert(!err);
 				log_debug(lg, "Dev(%s) VBR %lX -> %lX added to batch row %u cts %lu",

@@ -91,6 +91,7 @@ type CcowNetwork struct {
 	BrokerIP4addr    string `json:"broker_ip4addr,omitempty"`
 	ServerIP4addr    string `json:"server_ip4addr,omitempty"`
 	ServerPort       int    `json:"server_port,omitempty"`
+	NoIP4Frag        int    `json:"no_ipfrag,omitempty"`
 }
 
 type CcowConf struct {
@@ -104,6 +105,7 @@ type CcowdNetwork struct {
 	ServerUnixSocket string `json:"server_unix_socket"`
 	ServerIP4addr    string `json:"server_ip4addr,omitempty"`
 	ServerPort       int    `json:"server_port,omitempty"`
+	NoIP4Frag        int    `json:"no_ipfrag,omitempty"`
 }
 
 type CcowdBgConfig struct {

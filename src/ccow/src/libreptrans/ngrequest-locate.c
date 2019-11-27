@@ -29,7 +29,8 @@
 #include "erasure-coding.h"
 #include "state.h"
 
-#define REQ_BATCH_SIZE	650
+
+#define REQ_BATCH_SIZE(dev) (replicast_fragment_size(dev->robj)/100)
 
 extern struct ccowd *ccow_daemon;
 
@@ -236,7 +237,7 @@ ngrequest__ack(struct state *st)
 			r->n_acks = 0;
 			r->retry = 0;
 			r->from = r->to;
-			r->to += REQ_BATCH_SIZE;
+			r->to += REQ_BATCH_SIZE(r->dev);
 			if (r->to > r->chunk_info->nbufs)
 				r->to = r->chunk_info->nbufs;
 			r->seq_num++;
@@ -581,7 +582,7 @@ ngrequest_locate__async (struct repdev_call *c) {
 		pinfo->n_vdevs = 0;
 	}
 	r->from = 0;
-	r->to = r->chunk_info->nbufs > REQ_BATCH_SIZE ? REQ_BATCH_SIZE :r->chunk_info->nbufs;
+	r->to = r->chunk_info->nbufs > REQ_BATCH_SIZE(r->dev) ? REQ_BATCH_SIZE(r->dev) :r->chunk_info->nbufs;
 
 	r->state.table = trans_tbl;
 	r->state.cur = ST_INIT;

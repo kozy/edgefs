@@ -1114,6 +1114,7 @@ struct putcommon_client_req {
 	uint8_t tcp_connected_count;
 	int rt_retry;
 	int rtselected;
+	uint64_t rtselected_ts;
 	int rcvd_count;
 	uint64_t rcvd_max_delta;
 	uint64_t rt_delta_timeout;

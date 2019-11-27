@@ -189,6 +189,7 @@ ccow_get_cont_helper(struct ccow_completion *c, struct iovec *iov,
 
 	struct ccow_op *op = c->init_op;
 	struct ccow *tc = c->tc;
+	size_t chunk_size_max = replicast_chunk_size_max(tc->netobj->robj[0]);
 	int is_btree_map = memcmp_quick(op->metadata.chunkmap_type, strlen(op->metadata.chunkmap_type),
 	    RT_SYSVAL_CHUNKMAP_BTREE, strlen(RT_SYSVAL_CHUNKMAP_BTREE)) == 0;
 
@@ -203,7 +204,7 @@ ccow_get_cont_helper(struct ccow_completion *c, struct iovec *iov,
 			log_error(lg, "Chunk idx=%ld buffer length %lu isn't chunk size %u aligned (ignored)",
 			    i, iov[i].iov_len, op->metadata.chunkmap_chunk_size);
 		}
-		if (iov[i].iov_len > REPLICAST_CHUNK_SIZE_MAX) {
+		if (iov[i].iov_len > chunk_size_max) {
 			log_error(lg, "Chunk size %lu too big, idx=%ld",
 			    iov[i].iov_len, i);
 			return -E2BIG;

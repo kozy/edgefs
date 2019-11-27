@@ -43,15 +43,13 @@ extern "C" {
 #include "uthash.h"
 
 #define UDP_HDR_ROOM (48 + 26)
-#define REPLICAST_DGRAM_MAXLEN		(uint16_t)(IP_MAXPACKET - UDP_HDR_ROOM)
-
 #define REPLICAST_GETS_MAX		1024
 #define REPLICAST_STR_MAXLEN		1024
 #define REPLICAST_OBJPATH_MAXLEN	(REPLICAST_STR_MAXLEN*4 + 1)
 #define REPLICAST_CHUNKMAP_MAXLEN	64
 #define REPLICAST_CHUNK_SIZE_MIN	256
-#define REPLICAST_CHUNK_SIZE_MAX	(8 * 1024 * 1024)
-#define REPLICAST_DGRAM_MAX		(int)(1 + (REPLICAST_CHUNK_SIZE_MAX / 65536))
+#define REPLICAST_CHUNK_SIZE_MAX	(8 * 1024 * 1024) /* For data allocation only */
+#define REPLICAST_DGRAM_MAX		256
 #define REPLICAST_REPLICATION_COUNT_MIN	1
 #define REPLICAST_REPLICATION_COUNT_MAX	8 /* minimal number of design. vdevs */
 #define REPLICAST_SYNC_PUT_MAX		4
@@ -59,6 +57,8 @@ extern "C" {
 #define REPLICAST_PROPOSALS_MAX		64
 #define REPLICAST_SRV_INTERFACES_MAX	16
 #define REPLICAST_DEVROW_MAX		64
+
+#define REPLICAST_FLAG_NOIPFRAG		(1<<0)
 
 /* reserved system object and metadata key names */
 #define REPLICAST_SYSKEY_MAXLEN		64
@@ -404,7 +404,13 @@ struct replicast_datagram_hdr {
 	uv_pipe_t *peer_sock;		/* For unix - socket, to store socket from which data has been received */
 };
 
-#define REPLICAST_PROTOCOL_VERSION	0x0001
+/**
+ * v.2: changed pack format of
+ *  - replicast_pack_datagram_hdr()
+ *  - replicast_pack_generic()
+ *  due to a problem with multi-frame messages (was limited to 127)
+ */
+#define REPLICAST_PROTOCOL_VERSION	0x0002
 
 #define REPLICAST_UNICAST_UDP		1
 #define REPLICAST_UNICAST_TCP		2
@@ -455,8 +461,6 @@ int replicast_unpack_generic(msgpack_u *u, struct repmsg_generic *msg);
 
 #define MAX_DGRAM_RETRY	3	/* max num of retries on a single udp send */
 #define HDR_GEN_SIZE	(int)(sizeof (struct repmsg))
-#define BUF_CHUNK_SIZE	(int)(REPLICAST_DGRAM_MAXLEN - HDR_GEN_SIZE)
-#define MAX_DGRAM_COUNT 256	/* 256 * 64K = 16MB is the max you can txfr */
 
 struct repmsg_ngrequest {
 	uint16_t fhrow;
@@ -1486,6 +1490,8 @@ struct replicast {
 	struct repvbuf rvbuf;
 	struct sockaddr_in server_addr;
 	int ipv4;
+	int if_mtu;
+	int flags; /* Replicast flags */
 	QUEUE rtsock_queue;
 };
 
@@ -1498,7 +1504,7 @@ typedef void (*replicast_send_free_cb)(void *data, int status, int ctx_valid);
 struct replicast *replicast_init(const char *name, uv_loop_t *loop,
     const char *listen_addr, const uint16_t listen_port, const char *listen_unixsock,
     const char *msg_origin_addr, const char *mc_addr,
-    const uint16_t mc_port, const int mc_ttl, void *data);
+    const uint16_t mc_port, const int mc_ttl, int flags, void *data);
 int replicast_destroy(struct replicast *robj);
 void replicast_finish_destroy(struct replicast *robj);
 int replicast_join(struct replicast *robj, const char *mcgrp,
@@ -1707,6 +1713,31 @@ replicast_ip4_decap(struct sockaddr_in6 *a6, struct sockaddr_in *a4)
 {
 	a4->sin_addr.s_addr = htonl(a6->sin6_addr.s6_addr32[3]);
 	a4->sin_family = AF_INET;
+}
+
+static inline size_t
+replicast_payload_size_max(struct replicast *robj) {
+	assert(robj);
+	size_t frame_size_max = IP_MAXPACKET;
+	if (robj->flags & REPLICAST_FLAG_NOIPFRAG) {
+		assert(robj->if_mtu);
+		frame_size_max = robj->if_mtu;
+	}
+	return frame_size_max - UDP_HDR_ROOM;
+}
+
+static inline size_t
+replicast_fragment_size(struct replicast *robj) {
+	return  replicast_payload_size_max(robj)- HDR_GEN_SIZE;
+}
+
+static inline size_t
+replicast_chunk_size_max(struct replicast *robj) {
+	/* Output value must be power of 2 */
+	unsigned int len = replicast_fragment_size(robj)*REPLICAST_DGRAM_MAX;
+	if (len > REPLICAST_CHUNK_SIZE_MAX)
+		len = REPLICAST_CHUNK_SIZE_MAX;
+	return 1UL << (sizeof(unsigned int)*8 - __builtin_clz(len) - 1);
 }
 
 int

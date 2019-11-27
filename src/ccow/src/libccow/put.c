@@ -121,6 +121,7 @@ int ccow_admin_pseudo_put_chunks(struct iovec *iov, size_t iovcnt,
 	struct ccow *tc = c->tc;
 	struct ccow_op *put_op;
 	struct ccow_io *up_io;
+	size_t chunk_size_max = replicast_chunk_size_max(tc->netobj->robj[0]);
 
 	if (memcmp_quick(tc->tid, tc->tid_size, RT_SYSVAL_TENANT_ADMIN,
 		    strlen(RT_SYSVAL_TENANT_ADMIN) + 1) != 0) {
@@ -138,7 +139,7 @@ int ccow_admin_pseudo_put_chunks(struct iovec *iov, size_t iovcnt,
        }
        /* do not support larger then currently configured chunks + tailroom */
        for (size_t i = 0; i < iovcnt; i++) {
-	       if (iov[i].iov_len > REPLICAST_CHUNK_SIZE_MAX + 32768) {
+	       if (iov[i].iov_len > chunk_size_max) {
 		       log_error(lg, "Chunk size %lu too big, idx=%ld",
 			   iov[i].iov_len, i);
 		       return -E2BIG;
@@ -1732,6 +1733,8 @@ ccow_put_type_cont(struct ccow_completion *c, struct iovec *iov,
 
 	struct ccow_op *op = c->init_op;
 	struct ccow *tc = c->tc;
+	size_t chunk_size_max = replicast_chunk_size_max(tc->netobj->robj[0]);
+
 	int is_btree_map = memcmp_quick(op->metadata.chunkmap_type, strlen(op->metadata.chunkmap_type),
 	    RT_SYSVAL_CHUNKMAP_BTREE, strlen(RT_SYSVAL_CHUNKMAP_BTREE)) == 0;
 
@@ -1747,13 +1750,13 @@ ccow_put_type_cont(struct ccow_completion *c, struct iovec *iov,
 			    i, iov[i].iov_len, op->metadata.chunkmap_chunk_size);
 		}
 		if (is_btree_map) {
-			if (iov[i].iov_len > REPLICAST_CHUNK_SIZE_MAX) {
+			if (iov[i].iov_len > chunk_size_max) {
 				log_error(lg, "Chunk size %lu too big, idx=%ld",
 					iov[i].iov_len, i);
 				return -E2BIG;
 			}
 		} else { // not btree_map
-			size_t max_size = (REPLICAST_CHUNK_SIZE_MAX/8)*7/op->metadata.chunkmap_btree_order;
+			size_t max_size = (chunk_size_max/8)*7/op->metadata.chunkmap_btree_order;
 			if (iov[i].iov_len > max_size) {
 				log_error(lg, "Chunk size %lu > %lu too big, idx=%ld",
 					iov[i].iov_len, max_size, i);

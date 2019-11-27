@@ -1453,6 +1453,11 @@ replicast_tcp_connect(struct replicast *robj, struct sockaddr_in6 *to_addr,
 	return 0;
 }
 
+static void
+replicast_override_uint16(const char* buf, size_t offset, uint16_t val) {
+	*((uint16_t*)(buf+offset)) = htons(val);
+}
+
 static int
 replicast_tcp_send(struct replicast *robj, struct repctx *ctx,
     enum replicast_opcode opcode, struct repmsg_generic *msg,
@@ -1556,8 +1561,9 @@ replicast_tcp_send(struct replicast *robj, struct repctx *ctx,
 	}
 
 	msgpack_get_buffer(p, &new_buf[1]);
-	*(new_buf[1].base + datagram_num_byte) = 1;
-	msg->num_datagrams = *(new_buf[1].base + num_datagrams_byte) = 1;
+	replicast_override_uint16(new_buf[1].base, datagram_num_byte, 1);
+	msg->num_datagrams = 1;
+	replicast_override_uint16(new_buf[1].base, num_datagrams_byte, 1);
 
 	tcp_header->tcp_magic = htonl(RT_TCP_MAGIC);
 	tcp_header->msg_len = htonl(new_buf[1].len);
@@ -1691,10 +1697,11 @@ replicast_udp_send(struct replicast *robj, struct repctx *ctx,
 
 	uv_buf_t hdr_buf;
 	msgpack_get_buffer(p, &hdr_buf);
-	*(hdr_buf.base + datagram_num_byte) = 1;
-	msg->num_datagrams = *(hdr_buf.base + num_datagrams_byte) = 1;
+	replicast_override_uint16(hdr_buf.base, datagram_num_byte, 1);
+	msg->num_datagrams = 1;
+	replicast_override_uint16(hdr_buf.base, num_datagrams_byte, 1);
 
-	if (hdr_buf.len >= REPLICAST_DGRAM_MAXLEN) {
+	if (hdr_buf.len >= replicast_payload_size_max(robj)) {
 		msgpack_pack_free(p);
 		log_error(lg, "Send(%s): Very large UDP packet header. "
 		    "Size = %lu", robj->name, hdr_buf.len);
@@ -1716,27 +1723,26 @@ replicast_udp_send(struct replicast *robj, struct repctx *ctx,
 
 	int datagram_count = 1;
 	if (buflen > 0) {
-
+		size_t buf_chunk_size = replicast_fragment_size(robj);
 		log_debug(lg, "Send(%s): %s buflen: %ld seqid %d.%d orig_id "
-		    " %d.%d BUF_CHUNK_SIZE max: %d",
+		    " %d.%d, transfer size max: %lu",
 		    robj->name, replicast_opcode_str[opcode], buflen,
 		    msg->hdr.transaction_id.sequence_num,
 		    msg->hdr.transaction_id.sub_sequence_num,
 		    msg->hdr.orig_id.sequence_num,
-		    msg->hdr.orig_id.sub_sequence_num, BUF_CHUNK_SIZE);
+		    msg->hdr.orig_id.sub_sequence_num, buf_chunk_size);
 
-		if (buflen > BUF_CHUNK_SIZE) {
-			msg->num_datagrams = buflen/BUF_CHUNK_SIZE;
+		if (buflen > buf_chunk_size) {
+			msg->num_datagrams = buflen/buf_chunk_size;
 			msg->num_datagrams +=
-				((buflen % BUF_CHUNK_SIZE) > 0) ? 1 : 0;
+				((buflen % buf_chunk_size) > 0) ? 1 : 0;
 		} else {
 			msg->num_datagrams = 1;
 		}
-		*(hdr_buf.base + num_datagrams_byte)
-			= (uint8_t)msg->num_datagrams;
-		if (msg->num_datagrams > MAX_DGRAM_COUNT) {
+		replicast_override_uint16(hdr_buf.base, num_datagrams_byte, msg->num_datagrams);
+		if (msg->num_datagrams > REPLICAST_DGRAM_MAX) {
 			log_error(lg, "num_datagrams %d > %d",
-			    msg->num_datagrams, MAX_DGRAM_COUNT);
+			    msg->num_datagrams, REPLICAST_DGRAM_MAX);
 			msgpack_pack_free(p);
 			je_free(sentcount);
 			return -EINVAL;
@@ -1755,11 +1761,11 @@ replicast_udp_send(struct replicast *robj, struct repctx *ctx,
 		char *baseptr = bufs[0].base;
 		i = 0;
 		while (rem > 0) {
-			remlen = (rem < BUF_CHUNK_SIZE) ? rem : BUF_CHUNK_SIZE;
+			remlen = (rem < buf_chunk_size) ? rem : buf_chunk_size;
 			rem -= remlen;
 			int skip_dgram = dgram_idx && uint256_bcheck(dgram_idx,
 				datagram_count - 1);
-			if (!skip_dgram && remlen <= BUF_CHUNK_SIZE) {
+			if (!skip_dgram && remlen <= buf_chunk_size) {
 
 				j = i + 1;
 				new_buf[j].base = baseptr;
@@ -1793,8 +1799,8 @@ replicast_udp_send(struct replicast *robj, struct repctx *ctx,
 				rsend->num_datagrams = msg->num_datagrams;
 				rsend->datagram_num = datagram_count;
 				rsend->sentcount = sentcount;
-				*(hdr_buf.base + datagram_num_byte)
-					= datagram_count;
+				replicast_override_uint16(hdr_buf.base,
+					datagram_num_byte, datagram_count);
 
 				new_buf[i].base = je_malloc(hdr_buf.len);
 				if (!new_buf[i].base) {
@@ -2416,14 +2422,6 @@ replicast_process_recv(struct replicast *robj, const uv_buf_t buf,
 
 	ctx = replicast_get_context(robj, opcode, attr, msg_id, orig_id, &wqe);
 
-	if (ctx) {
-		wqe->u = u;
-		wqe->msg = (struct repmsg_generic *)msg;
-		wqe->nread = nread;
-		if (tcp_handle)
-			ctx->tcp_handle = tcp_handle;
-	}
-
 	/*
 	 * Unpack the rest of the Replicast message
 	 */
@@ -2438,6 +2436,14 @@ replicast_process_recv(struct replicast *robj, const uv_buf_t buf,
 		if (ctx)
 			ctx->wqe_in->u = NULL;
 		return;
+	}
+
+	if (ctx) {
+		wqe->u = u;
+		wqe->msg = (struct repmsg_generic *)msg;
+		wqe->nread = nread;
+		if (tcp_handle)
+			ctx->tcp_handle = tcp_handle;
 	}
 
 	log_debug(lg, "Recv(%s): %s seqid %d.%d orig_id %d.%d txcookie %" PRIx64
@@ -3233,7 +3239,7 @@ struct replicast *
 replicast_init(const char *name, uv_loop_t *loop, const char *listen_addr,
     const uint16_t listen_port, const char *listen_unixsock,
     const char *msg_origin_addr, const char *mc_addr, const uint16_t mc_port,
-    const int mc_ttl, void *priv)
+    const int mc_ttl, int flags, void *priv)
 {
 	int err, retry;
 	struct replicast *robj;
@@ -3250,6 +3256,27 @@ replicast_init(const char *name, uv_loop_t *loop, const char *listen_addr,
 	strcpy(robj->name, name);
 	robj->sequence_cnt = 1;
 	robj->mc_ttl = mc_ttl;
+	if (robj->ipv4 && (flags & REPLICAST_FLAG_NOIPFRAG)) {
+		static char ifname[IFNAMSIZ];
+		uint32_t speed_mbits;
+		uint8_t duplex;
+		uint8_t link_status;
+		int mtu;
+
+		err = getifname(listen_addr, ifname);
+		if (err) {
+			log_error(lg, "Cannot establish ifname for IP %s", listen_addr);
+			return NULL;
+		}
+		err = ethtool_info(ifname, &speed_mbits, &duplex, &link_status,
+			&robj->if_mtu);
+		if (err) {
+			log_error(lg, "Error fetching info for iface %s", ifname);
+			return NULL;
+		}
+		log_info(lg, "UDP max. datagram size to iface's MTU (%d)", robj->if_mtu);
+	}
+	robj->flags = flags;
 
 	QUEUE_INIT(&robj->mcproxy_queue);
 	uv_mutex_init(&robj->mcproxy_mutex);
@@ -3743,12 +3770,11 @@ replicast_pack_datagram_hdr(msgpack_p *p, struct replicast_datagram_hdr *msg,
 	err = replicast_pack_transaction_id(p, &msg->orig_id);
 	if (err)
 		return err;
-	if (msg->datagram_num > 256)
-		return -EBADF;
-	err = msgpack_pack_uint16(p, msg->datagram_num);
+	uint16_t ndg = htons(msg->datagram_num);
+	err = msgpack_pack_append(p, &ndg, 2);
 	if (err)
 		return err;
-	*datagram_num_byte = msgpack_get_len(p) - 1;
+	*datagram_num_byte = msgpack_get_len(p) - 2;
 	err = msgpack_pack_uint64(p, msg->attributes);
 	if (err)
 		return err;
@@ -3773,9 +3799,17 @@ replicast_unpack_datagram_hdr(msgpack_u *u, struct replicast_datagram_hdr *msg)
 	err = replicast_unpack_transaction_id(u, &msg->orig_id);
 	if (err)
 		return err;
-	err = msgpack_unpack_uint16(u, &msg->datagram_num);
-	if (err)
-		return err;
+	if (msg->transaction_id.protocol_version == 1) {
+		err = msgpack_unpack_uint16(u, &msg->datagram_num);
+		if (err)
+			return err;
+	} else {
+		uint16_t ndg = 0;
+		err = msgpack_unpack_buf(u, &ndg, 2);
+		if (err)
+			return err;
+		msg->datagram_num = ntohs(ndg);
+	}
 	err = msgpack_unpack_uint64(u, &msg->attributes);
 	if (err)
 		return err;
@@ -3799,10 +3833,11 @@ replicast_pack_generic(msgpack_p *p, struct repmsg_generic *msg,
 	    (struct replicast_datagram_hdr *)msg, datagram_num_byte);
 	if (err)
 		return err;
-	err = msgpack_pack_uint16(p, msg->num_datagrams);
+	uint16_t ngds = htons(msg->num_datagrams);
+	err = msgpack_pack_append(p, &ngds, 2);
 	if (err)
 		return err;
-	*num_datagrams_byte = msgpack_get_len(p) - 1;
+	*num_datagrams_byte = msgpack_get_len(p) - 2;
 
 	return err;
 }
@@ -3816,7 +3851,15 @@ replicast_unpack_generic(msgpack_u *u, struct repmsg_generic *msg)
 	    (struct replicast_datagram_hdr *)msg);
 	if (err)
 		return err;
-	err = msgpack_unpack_uint16(u, &msg->num_datagrams);
+	if (msg->hdr.transaction_id.protocol_version == 1)
+		err = msgpack_unpack_uint16(u, &msg->num_datagrams);
+	else {
+		uint16_t ndg = 0;
+		err = msgpack_unpack_buf(u, &ndg, 2);
+		if (err)
+			return err;
+		msg->num_datagrams = ntohs(ndg);
+	}
 	return err;
 }
 

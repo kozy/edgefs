@@ -258,7 +258,7 @@ gwcachedget_fetch_chid_exec(void *arg)
 	atomic_dec(&gw_cache_throttle);
 
 	/* Allocate chunk for uncompress */
-	op->chunks = rtbuf_init_alloc_one(REPLICAST_DGRAM_MAXLEN);
+	op->chunks = rtbuf_init_alloc_one(replicast_payload_size_max(dev->robj));
 	memset(op->chunks->bufs[0].base, 0, op->chunks->bufs[0].len);
 	if (!op->chunks) {
 		log_error(lg, "GW-cache(%s): failed to allocate chunk", dev->name);
