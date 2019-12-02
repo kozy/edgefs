@@ -7339,6 +7339,11 @@ reptrans_term_thread(void *arg) {
 		ccow_vmmcache_free(dev->vmm_ht);
 	if (dev->tchqs)
 		je_free(dev->tchqs);
+	if (dev->tchq_free)
+		lfqueue_destroy(dev->tchq_free);
+	if (dev->tchq_inprog)
+		lfqueue_destroy(dev->tchq_inprog);
+
 	HASH_ITER(hh, dev->ttable, t, tmp) {
 		HASH_DEL(dev->ttable, t);
 		je_free(t);

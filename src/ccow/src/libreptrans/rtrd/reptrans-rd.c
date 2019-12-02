@@ -10383,6 +10383,9 @@ rd_check_and_create_partitions(struct reptrans *rt, json_value *json_dev,
 	if (parts_created)
 		/* data-container work-around (this will succeed in container only) */
 		err = system("mount -t devtmpfs /dev /dev >/dev/null 2>/dev/null");
+	for (size_t i = 0; i < rdisks->n_disks; i++)
+		if (created_main_parts[i])
+			je_free(created_main_parts[i]);
 	je_free(created_main_parts);
 	return 0;
 }

@@ -235,6 +235,8 @@ build_isgw_service_table(ccow_t cl, struct isgw_service_entry** ptable) {
 	}
 	err = ccow_wait(c, -1);
 	if (err) {
+		if (iter)
+			ccow_lookup_release(iter);
 		log_warn(lg, "Error while reading system object: %d, ", err);
 		return err;
 	}
