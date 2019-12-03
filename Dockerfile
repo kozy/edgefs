@@ -4,12 +4,12 @@
 ############################################################
 
 # Set the base image to Ubuntu to produce amd64 binary
-FROM ubuntu:16.04 as builder
+FROM ubuntu:18.04 as builder
 
 ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update &&\
-    apt-get install -y software-properties-common python-software-properties &&\
+    apt-get install -y software-properties-common &&\
     add-apt-repository ppa:git-core/ppa &&\
     apt-get update &&\
     apt-get install -y -qq --no-install-recommends git make
@@ -27,13 +27,13 @@ RUN rm -f /opt/nedge/lib/libh2o-evloop.a /opt/nedge/lib/libbacktrace.a
 RUN cp -ar /opt/nedge/etc /opt/nedge/etc.default
 
 
-FROM ubuntu:16.04
+FROM ubuntu:18.04
 MAINTAINER EdgeFS
 LABEL description="EdgeFS Multi-Cloud Distributed Storage System"
 
 RUN apt-get update -y && \
     apt-get install libssl1.0.0 iputils-ping iproute2 libnss3 libsnmp30 udev \
-        bsdmainutils libcgroup1 libcurl3 nvi curl gdisk bcache-tools parted \
+        bsdmainutils libcgroup1 libcurl4 nvi curl gdisk bcache-tools parted \
 	openssl netbase rpcbind gdb libaio1 libnuma1 nvme-cli \
         -y --no-install-recommends && \
     \
