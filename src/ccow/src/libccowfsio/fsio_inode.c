@@ -1914,11 +1914,11 @@ out:
 }
 
 static int
-ccowfs_inode_expire_check(ccowfs_inode *inode, uint512_t *vmchid)
+ccowfs_inode_expire_check(ccowfs_inode *inode, uint512_t *vmchid, uint64_t timeout, uint64_t s3_timeout)
 {
 	if (INODE_IS_S3OBJ(inode->ino)) {
 		if (vmchid && (uint512_cmp(vmchid, &inode->vmchid) == 0)) {
-			inode->expire_us = get_timestamp_us() + INODE_S3_EXPIRE_TIMEOUT_US;
+			inode->expire_us = get_timestamp_us() + s3_timeout;
 			return 0;
 		}
 	}
@@ -1927,7 +1927,7 @@ ccowfs_inode_expire_check(ccowfs_inode *inode, uint512_t *vmchid)
 	int expired = inode->expire_us < newts;
 	if (expired) {
 		inode->expire_us = newts +
-			(INODE_IS_S3OBJ(inode->ino) ? INODE_S3_EXPIRE_TIMEOUT_US :  INODE_EXPIRE_TIMEOUT_US);
+			(INODE_IS_S3OBJ(inode->ino) ? s3_timeout :  timeout);
 
 		/* additionally for files, verify genid */
 		if (INODE_IS_FILE(inode->ino)) {
@@ -2013,14 +2013,34 @@ get_inode:
 			/*
 			 * This inode needs to be invalidated. Remove, and re-fetch.
 			 */
-			if (atomic_get_uint64(&inode->refcount) == 1 &&
-			    !inode->dirty && ccowfs_inode_expire_check(inode, vmchid)) {
+			if (atomic_get_uint64(&inode->refcount) == 1  &&
+				atomic_get_uint64(&inode->runcount) == 0  &&
+			    !inode->dirty &&
+				ccowfs_inode_expire_check(inode, vmchid, INODE_EXPIRE_TIMEOUT_US, INODE_S3_EXPIRE_TIMEOUT_US)) {
 				__remove_inode_from_hash_table_locked(inode);
 				__inode_free(inode);
 				inode = NULL;
 				pthread_rwlock_unlock(&(ci->inode_cache.
 					hash_table_rwlock));
 				break;
+			}
+
+			/*
+			 * Multihead/multicluster case. This inode needs to be invalidated after 15s. Remove, and re-fetch.
+			 * The runcount is extra protection for case when the cluster is strugling and
+			 * it could take more then 15 seconds for operation to complete.
+			 */
+			if (ccow_mh_immdir && INODE_IS_FILE(inode->ino) &&
+				atomic_get_uint64(&inode->refcount) >= 1 &&
+				atomic_get_uint64(&inode->runcount) == 0  &&
+				!inode->dirty &&
+				ccowfs_inode_expire_check(inode, vmchid, 3*INODE_EXPIRE_TIMEOUT_US, INODE_S3_EXPIRE_TIMEOUT_US)) {
+					__remove_inode_from_hash_table_locked(inode);
+					__inode_free(inode);
+					inode = NULL;
+					pthread_rwlock_unlock(&(ci->inode_cache.
+						hash_table_rwlock));
+					break;
 			}
 
 			/*
