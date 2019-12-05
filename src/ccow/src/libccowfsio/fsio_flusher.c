@@ -153,7 +153,7 @@ __get_locked_inode_to_flush(ci_t * ci, int mem_pressure)
 				continue;
 
 			/*
-			 * We got the lock on inode. 
+			 * We got the lock on inode.
 			 */
 
 			if (mem_pressure
@@ -291,9 +291,11 @@ ccowfs_inode_flusher(ci_t * ci, int mem_pressure, int max_count)
 				flushed++;
 			}
 			/*
-			 * Put the dirty queue ref.
+			 * Put the dirty queue ref and decriment runcount
 			 */
+			atomic_dec64(&q_inode->runcount);
 			ccowfs_inode_put(q_inode);
+
 		} else	/*No more inodes in the queue which can be flushed */
 			break;
 	}
@@ -333,8 +335,10 @@ ccowfs_inode_mark_dirty(ccowfs_inode * inode)
 
 		/*
 		 * Get additional ref on the inode for the dirty queue.
+		 * Incriment runcount to protect the inode from invalidation.
 		 */
 		ccowfs_inode_get(inode);
+		atomic_inc64(&inode->runcount);
 		log_debug(fsio_lg, "Queue is empty");
 		goto out;
 	}
@@ -366,8 +370,9 @@ ccowfs_inode_mark_clean(ccowfs_inode * inode)
 		QUEUE_INIT(&inode->dirty_q);
 
 		/*
-		 * Put the dirty queue ref.
+		 * Put the dirty queue ref and decriment the runcount.
 		 */
+		atomic_dec64(&inode->runcount);
 		ccowfs_inode_put(inode);
 	}
 
@@ -410,4 +415,3 @@ fsio_flusher_term(ci_t * ci)
 	log_debug(fsio_lg, "completed Bucket: %s", ci->bid);
 	return 0;
 }
-

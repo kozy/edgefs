@@ -196,6 +196,7 @@ typedef struct __ccowfs_inode__
 	 */
 
 	unsigned long refcount;
+	unsigned long runcount;
 	struct stat stat;
 	int dirty;
 	uint64_t genid;

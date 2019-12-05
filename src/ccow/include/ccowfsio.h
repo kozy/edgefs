@@ -105,13 +105,15 @@ typedef enum __ccow_fsio_inode_type
 
 typedef struct fsio_super ci_t;
 
+typedef uint64_t inode_t;
+
 /* [TODO] We may not need ccow_fsio_file_t. Just map it to inode */
 typedef struct
 {
 	void *inode;
+	ci_t *ci;
+	inode_t ino;
 } ccow_fsio_file_t;
-
-typedef uint64_t inode_t;
 
 typedef struct
 {
