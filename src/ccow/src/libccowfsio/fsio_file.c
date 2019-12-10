@@ -58,6 +58,9 @@ ccow_fsio_openi(ci_t *ci, inode_t ino, ccow_fsio_file_t **file, int openflags)
 		goto out;
 	}
 
+	f->ino = ino;
+	f->ci = ci;
+
 	/* Take a ref on the inode. This must be relesed when we close the file. */
 	err = ccowfs_inode_get_by_ino(ci, ino, &inode);
 	if (err) {
@@ -122,6 +125,38 @@ ccow_fsio_open(ci_t * ci, char *path, ccow_fsio_file_t **file, int openflags)
 	return err;
 }
 
+/*
+* Get inode from chache or disk, incriment refcount and runcount
+*/
+static int
+get_file_inode(ccow_fsio_file_t *file) {
+	ccowfs_inode *inode = NULL;
+	if (file == NULL) {
+		log_error(fsio_lg, "Wrong argument");
+		return EINVAL;
+	}
+	int err = ccowfs_inode_get_by_ino(file->ci, file->ino, &inode);
+	if (err) {
+		log_softerror(fsio_lg, err,
+		    "ccowfs_inode_get_by_ino fail");
+		return err;
+	}
+	atomic_inc64(&inode->runcount);
+	file->inode = inode;
+	return 0;
+}
+
+/*
+* Put inode: decriment refcount and runcount
+*/
+static int
+put_file_inode(ccowfs_inode *inode) {
+	ccowfs_inode_put(inode);
+	atomic_dec64(&inode->runcount);
+	return 0;
+}
+
+
 int
 ccow_fsio_close(ccow_fsio_file_t *file)
 {
@@ -132,9 +167,10 @@ ccow_fsio_close(ccow_fsio_file_t *file)
 
 	log_trace(fsio_lg, "file: %p", file);
 
-	if (file == NULL) {
-		err = EINVAL;
-		log_error(fsio_lg, "Wrong argument");
+	DEBUG_START_CALL(ci, CLOSE);
+
+	err = get_file_inode(file);
+	if (err) {
 		goto out;
 	}
 
@@ -142,16 +178,13 @@ ccow_fsio_close(ccow_fsio_file_t *file)
 	ci = file_inode->ci;
 	ino = file_inode->ino;
 
-	DEBUG_START_CALL(ci, CLOSE);
-
 	err = ccowfs_inode_sync(file_inode, 0);
 	if (err) {
 		log_error(fsio_lg,  "ccowfs_inode_sync return %d", err);
-		goto out;
 	}
 
 	/* Put the inode ref taken during open */
-	ccowfs_inode_put(file_inode);
+	put_file_inode(file_inode);
 
 	if (file)
 		je_free(file);
@@ -170,6 +203,7 @@ out:
 	return (err);
 }
 
+
 int
 ccow_fsio_read(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
     void *buffer, size_t *read_amount, int *eof)
@@ -185,9 +219,9 @@ ccow_fsio_read(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
 	*read_amount = 0;
 	*eof = 0;
 
-	if (file == NULL) {
-		log_error(fsio_lg, "Wrong argument");
-		return EINVAL;
+	err = get_file_inode(file);
+	if (err) {
+		return err;
 	}
 	file_inode = (ccowfs_inode *)file->inode;
 
@@ -205,10 +239,10 @@ ccow_fsio_read(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
 
 	ccowfs_inode_lock(file_inode);
 	ccowfs_inode_update_atime_locked(file_inode);
-	ccowfs_inode_mark_dirty(file_inode);
 	ccowfs_inode_unlock(file_inode);
 
 out:
+	put_file_inode(file_inode);
 	log_debug(fsio_lg, "completed file: %p, offset: %lu, buffer_size: %lu, "
 	    "buffer: %p, read_amount: %lu, eof: %d", file, offset, buffer_size,
 	    buffer, *read_amount, *eof);
@@ -229,10 +263,9 @@ ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
 
 	*write_amount = 0;
 
-	if (file == NULL) {
-		log_error(fsio_lg, "Wrong argument");
-		err = EINVAL;
-		goto out;
+	err = get_file_inode(file);
+	if (err) {
+		return err;
 	}
 	file_inode = (ccowfs_inode *) file->inode;
 
@@ -257,7 +290,8 @@ ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
 	ccowfs_inode_unlock(file_inode);
 
 out:
-    log_debug(fsio_lg, "completed file: %p, offset: %lu, buffer_size: %lu, "
+	put_file_inode(file_inode);
+	log_debug(fsio_lg, "completed file: %p, offset: %lu, buffer_size: %lu, "
         "buffer: %p, write_amount: %lu", file, offset, buffer_size, buffer,
         *write_amount);
 
@@ -269,11 +303,16 @@ ccow_fsio_get_size(ccow_fsio_file_t * file, size_t * size)
 {
 	ccowfs_inode *file_inode;
 
+	int err = get_file_inode(file);
+	if (err) {
+		return err;
+	}
 	log_trace(fsio_lg, "file: %p, size: %p", file, size);
 
 	file_inode = (ccowfs_inode *) file->inode;
 	ccowfs_inode_get_size(file_inode, size);
 
+	put_file_inode(file_inode);
 	log_debug(fsio_lg, "completed file: %p, size: %p", file,
 	    size);
 
@@ -284,14 +323,19 @@ int
 ccow_fsio_flush(ccow_fsio_file_t * file)
 {
 	ccowfs_inode *file_inode;
-	int err;
+
+	int err = get_file_inode(file);
+	if (err) {
+		return err;
+	}
 
 	log_trace(fsio_lg, "file: %p", file);
 
 	file_inode = (ccowfs_inode *) file->inode;
 	err = ccowfs_inode_sync(file_inode, 1);
 
-	log_debug(fsio_lg, "completed file: %p", file);
+	put_file_inode(file_inode);
+	log_debug(fsio_lg, "completed file: %p ino: %lu", file, file_inode->ino);
 
 	return err;
 }
