@@ -753,7 +753,6 @@ ccow_fsio_readdir_cb4(ci_t * ci, inode_t parent_ino,
 
 				if (rc != 0) {
 					log_debug(fsio_lg, "calling cb: rc = %d", rc);
-					eof = 0;
 					break;
 				}
 			}
