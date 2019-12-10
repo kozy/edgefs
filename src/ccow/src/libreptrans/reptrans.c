@@ -2793,12 +2793,13 @@ reptrans_replicate_chunk(struct repdev *dev, type_tag_t ttag,
 	uint64_t flags = COMPOUND_FLAG_PRIMARY_PUT;
 	uint64_t chunk_count = 0;
 	rtbuf_t* rb = NULL;
-	uv_buf_t buf = { .len = COMPOUND_SIZE_MAX };
 	char chidstr[UINT512_BYTES * 2 + 1];
 	uint512_dump(chid, chidstr, UINT512_BYTES * 2 + 1);
 	struct vdev_sel sel = {.len = 0};
 	rtbuf_t* vbr_rb = NULL;
 	struct vmmetadata md;
+	size_t chunk_size_max = COMPOUND_SIZE_MAX(dev->robj);
+	uv_buf_t buf = { .len = chunk_size_max };
 
 
 	/* Allocate here a space to keep the last VBR in */
@@ -2921,7 +2922,7 @@ reptrans_replicate_chunk(struct repdev *dev, type_tag_t ttag,
 		goto _out;
 	}
 	chunk_count++;
-	if (err >= COMPOUND_SIZE_MAX) {
+	if (err >= (int)chunk_size_max) {
 		log_error(lg, "Dev(%s) the main chunk is too big (%lu bytes) for replication",
 			dev->name, rb->bufs->len);
 		err = -EINVAL;
@@ -2937,9 +2938,9 @@ reptrans_replicate_chunk(struct repdev *dev, type_tag_t ttag,
 			goto _out;
 		if (!err) {
 			/* Primary compound has to fit main chunk + parity + at least 1 VBR */
-			if (msgpack_get_len(&p) + rb->bufs->len + 256 >= COMPOUND_SIZE_MAX) {
+			if (msgpack_get_len(&p) + rb->bufs->len + 256 >= chunk_size_max) {
 				log_error(lg, "Dev(%s) primary compound size exceeded the limit: %lu vs %lu\n",
-					dev->name, msgpack_get_len(&p) + rb->bufs->len + 256, (size_t)COMPOUND_SIZE_MAX);
+					dev->name, msgpack_get_len(&p) + rb->bufs->len + 256, (size_t)chunk_size_max);
 				err = -EINVAL;
 				goto _out;
 			}
@@ -2998,7 +2999,7 @@ reptrans_replicate_chunk(struct repdev *dev, type_tag_t ttag,
 			}
 			n_vbrs++;
 			chunk_count++;
-			if (msgpack_get_len(&p) > COMPOUND_SIZE_MAX || chunk_count > COMPOUND_MAX_CHUNKS) {
+			if (msgpack_get_len(&p) > chunk_size_max || chunk_count > COMPOUND_MAX_CHUNKS) {
 				err = compound_send_one(dev, attr, rep_count, flags, chid,
 					hash_type, chunk_count, &p, group, &sel);
 				if (err) {
@@ -5953,7 +5954,9 @@ reptrans_create_cache_loop(struct repdev *dev, uint16_t base_port_offset)
 	uv_mutex_lock(&rt->tc_mutex);
 	dev->robj = replicast_init(dev->name, dev->loop,
 	    listen_addr, dev->listen_port, NULL, msg_origin_addr, cache_mc_addr,
-	    CCOWD_GW_CACHE_PORT, ccow_daemon->mc_ttl, dev);
+	    CCOWD_GW_CACHE_PORT, ccow_daemon->mc_ttl,
+	    ccow_daemon->noipfrag ? REPLICAST_FLAG_NOIPFRAG : 0,
+	    dev);
 	if (!dev->robj) {
 		uv_mutex_unlock(&rt->tc_mutex);
 		log_error(lg, "Cannot start device thread for %s",
@@ -6120,7 +6123,9 @@ reptrans_create_device_loop(struct repdev *dev, uint16_t base_port_offset)
 		uv_mutex_lock(&rt->tc_mutex);
 		dev->robj = replicast_init(dev->name, dev->loop,
 		    listen_addr, dev->listen_port, NULL, msg_origin_addr, listen_addr,
-		    ccow_daemon->mcbase_port, ccow_daemon->mc_ttl, dev);
+		    ccow_daemon->mcbase_port, ccow_daemon->mc_ttl,
+		    ccow_daemon->noipfrag ? REPLICAST_FLAG_NOIPFRAG : 0,
+		    dev);
 		if (!dev->robj) {
 			uv_mutex_unlock(&rt->tc_mutex);
 			log_error(lg, "Cannot start device thread for %s",
@@ -7334,6 +7339,11 @@ reptrans_term_thread(void *arg) {
 		ccow_vmmcache_free(dev->vmm_ht);
 	if (dev->tchqs)
 		je_free(dev->tchqs);
+	if (dev->tchq_free)
+		lfqueue_destroy(dev->tchq_free);
+	if (dev->tchq_inprog)
+		lfqueue_destroy(dev->tchq_inprog);
+
 	HASH_ITER(hh, dev->ttable, t, tmp) {
 		HASH_DEL(dev->ttable, t);
 		je_free(t);

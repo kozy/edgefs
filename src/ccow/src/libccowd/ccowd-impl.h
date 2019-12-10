@@ -58,6 +58,7 @@ extern "C" {
 #define CCOWD_CACHESZ_UMANIFEST 4*1024
 #define CCOWD_CACHESZ_UDATA	CCOWD_CACHESZ_UMANIFEST
 #define CCOWD_CACHE_POLICY_HRU	1
+#define CCOWD_NETWORK_NOIPFRAG	0	/* IP datagram fragmentation allowed (for UDP) */
 
 /*
  * libccow overrides for daemon's internal BG jobs
@@ -190,6 +191,7 @@ struct ccowd {
 	uint16_t zone;
 	int mc_ttl;
 	uint16_t license_checked;
+	int noipfrag;
 
 	/* Transports */
 	int transport_count;

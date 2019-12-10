@@ -203,7 +203,7 @@ find_ipv6local(char *ifname, char *ip6addr)
 }
 
 int
-getifname(char *ipaddr, char *ifname)
+getifname(const char *ipaddr, char *ifname)
 {
 	struct ifaddrs *addrs, *iap;
 	struct sockaddr_in *sa;

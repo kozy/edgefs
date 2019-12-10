@@ -83,6 +83,7 @@ type CcowTenant struct {
 	SyncPut          int `json:"sync_put,omitempty"`
 	SyncPutNamed     int `json:"sync_put_named,omitempty"`
 	CommitWait       int `json:"sync_put_commit_wait"`
+	ChunkSize        int `json:"chunkmap_chunk_size,omitempty"`
 }
 
 type CcowNetwork struct {
@@ -91,6 +92,7 @@ type CcowNetwork struct {
 	BrokerIP4addr    string `json:"broker_ip4addr,omitempty"`
 	ServerIP4addr    string `json:"server_ip4addr,omitempty"`
 	ServerPort       int    `json:"server_port,omitempty"`
+	NoIP4Frag        int    `json:"no_ipfrag,omitempty"`
 }
 
 type CcowConf struct {
@@ -104,6 +106,7 @@ type CcowdNetwork struct {
 	ServerUnixSocket string `json:"server_unix_socket"`
 	ServerIP4addr    string `json:"server_ip4addr,omitempty"`
 	ServerPort       int    `json:"server_port,omitempty"`
+	NoIP4Frag        int    `json:"no_ipfrag,omitempty"`
 }
 
 type CcowdBgConfig struct {

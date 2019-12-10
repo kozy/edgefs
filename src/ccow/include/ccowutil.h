@@ -509,7 +509,7 @@ void uv_hpt_timer_close(int timerfd, UV_HPT_TIMER_T *req);
 int ethtool_info(const char *ifname, uint32_t *speed_mbits, uint8_t *duplex,
     uint8_t *link_status, int *mtu);
 
-int getifname(char *ipaddr, char *ifname);
+int getifname(const char *ipaddr, char *ifname);
 
 int find_ipv6local(char *ifname, char *ip6addr);
 

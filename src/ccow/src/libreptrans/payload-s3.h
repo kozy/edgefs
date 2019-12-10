@@ -39,12 +39,17 @@ struct payload_s3 {
 	char *secret_key;
 	char *aws_region;
 	CURLSH *share;
-	uv_mutex_t conn_lock;
+	pthread_mutex_t conn_lock;
+	pthread_mutex_t get_lock;
+	pthread_cond_t get_cond;
+	uint64_t parallel_gets;
+	uint64_t parallel_gets_max;
 };
 
 int payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_out);
 void payload_s3_destroy(struct payload_s3 *ctx);
 int payload_s3_put(struct payload_s3 *ctx, const char* key, uv_buf_t *data);
+int payload_s3_put_multi(struct payload_s3 *ctx, uv_buf_t* keys, uv_buf_t* data, size_t n);
 int payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf);
 int payload_s3_delete(struct payload_s3 *ctx, const char* key);
 

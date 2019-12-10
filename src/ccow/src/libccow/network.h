@@ -41,6 +41,7 @@ extern "C" {
 #define CCOW_NETWORK_PORT	10400	/* default CCOW server port */
 #define CCOW_BROKER_PORT	50005	/* default CCOW broker port */
 #define CCOW_GW_CACHE_PORT	60001	/* default CCOW broker port */
+#define CCOW_NETWORK_NOIPFRAG	0	/* IP datagram fragmentation allowed (for UDP) */
 
 struct ccow;
 struct ccow_network;
@@ -77,6 +78,7 @@ struct ccow_network {
 	int if_indexes_count;
 	int broker_port;
 	int mc_ttl;
+	int noipfrag;
 };
 
 int ccow_network_server_list_get(struct ccow_network *netobj);

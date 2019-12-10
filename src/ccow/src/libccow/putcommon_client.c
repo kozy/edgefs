@@ -1319,8 +1319,8 @@ client_putcommon_guard_proposed(struct state *st)
 
 		/* for 10 x DGRAM size chunks, or selected policy space, wait for more responses */
 		int req_len = rtbuf_len(r->payload);
-		if (!targeted_op && !serial_op && (req_len > 10 * REPLICAST_DGRAM_MAXLEN ||
-		    r->select_policy & CCOW_SELECT_POLICY_SPACE ) &&
+		if (!targeted_op && !serial_op && (req_len > 10 * (int)replicast_payload_size_max(netobj->robj[0]) ||
+		    (r->select_policy & CCOW_SELECT_POLICY_SPACE) ) &&
 		    (r->proposed_count + r->already_stored_count) < (proposed_ngcount / 2) + 1) {
 			log_debug(lg, "Policy wait (%d): proposed %d already_stored %d req_len %d",
 			    r->select_policy, r->proposed_count, r->already_stored_count, req_len);
@@ -1477,6 +1477,7 @@ _rtselect_ready:
 	 * Ready to transfer
 	 */
 	r->rtselected = 1;
+	r->rtselected_ts = get_timestamp_us();
 
 	if (r->already_stored_selected >= r->needed_replicas) {
 		state_override(st, ST_TERM);

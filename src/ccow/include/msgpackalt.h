@@ -645,6 +645,15 @@ msgpack_unpack_free(msgpack_u *m) {
 	return MSGPACK_SUCCESS;
 }
 
+static inline MSGPACK_ERR
+msgpack_unpack_buf(msgpack_u *u, void* ptr, size_t len) {
+	if (u->end - u->p < (int64_t)len)
+		return MSGPACK_MEMERR;
+	memcpy(ptr, u->p, len);
+	u->p += len;
+	return MSGPACK_SUCCESS;
+}
+
 #define UNPACK_CHK(m) if ((!m) || (m->p >= m->end)) \
 	return MSGPACK_MEMERR;
 
@@ -902,7 +911,6 @@ msgpack_pack_uint128(msgpack_p *p, const uint128_t *v)
 	err = msgpack_pack_uint64(p, uint128_hi(v));
 	return err;
 }
-
 
 static inline MSGPACK_ERR
 msgpack_unpack_uint128(msgpack_u *u, uint128_t *v)

@@ -3261,11 +3261,14 @@ ccow_attr_modify_default(ccow_completion_t comp, ccow_default_attr_t attr,
 		break;
 	case CCOW_ATTR_CHUNKMAP_CHUNK_SIZE :
 		c->chunkmap_chunk_size = *(uint32_t *)value;
+		size_t chunk_size_max = replicast_chunk_size_max(tenant->netobj->robj[0]);
 		if (c->chunkmap_chunk_size < REPLICAST_CHUNK_SIZE_MIN ||
-		    c->chunkmap_chunk_size > REPLICAST_CHUNK_SIZE_MAX) {
+		    c->chunkmap_chunk_size > chunk_size_max) {
 			err = -EINVAL;
 			log_error(lg, "chunkmap_chunk_size: invalid "
-			    "argument (%d): %d", err, c->chunkmap_chunk_size);
+			    "value %u. Minimum size is %d bytes, maximum is %lu bytes.",
+			    c->chunkmap_chunk_size, REPLICAST_CHUNK_SIZE_MIN,
+			    chunk_size_max);
 			c->chunkmap_chunk_size = tenant->chunkmap_chunk_size;
 			return err;
 		}

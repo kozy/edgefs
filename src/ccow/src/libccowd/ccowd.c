@@ -502,6 +502,7 @@ ccowd_parse_config() {
 	char *mcbase_ip6addr = CCOWD_MCBASE_ADDR;
 	char *mcbase_ip4addr = CCOWD_MCBASE4_ADDR;
 	int mcbase_port = CCOWD_MCBASE_PORT;
+	int noipfrag = CCOWD_NETWORK_NOIPFRAG;
 
 	size_t j;
 	for (j = 0; j < network->u.object.length; j++) {
@@ -600,6 +601,14 @@ ccowd_parse_config() {
 				return -EINVAL;
 			}
 			wal_flush_interval = v->u.integer;
+		} else if (strncmp(namekey, "no_ipfrag", 9) == 0) {
+			if (v->type != json_integer) {
+				err = -EINVAL;
+				log_error(lg, "Syntax error: no_ipfrag is not an integer"
+					": %d", err);
+				return err;
+			}
+			noipfrag = v->u.integer;
 		}
 	}
 
@@ -873,6 +882,7 @@ ccowd_parse_config() {
 	}
 	ccow_daemon->transport_count = transport->u.array.length;
 	ccow_daemon->keep_corrupted = keep_corrupted;
+	ccow_daemon->noipfrag = noipfrag;
 
 	return 0;
 }
@@ -1585,7 +1595,9 @@ ccowd_startup(int *err_out)
 
 	ccow_daemon->robj[0] = replicast_init("daemon_main", ccow_daemon->loop,
 	    listen_addr, ccow_daemon->server_port, ccow_daemon->unix_socket_addr,
-	    msg_origin_addr, NULL, 0, ccow_daemon->mc_ttl, NULL);
+	    msg_origin_addr, NULL, 0, ccow_daemon->mc_ttl,
+	    ccow_daemon->noipfrag ? REPLICAST_FLAG_NOIPFRAG : 0,
+	    NULL);
 	if (!ccow_daemon->robj[0]) {
 		json_value_free(ccow_daemon->opts);
 		err = -ENOENT;

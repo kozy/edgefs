@@ -24,9 +24,20 @@
 sbin_PROGRAMS = blobfind vdevinspect rdhold ecstat dbi_delete nezap evactool \
 	dbi_util
 
-noinst_PROGRAMS = chinjector pingpong rtbench ecstat ccowfh_check
+noinst_PROGRAMS = chinjector pingpong rtbench ecstat ccowfh_check s3_payload_bench
 
 DISABLED=clbench
+
+s3_payload_bench_SOURCES = s3_payload_bench.c
+s3_payload_bench_LDFLAGS = $(AM_LDFLAGS) -luv -lcrypto -lccow
+s3_payload_bench_CFLAGS = -O0 -fPIC -g -std=gnu99 -I$(top_srcdir)/src/libreplicast \
+		-I$(top_srcdir)/src/libflexhash \
+		-I$(top_srcdir)/src/libtrlog \
+		-I$(top_srcdir)/src/libreptrans \
+		-I$(top_srcdir)/src/libccowd
+s3_payload_bench_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
+		   $(top_srcdir)/src/libccowd/libccowd.la -luv -lcrypto $(ASAN_LIB)
+
 
 chinjector_SOURCES = chinjector.c
 chinjector_LDFLAGS = $(AM_LDFLAGS) -luv -lcrypto -lccow

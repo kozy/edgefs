@@ -6,26 +6,27 @@ import (
 )
 
 type RTDevice struct {
-	Name              string `json:"name,omitempty"`
-	Device            string `json:"device,omitempty"`
-	Psize             int    `json:"psize,omitempty"`
-	MdPsize           int    `json:"mdpsize,omitempty"`
-	MdcacheReserved   int    `json:"mdcache_reserved,omitempty"`
-	HddReadahead      int    `json:"hdd_readahead,omitempty"`
-	VerifyChid        int    `json:"verify_chid"`
-	Journal           string `json:"journal,omitempty"`
-	Metadata          string `json:"metadata,omitempty"`
-	Bcache            int    `json:"bcache,omitempty"`
-	BcacheWritearound int    `json:"bcache_writearound"`
-	PlevelOverride    int    `json:"plevel_override,omitempty"`
-	Sync              int    `json:"sync"`
-	Detached          int    `json:"detached"`
-	WalDisabled       int    `json:"wal_disabled,omitempty"`
-	PayloadS3URL      string `json:"payload_s3_bucket_url,omitempty"`
-	PayloadS3Region   string `json:"payload_s3_region,omitempty"`
-	PayloadS3MinKb    int    `json:"payload_s3_min_kb,omitempty"`
-	PayloadS3Capacity int    `json:"payload_s3_capacity,omitempty"`
-	PayloadS3Secret   string `json:"payload_s3_key_file,omitempty"`
+	Name                string `json:"name,omitempty"`
+	Device              string `json:"device,omitempty"`
+	Psize               int    `json:"psize,omitempty"`
+	MdPsize             int    `json:"mdpsize,omitempty"`
+	MdcacheReserved     int    `json:"mdcache_reserved,omitempty"`
+	HddReadahead        int    `json:"hdd_readahead,omitempty"`
+	VerifyChid          int    `json:"verify_chid"`
+	Journal             string `json:"journal,omitempty"`
+	Metadata            string `json:"metadata,omitempty"`
+	Bcache              int    `json:"bcache,omitempty"`
+	BcacheWritearound   int    `json:"bcache_writearound"`
+	PlevelOverride      int    `json:"plevel_override,omitempty"`
+	Sync                int    `json:"sync"`
+	Detached            int    `json:"detached"`
+	WalDisabled         int    `json:"wal_disabled,omitempty"`
+	PayloadS3URL        string `json:"payload_s3_bucket_url,omitempty"`
+	PayloadS3Region     string `json:"payload_s3_region,omitempty"`
+	PayloadS3MinKb      int    `json:"payload_s3_min_kb,omitempty"`
+	PayloadS3Capacity   int    `json:"payload_s3_capacity,omitempty"`
+	PayloadS3Secret     string `json:"payload_s3_key_file,omitempty"`
+	PayloadS3SyncGetMax int    `json:"payload_s3_sync_get_max,omitempty"`
 
 }
 

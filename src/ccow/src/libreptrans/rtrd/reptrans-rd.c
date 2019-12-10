@@ -55,6 +55,9 @@
 #define DEV_RD_SMART_READ_INTERVAL (1800 * 1000000)
 #define DEV_RD_COMMIT_SIZE_MAX_EMBEDDED (64*1024UL*1024UL)
 #define DEV_RD_COMMIT_SIZE_MAX (4*1024UL*1024UL*1024UL)
+#define S3_SYNC_PUT_MAX 128
+#define S3_SYNC_PUT_DEFAULT 16
+#define S3_SYNC_GET_DEFAULT 4
 
 #define CMD_DROP_OUTDATED_SIGNATURE "mdofDropOutdated"
 #define CMD_VALIDATE_RDKEYS_SIGNATURE "validateRdKeys"
@@ -4912,6 +4915,15 @@ rd_log_flush_thread(void *arg)
 	dev->flushing |= (1 << ttag);
 	dev->flushing_part |= (1 << db->part);
 	int txn_flag = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
+	struct rd_sync_push_entry* spa = NULL;
+
+	size_t s3buf_n = 0;
+	uv_buf_t s3_val[S3_SYNC_PUT_MAX];
+	MDB_val s3_mdb_key[S3_SYNC_PUT_MAX];
+	uint512_t s3_chids[S3_SYNC_PUT_MAX];
+	uint64_t s3_kh[S3_SYNC_PUT_MAX];
+	uint64_t s3_attr[S3_SYNC_PUT_MAX];
+
 
 _start:
 	commit_size = 0;
@@ -5215,37 +5227,87 @@ _start:
 					unsigned int flags = MDB_SETATTR | MDB_RESERVE;
 					flags |= (dev->rt->flags & RT_FLAG_ALLOW_OVERWRITE) ?
 							 0 : MDB_NOOVERWRITE;
-					err = mdb_cursor_put_attr(main_cursor[shard], &key, &data_out, attr, flags);
-					if (!err) {
-						if (use_s3) {
-							char buff[PATH_MAX];
-							reptrans_make_s3_key(dev, &chid, buff, sizeof(buff));
-							uv_buf_t ubd = { .base = data.mv_data, .len = data.mv_size };
-							err = payload_s3_put(rd->s3_ctx, buff, &ubd);
-							stub_payload_pack(data_out.mv_data, data.mv_size);
-						} else
-							memcpy((char *)data_out.mv_data, data.mv_data, data.mv_size);
 
-						if (is_hashcount_data_type_tag(ttag))
-							reptrans_bump_hashcount(dev, &chid, 1);
-						if (is_rowusage_data_type_tag(ttag))
-							reptrans_bump_rowusage(dev, &chid, data.mv_size);
-						put_size = data.mv_size + rd->metaloc.psize*2;
-					}
-					if (!err && is_keycache_tt(ttag)) {
-						if (dev->journal && !keydb_blocked) {
-							err = keydb_blocked = rd_key_insert(dev, ttag, md_txn,
-							    &kh, data.mv_size, attr);
+					if (use_s3) {
+						s3_chids[s3buf_n] = chid;
+						s3_mdb_key[s3buf_n] = key;
+						s3_val[s3buf_n].base = data.mv_data;
+						s3_val[s3buf_n].len = data.mv_size;
+						s3_kh[s3buf_n] = kh;
+						s3_attr[s3buf_n] = attr;
+
+						if (++s3buf_n >= rd->payload_s3_sync_put) {
+							char buf[s3buf_n][PATH_MAX];
+							uv_buf_t sub[s3buf_n];
+							for (size_t i = 0; i < s3buf_n; i++) {
+								reptrans_make_s3_key(dev, s3_chids + i, buf[i], PATH_MAX);
+								sub[i].base = buf[i];
+								sub[i].len = PATH_MAX;
+							}
+							err = payload_s3_put_multi(rd->s3_ctx, sub, s3_val, s3buf_n);
+							if (!err) {
+								for (size_t i = 0; i < s3buf_n; i++) {
+									int shard = SHARD_HASHCALC(s3_chids + i, DEV_SHARDS_MASK);
+									err = mdb_cursor_put_attr(main_cursor[shard], s3_mdb_key+i, &data_out, s3_attr[i], flags);
+									if (!err) {
+										stub_payload_pack(data_out.mv_data, s3_val[i].len);
+										if (is_hashcount_data_type_tag(ttag))
+											reptrans_bump_hashcount(dev, s3_chids + i, 1);
+										if (is_rowusage_data_type_tag(ttag))
+											reptrans_bump_rowusage(dev, s3_chids + i, s3_val[i].len);
+										put_size = s3_val[i].len + rd->metaloc.psize*2;
+
+										if (is_keycache_tt(ttag)) {
+											if (dev->journal && !keydb_blocked) {
+												err = keydb_blocked = rd_key_insert(dev, ttag, md_txn,
+													s3_kh + i, s3_val[i].len, attr);
+											}
+											if (!err && dev->journal && is_mdcache_tt(dev, ttag) && !mdcache_blocked && rd->mdcache_enable) {
+												err = mdcache_blocked = mdcache_insert(rd->mdcache, ttag,
+												    md_txn, s3_kh + i, s3_val[i].base, s3_val[i].len);
+											}
+										} else if (err == MDB_KEYEXIST && s3_attr[i]) {
+											if (dev->journal && is_keycache_tt(ttag))
+												err = rd_key_set_attr(dev, ttag, md_txn, s3_kh + i, s3_attr[i]);
+											else
+												err = mdb_set_attr(main_txn, main_dbi, s3_mdb_key + i, NULL, s3_attr[i]);
+										}
+									} else if (err != MDB_KEYEXIST)
+										log_error(lg, "Dev(%s): log_flush %s mdb_cursor_put_attr %d (%s) env_path %s part %d",
+										    dev->name, type_tag_name[ttag],err, mdb_strerror(err), main_env_path, db->part);
+								}
+							} else {
+								log_notice(lg, "Dev(%s) S3 PUT returned code %d, will retry", dev->name, err);
+								err = 0;
+								goto _exit;
+							}
+							s3buf_n = 0;
 						}
-						if (!err && dev->journal && is_mdcache_tt(dev, ttag) && !mdcache_blocked && rd->mdcache_enable) {
-							err = mdcache_blocked = mdcache_insert(rd->mdcache, ttag,
-							    md_txn, &kh, data.mv_data, data.mv_size);
+					} else {
+						err = mdb_cursor_put_attr(main_cursor[shard], &key, &data_out, attr, flags);
+						if (!err) {
+							memcpy((char *)data_out.mv_data, data.mv_data, data.mv_size);
+							if (is_hashcount_data_type_tag(ttag))
+								reptrans_bump_hashcount(dev, &chid, 1);
+							if (is_rowusage_data_type_tag(ttag))
+								reptrans_bump_rowusage(dev, &chid, data.mv_size);
+							put_size = data.mv_size + rd->metaloc.psize*2;
 						}
-					} else if (err == MDB_KEYEXIST && attr) {
-						if (dev->journal && is_keycache_tt(ttag))
-							err = rd_key_set_attr(dev, ttag, md_txn, &kh, attr);
-						else
-							err = mdb_set_attr(main_txn, main_dbi, &key, NULL, attr);
+						if (!err && is_keycache_tt(ttag)) {
+							if (dev->journal && !keydb_blocked) {
+								err = keydb_blocked = rd_key_insert(dev, ttag, md_txn,
+								    &kh, data.mv_size, attr);
+							}
+							if (!err && dev->journal && is_mdcache_tt(dev, ttag) && !mdcache_blocked && rd->mdcache_enable) {
+								err = mdcache_blocked = mdcache_insert(rd->mdcache, ttag,
+								    md_txn, &kh, data.mv_data, data.mv_size);
+							}
+						} else if (err == MDB_KEYEXIST && attr) {
+							if (dev->journal && is_keycache_tt(ttag))
+								err = rd_key_set_attr(dev, ttag, md_txn, &kh, attr);
+							else
+								err = mdb_set_attr(main_txn, main_dbi, &key, NULL, attr);
+						}
 					}
 				} else
 					continue;
@@ -5583,6 +5645,59 @@ _check_err:
 		} while ((err = mdb_cursor_get(log_cursor, &key, &data, MDB_NEXT_DUP)) == 0);
 	}
 
+	if (s3buf_n) {
+		char buf[S3_SYNC_PUT_MAX][PATH_MAX] = {{0}};
+		uv_buf_t sub[S3_SYNC_PUT_MAX];
+		for (size_t i = 0; i < s3buf_n; i++) {
+			reptrans_make_s3_key(dev, s3_chids + i, buf[i], PATH_MAX);
+			sub[i].base = buf[i];
+			sub[i].len = PATH_MAX;
+		}
+		err = payload_s3_put_multi(rd->s3_ctx, sub, s3_val, s3buf_n);
+		if (!err) {
+			for (size_t i = 0; i < s3buf_n; i++) {
+				MDB_val data_out = { .mv_data = NULL, .mv_size = STUB_PUT_PAYLOAD_SIZE};
+				int shard = SHARD_HASHCALC(s3_chids + i, DEV_SHARDS_MASK);
+				MDB_dbi main_dbi = DEV_SHARD(db, ttag, shard);
+				unsigned int flags = MDB_SETATTR | MDB_RESERVE;
+				flags |= (dev->rt->flags & RT_FLAG_ALLOW_OVERWRITE) ?
+						 0 : MDB_NOOVERWRITE;
+
+				err = mdb_cursor_put_attr(main_cursor[shard], s3_mdb_key+i, &data_out, s3_attr[i], flags);
+				if (!err) {
+					stub_payload_pack(data_out.mv_data, s3_val[i].len);
+					if (is_hashcount_data_type_tag(ttag))
+						reptrans_bump_hashcount(dev, s3_chids + i, 1);
+					if (is_rowusage_data_type_tag(ttag))
+						reptrans_bump_rowusage(dev, s3_chids + i, s3_val[i].len);
+
+					if (is_keycache_tt(ttag)) {
+						if (dev->journal && !keydb_blocked) {
+							err = keydb_blocked = rd_key_insert(dev, ttag, md_txn,
+								s3_kh + i, s3_val[i].len, s3_attr[i]);
+						}
+						if (!err && dev->journal && is_mdcache_tt(dev, ttag) && !mdcache_blocked && rd->mdcache_enable) {
+							err = mdcache_blocked = mdcache_insert(rd->mdcache, ttag,
+							    md_txn, s3_kh + i, s3_val[i].base, s3_val[i].len);
+						}
+					} else if (err == MDB_KEYEXIST && s3_attr + i) {
+						if (dev->journal && is_keycache_tt(ttag))
+							err = rd_key_set_attr(dev, ttag, md_txn, s3_kh + i, s3_attr[i]);
+						else
+							err = mdb_set_attr(main_txn, main_dbi, s3_mdb_key + i, NULL, s3_attr[i]);
+					}
+				} else if (err != MDB_KEYEXIST)
+					log_error(lg, "Dev(%s): log_flush %s mdb_cursor_put_attr %d (%s) env_path %s part %d",
+					    dev->name, type_tag_name[ttag],err, mdb_strerror(err), main_env_path, db->part);
+			}
+		} else {
+			log_notice(lg, "Dev(%s) S3 PUT returned code %d, will retry", dev->name, err);
+			err = 0;
+			goto _exit;
+		}
+		s3buf_n = 0;
+	}
+
 	for (int n = 0; n < DEV_SHARDS_MAX; n++) {
 		if (main_cursor[n]) {
 			mdb_cursor_close(main_cursor[n]);
@@ -5598,7 +5713,7 @@ _check_err:
 	 * Last mdb error can only be MDB_NOTFOUND
 	 * Otherwise log is corrupted
 	 */
-	if (err && err != MDB_NOTFOUND) {
+	if (err && err != MDB_NOTFOUND && err != MDB_KEYEXIST) {
 		rdlog_repair(log, err);
 		goto _exit;
 	}
@@ -6570,7 +6685,7 @@ _exit:
 		rd_bloom_insert(db, kh);
 
 		if (ttag != TT_NAMEINDEX) {
-			key_cache_insert(db->key_cache, &kh, ttag, data.mv_size);
+			key_cache_insert(db->key_cache, &kh, ttag, len);
 
 			/* insert into a journal if defined*/
 			if (dev->journal) {
@@ -10383,6 +10498,9 @@ rd_check_and_create_partitions(struct reptrans *rt, json_value *json_dev,
 	if (parts_created)
 		/* data-container work-around (this will succeed in container only) */
 		err = system("mount -t devtmpfs /dev /dev >/dev/null 2>/dev/null");
+	for (size_t i = 0; i < rdisks->n_disks; i++)
+		if (created_main_parts[i])
+			je_free(created_main_parts[i]);
 	je_free(created_main_parts);
 	return 0;
 }
@@ -10988,7 +11106,9 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 	char *payload_s3_key_file = NULL;
 	char *payload_s3_region = NULL;
 	uint32_t payload_s3_min_kb = 1;
-	size_t payload_s3_capacity = 0;
+	int64_t payload_s3_capacity = 0;
+	size_t payload_s3_sync_put = S3_SYNC_PUT_DEFAULT;
+	size_t payload_s3_sync_get = S3_SYNC_GET_DEFAULT;
 
 
 	snprintf(fname, PATH_MAX, "/dev/disk/by-id/%s", meta->device);
@@ -11225,6 +11345,40 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 				continue;
 			}
 			payload_s3_capacity = v->u.integer;
+		} else if (strcmp(namekey, "payload_s3_sync_put") == 0) {
+			if (v->type != json_integer) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_sync_put is not an "
+				    "integer", name);
+				err = 1;
+				continue;
+			}
+			if (v->u.integer > S3_SYNC_PUT_MAX || v->u.integer < 0) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_sync_put wrong value, "
+				    "it needs to be in range 0..%d",
+				    name, S3_SYNC_PUT_MAX);
+				err = 1;
+				continue;
+			}
+			payload_s3_sync_put = v->u.integer;
+		} else if (strcmp(namekey, "payload_s3_sync_get_max") == 0) {
+			if (v->type != json_integer) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_sync_get is not an "
+				    "integer", name);
+				err = 1;
+				continue;
+			}
+			if (v->u.integer < 1) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_sync_put wrong value, "
+				    "it needs to be greater than 1",
+				    name);
+				err = 1;
+				continue;
+			}
+			payload_s3_sync_get = v->u.integer;
 		}
 	}
 	size_t n_opts;
@@ -11342,7 +11496,15 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 	rd->payload_s3_bucket_url = payload_s3_bucket_url;
 	rd->payload_s3_key_file = payload_s3_key_file;
 	rd->payload_s3_region = payload_s3_region;
-	rd->payload_s3_capacity = payload_s3_capacity;
+	rd->payload_s3_sync_put = payload_s3_sync_put;
+	if (rd->payload_s3_bucket_url && payload_s3_capacity <= 0) {
+		log_error(lg, "Dev(%s) invalid S3 bucket capacity %lu."
+			" It must be greater than 0 and expressed in GB",
+			dev->name, payload_s3_capacity);
+		err = -ENODEV;
+		goto _exit;
+	}
+	rd->payload_s3_capacity = payload_s3_capacity*1024UL*1024UL*1024UL;
 	if (!rd->s3_ctx && rd->payload_s3_bucket_url) {
 		if (journal) {
 			/* We do not support external journal when S3 offload is enabled
@@ -11373,8 +11535,11 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 			goto _exit;
 		}
 		dev->payload_put_min_kb = payload_s3_min_kb;
-		log_notice(lg, "Dev(%s) S3 payload enabled. The min. chunk size %u kB, capacity %lu MB",
-			name, payload_s3_min_kb, rd->payload_s3_capacity/(1024LU*1024LU));
+		rd->s3_ctx->parallel_gets_max = payload_s3_sync_get;
+		log_notice(lg, "Dev(%s) S3 payload enabled. The min. chunk size %u kB, "
+			"capacity %lu MB, sync. put %lu, sync get max. %lu",
+			name, payload_s3_min_kb, rd->payload_s3_capacity/(1024LU*1024LU),
+			rd->payload_s3_sync_put, rd->s3_ctx->parallel_gets_max);
 	}
 
 	if (dev->path)
