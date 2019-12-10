@@ -368,7 +368,7 @@ case $1 in
 		start_msg "ganesha"
 		debug_wait "ganesha"
 		export CCOW_SVCTYPE="nfs"
-		exec grpc-nfs $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
+		exec grpc-nfs -s $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
                 ;;
         "s3x")
                 shift
