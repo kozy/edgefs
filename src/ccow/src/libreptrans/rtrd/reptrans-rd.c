@@ -11968,14 +11968,24 @@ rd_parse_opts(json_value *o, struct reptrans *rt)
 			continue;
 
 		int bad_journal = 0;
+		int rc = 0, repeat = 100;
 		if (jname) {
 			snprintf(devpath, PATH_MAX, "/dev/disk/by-id/%s", jname);
-			if (access(devpath, F_OK))
+			int repeat = 100;
+			/* Wait 10s for journal device symlink */
+			while ((rc = access(devpath, F_OK)) != 0 && --repeat > 0)
+				usleep(100000);
+			if (rc)
 				bad_journal = 1;
 		}
 
 		snprintf(devpath, PATH_MAX, "/dev/disk/by-id/%s", name);
-		if (!access(devpath, F_OK) && !bad_journal)
+		repeat = 100;
+		/* Wait 10s for main device's symlink */
+		while ((rc = access(devpath, F_OK)) != 0 && --repeat > 0)
+			usleep(100000);
+
+		if (!rc && !bad_journal)
 			continue;
 		log_error(lg, "Dev(%s): %s, skipping", name, bad_journal ?
 		    "missing journal device symlink" : "missing device symlink");
