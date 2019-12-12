@@ -2141,6 +2141,7 @@ client_putcommon_send_proposal(struct state *st,
 	return 0;
 }
 
+
 int client_putcommon_init(struct state *st)
 {
 	struct putcommon_client_req *r = st->data;
@@ -2215,8 +2216,12 @@ int client_putcommon_init(struct state *st)
 		if (r->io->attributes & RD_ATTR_COMPOUND)
 			r->needed_replicas = c->replication_count;
 		else {
-			r->needed_replicas = op->metadata.sync_put ?
-			    op->metadata.sync_put : op->metadata.replication_count;
+			if (op->metadata.chunkmap_type[6] == 'k') {
+				r->needed_replicas = op->metadata.replication_count;
+			} else {
+				r->needed_replicas = op->metadata.sync_put ?
+					op->metadata.sync_put : op->metadata.replication_count;
+			}
 		}
 	} else {
 		r->needed_replicas = tc->sync_put_named;
@@ -2233,4 +2238,3 @@ _error:
 	state_next(st, EV_ERR);
 	return err;
 }
-
