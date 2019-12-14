@@ -21,6 +21,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
+#include <uthash.h>
 #include <errno.h>
 #include <openssl/sha.h>
 #include <openssl/evp.h>
@@ -44,6 +45,98 @@
 static volatile int curl_global = 0;
 static int curl_verb = 1;
 
+struct get_cache_entry {
+	char key[130];
+	uv_buf_t val;
+	UT_hash_handle hh;
+};
+
+struct get_cache {
+	struct get_cache_entry *head;
+	struct get_cache_entry* last;
+	pthread_rwlock_t lock;
+	size_t cap;
+};
+
+static int
+get_cache_create(size_t cap, struct get_cache** out) {
+	if (!cap)
+		return -EINVAL;
+	*out = je_malloc(sizeof(struct get_cache));
+	if (NULL == *out)
+		return -ENOMEM;
+	(*out)->cap = cap;
+	(*out)->head = NULL;
+	(*out)->last = NULL;
+	pthread_rwlock_init(&(*out)->lock, NULL);
+	return 0;
+}
+
+static void
+get_cache_destroy(struct get_cache* p) {
+	struct get_cache_entry* e = NULL, *tmp = NULL;
+	e = NULL, tmp = NULL;
+	HASH_ITER(hh, p->head, e, tmp) {
+		assert(e);
+		HASH_DEL(p->head, e);
+		je_free(e->val.base);
+		je_free(e);
+	}
+	pthread_rwlock_destroy(&p->lock);
+	je_free(p);
+}
+
+static int
+get_cache_insert(struct get_cache* p, char* key, uv_buf_t value) {
+	struct get_cache_entry* res = NULL;
+	pthread_rwlock_wrlock(&p->lock);
+	HASH_FIND_STR(p->head, key, res);
+	if (res) {
+		log_debug(lg, "Key %s already exists in S3 cache", key);
+		pthread_rwlock_unlock(&p->lock);
+		return -EEXIST;
+	}
+
+	struct get_cache_entry* e= je_malloc(sizeof(*e));
+	if (!e) {
+		pthread_rwlock_unlock(&p->lock);
+		return -ENOMEM;
+	}
+	strncpy(e->key, key, sizeof(e->key));
+	e->val = value;
+	e->val.base = je_memdup(value.base, value.len);
+	HASH_ADD_STR(p->head, key, e);
+	if (!p->last)
+		p->last = e;
+	if (HASH_COUNT(p->head) > p->cap) {
+		/* Removing oldest entry from the tail */
+		res = p->last;
+		assert(res);
+		p->last = p->last->hh.next;
+		assert(p->last);
+		if (!strcmp(key, res->key))
+			log_error(lg, "Removing just inserted S3 key");
+		HASH_DEL(p->head, res);
+		je_free(res->val.base);
+		je_free(res);
+	}
+	pthread_rwlock_unlock(&p->lock);
+	return 0;
+}
+
+static int
+get_cache_find(struct get_cache* p, char* key, uv_buf_t* out) {
+	struct get_cache_entry* res = NULL;
+	pthread_rwlock_rdlock(&p->lock);
+	HASH_FIND_STR(p->head, key, res);
+	pthread_rwlock_unlock(&p->lock);
+	if (res) {
+		*out = res->val;
+		return 0;
+	}
+	return -ENOENT;
+}
+
 struct perf_cap {
 	uint64_t ts; /* Timestamp of a measurement interval */
 	size_t size; /* Size of data transfered during a measurement interval */
@@ -51,6 +144,7 @@ struct perf_cap {
 	size_t par_ops_max; /* Max. number of parallel operations */
 	size_t ops; /* Total number of operations */
 	uint64_t dur; /* Average duration of a single operation */
+	uint64_t chits; /* Number of GET cache hits */
 	pthread_mutex_t lock;
 };
 
@@ -61,6 +155,11 @@ static struct perf_cap g_put_perf = {0};
 	do { \
 		(tmp) = __sync_fetch_and_add((ptr), 0); \
 	} while (!__sync_bool_compare_and_swap((ptr), (tmp), (val)))
+
+static void
+perf_cache_hit(struct perf_cap* cap) {
+	__sync_fetch_and_add(&cap->chits, 1);
+}
 
 static void
 perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur, const char* prefix) {
@@ -83,11 +182,7 @@ perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur, const char* pre
 		__sync_fetch_and_add(&cap->ops, 1);
 		__sync_fetch_and_add(&cap->size, size);
 		/* Update duration */
-		uint64_t d, avg;
-		do {
-			d = __sync_fetch_and_add(&cap->dur, 0);
-			avg = (d + dur)/2;
-		} while (!__sync_bool_compare_and_swap(&cap->dur, d, avg));
+		__sync_fetch_and_add(&cap->dur, dur);
 	}
 	if (get_timestamp_us() - cap->ts > 1000000UL) {
 		if (pthread_mutex_trylock(&cap->lock))
@@ -106,10 +201,10 @@ perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur, const char* pre
 		sprintf(buff+strlen(buff), "#ops %lu, ", tmpst);
 
 		atomic_set(&cap->dur, 0, tmp64);
-		sprintf(buff+strlen(buff), "avg %lu mS", tmp64/1000UL);
+		sprintf(buff+strlen(buff), "avg %lu mS", tmp64/((tmpst ? tmpst : 1)*1000UL));
 
-		log_debug(lg, "%s: %s, perf %.3f MB/s", prefix, buff,
-			(double)len/(double)(get_timestamp_us() - ts_begin));
+		log_debug(lg, "%s: %s, perf %.3f MB/s, cache hits %lu", prefix, buff,
+			(double)len/(double)(get_timestamp_us() - ts_begin), cap->chits);
 		pthread_mutex_unlock(&cap->lock);
 	}
 }
@@ -648,6 +743,30 @@ payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf)
 	struct curl_slist *headers = NULL;
 	int delay = 1;
 	int err = 0;
+	uv_buf_t ub;
+
+	/*
+	 * Key format string is <vdev_str>/<chid_str>
+	 * Cut off the vdev string
+	 */
+	char* chidstr = strchr(key, '/');
+	assert(chidstr);
+	chidstr++;
+
+	uint64_t ts = get_timestamp_us();
+	if (ctx->cache) {
+		err = get_cache_find(ctx->cache, chidstr, &ub);
+		if (!err) {
+			assert(ub.base);
+			memcpy(outbuf->base, ub.base, ub.len);
+			perf_cache_hit(&g_get_perf);
+			perf_cap_update(&g_get_perf, 0, 0, "GET perf");
+			perf_cap_update(&g_get_perf, outbuf->len,
+				get_timestamp_us() - ts, "GET perf");
+			return 0;
+		}
+		err = 0;
+	}
 
 	pthread_mutex_lock(&ctx->get_lock);
 	while (ctx->parallel_gets >= ctx->parallel_gets_max)
@@ -655,7 +774,7 @@ payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf)
 	ctx->parallel_gets++;
 	pthread_mutex_unlock(&ctx->get_lock);
 
-	uint64_t ts = get_timestamp_us();
+	ts = get_timestamp_us();
 
 	perf_cap_update(&g_get_perf, 0, 0, "GET perf");
 	sprintf(url, "%s/%s", ctx->bucket_url, key);
@@ -733,6 +852,8 @@ _retry:
 	ctx->parallel_gets--;
 	pthread_cond_signal(&ctx->get_cond);
 	pthread_mutex_unlock(&ctx->get_lock);
+	if (ctx->cache)
+		get_cache_insert(ctx->cache, chidstr, *outbuf);
 	return err;
 }
 
@@ -812,7 +933,8 @@ _retry:
 }
 
 int
-payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_out)
+payload_s3_init(char *url, char *region, char *keyfile, uint64_t cache_entries_max,
+	struct payload_s3 **ctx_out)
 {
 	char key[256] = { 0 };
 	struct payload_s3 *ctx = je_calloc(1, sizeof(struct payload_s3));
@@ -879,6 +1001,11 @@ payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_
 	curl_share_setopt(ctx->share, CURLSHOPT_UNLOCKFUNC, payload_s3_unlock);
 	curl_share_setopt(ctx->share, CURLSHOPT_USERDATA, ctx);
 
+	if (cache_entries_max)
+		get_cache_create(cache_entries_max, &ctx->cache);
+	else
+		ctx->cache = NULL;
+
 	*ctx_out = ctx;
 	return 0;
 }
@@ -896,5 +1023,7 @@ payload_s3_destroy(struct payload_s3 *ctx)
 	je_free(ctx->access_key);
 	je_free(ctx->secret_key);
 	je_free(ctx->bucket_url);
+	if (ctx->cache)
+		get_cache_destroy(ctx->cache);
 	je_free(ctx);
 }

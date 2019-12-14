@@ -138,7 +138,7 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 
-	int err = payload_s3_init(url, region, key_file, &ctx);
+	int err = payload_s3_init(url, region, key_file, is_embedded() ? 20 : 400, &ctx);
 	if (err) {
 		fprintf(stderr, "Coudln't initialize S3 payload context: %d.\n", err);
 		exit(1);
