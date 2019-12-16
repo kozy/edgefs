@@ -29,6 +29,8 @@
 
 #define EDGE_USER_AGENT "EdgeRTRD/1.0"
 
+struct get_cache;
+
 struct payload_s3 {
 	int ssl_en;
 	char host[1024];
@@ -44,9 +46,12 @@ struct payload_s3 {
 	pthread_cond_t get_cond;
 	uint64_t parallel_gets;
 	uint64_t parallel_gets_max;
+	struct get_cache* cache;
 };
 
-int payload_s3_init(char *url, char *region, char *keyfile, struct payload_s3 **ctx_out);
+int
+payload_s3_init(char *url, char *region, char *keyfile, uint64_t cache_entries_max,
+	struct payload_s3 **ctx_out);
 void payload_s3_destroy(struct payload_s3 *ctx);
 int payload_s3_put(struct payload_s3 *ctx, const char* key, uv_buf_t *data);
 int payload_s3_put_multi(struct payload_s3 *ctx, uv_buf_t* keys, uv_buf_t* data, size_t n);

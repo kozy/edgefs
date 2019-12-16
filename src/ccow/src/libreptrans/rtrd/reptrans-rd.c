@@ -58,6 +58,8 @@
 #define S3_SYNC_PUT_MAX 128
 #define S3_SYNC_PUT_DEFAULT 16
 #define S3_SYNC_GET_DEFAULT 4
+#define RT_RD_S3_GET_CACHE_SIZE_EMBEDDED 20
+#define RT_RD_S3_GET_CACHE_SIZE 400
 
 #define CMD_DROP_OUTDATED_SIGNATURE "mdofDropOutdated"
 #define CMD_VALIDATE_RDKEYS_SIGNATURE "validateRdKeys"
@@ -11109,7 +11111,8 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 	int64_t payload_s3_capacity = 0;
 	size_t payload_s3_sync_put = S3_SYNC_PUT_DEFAULT;
 	size_t payload_s3_sync_get = S3_SYNC_GET_DEFAULT;
-
+	size_t payload_s3_get_cache_size = is_embedded() ?
+		RT_RD_S3_GET_CACHE_SIZE_EMBEDDED : RT_RD_S3_GET_CACHE_SIZE;
 
 	snprintf(fname, PATH_MAX, "/dev/disk/by-id/%s", meta->device);
 	char *kdevname = realpath(fname, NULL);
@@ -11379,6 +11382,23 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 				continue;
 			}
 			payload_s3_sync_get = v->u.integer;
+		}else if (strcmp(namekey, "payload_s3_get_cache_size") == 0) {
+			if (v->type != json_integer) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_get_cache_size is not an "
+				    "integer", name);
+				err = 1;
+				continue;
+			}
+			if (v->u.integer < 1) {
+				log_warn(lg, "Syntax error: "
+				    "dev.%s.payload_s3_get_cache_size wrong value, "
+				    "it needs to be greater than 1",
+				    name);
+				err = 1;
+				continue;
+			}
+			payload_s3_get_cache_size = v->u.integer;
 		}
 	}
 	size_t n_opts;
@@ -11529,7 +11549,7 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 		}
 		err = payload_s3_init(rd->payload_s3_bucket_url,
 			rd->payload_s3_region, rd->payload_s3_key_file,
-			&rd->s3_ctx);
+			payload_s3_get_cache_size, &rd->s3_ctx);
 		if (err) {
 			log_error(lg, "Dev(%s) S3 payload init error %d", name, err);
 			goto _exit;

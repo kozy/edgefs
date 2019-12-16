@@ -1187,6 +1187,7 @@ struct getcommon_client_req {
 	uv_buf_t payload[REPLICAST_DGRAM_MAX];
 	uv_buf_t one_payload;
 	uint256_t dgram_idx;
+	uint64_t dgrams;
 	int nbufs;
 	rtbuf_t *rb;
 	int rb_cached;
@@ -1226,6 +1227,8 @@ struct getcommon_client_req {
 	struct sockaddr_in6 selected_ngaddr;
 	int rtselected;
 	int rttransferred;
+	int rt_begin_ts;
+	int rt_last_ts;
 	int rt_inprogress;
 	uint64_t content_length;
 	int error;
