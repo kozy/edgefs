@@ -32,19 +32,39 @@ import "C"
 import "unsafe"
 
 import (
+	"strings"
+
 	proto ".."
 	"../../efsutil"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/status"
-	"strings"
 )
 
 type BucketImpl struct {
 }
 
 func (s *BucketImpl) BucketCreate(ctx context.Context, msg *proto.BucketCreateRequest) (*proto.GenericResponse, error) {
-	c_bpath := C.CString(msg.Cluster + "/" + msg.Tenant + "/" + msg.Bucket)
-	defer C.free(unsafe.Pointer(c_bpath))
+	var flagNames = []string{
+		"chunk-size",
+		"number-of-versions",
+		"replication-count",
+		"sync-put",
+		"ec-data-mode",
+		"ec-trigger-policy-timeout",
+		"encryption-enabled",
+		"select-policy",
+		"quota",
+		"quota-count",
+		"file-object-transparency",
+		"options",
+	}
+	var flags []efsutil.FlagValue = make([]efsutil.FlagValue, len(flagNames))
+	efsutil.ReadAttributes(msg.Options, flagNames, flags)
+
+	e := efsutil.ValidateFlags(flags)
+	if e != nil {
+		return nil, status.Errorf(400, "Invalid attributes err=%v", e)
+	}
 
 	c_cluster := C.CString(msg.Cluster)
 	defer C.free(unsafe.Pointer(c_cluster))
@@ -72,23 +92,38 @@ func (s *BucketImpl) BucketCreate(ctx context.Context, msg *proto.BucketCreateRe
 	}
 	defer C.ccow_tenant_term(tc)
 
-	ret = C.ccow_bucket_create(tc, c_bucket, C.strlen(c_bucket)+1, nil)
+
+	var c C.ccow_completion_t
+	ret = C.ccow_create_completion(tc, nil, nil, 2, &c)
+	if ret != 0 {
+		return nil, status.Errorf(500, "ccow_create_completion err=%d", ret)
+	}
+
+	err = efsutil.ModifyDefaultAttributes(unsafe.Pointer(c), flags)
+	if err != nil {
+		return nil, status.Errorf(500, "Modify default attributes err=%v", err)
+	}
+
+	ret = C.ccow_bucket_create(tc, c_bucket, C.strlen(c_bucket)+1, c)
 	if ret != 0 {
 		return nil, status.Errorf(500, "ccow_bucket_create err=%d", ret)
 	}
 
-	ret = C.ccow_fsio_create_bucket(tc, c_bpath, nil)
-	if ret != 0 {
-		return nil, status.Errorf(500, "ccow_fsio_create_bucket err=%d", ret)
+	if efsutil.HasCustomAttributes(flags) {
+		nhid, e1 := efsutil.GetMDKey(msg.Cluster, msg.Tenant, msg.Bucket, "", "ccow-name-hash-id")
+		if e1 != nil {
+			return nil, status.Errorf(500, "GetMDKey err=%v", e1)
+		}
+		err = efsutil.ModifyCustomAttributes(msg.Cluster, msg.Tenant, msg.Bucket, nhid, flags)
+		if err != nil {
+			return nil, status.Errorf(500, "Modify custom attributes err=%v", err)
+		}
 	}
 
 	return &proto.GenericResponse{}, nil
 }
 
 func (s *BucketImpl) BucketDelete(ctx context.Context, msg *proto.BucketDeleteRequest) (*proto.GenericResponse, error) {
-	c_bpath := C.CString(msg.Cluster + "/" + msg.Tenant + "/" + msg.Bucket)
-	defer C.free(unsafe.Pointer(c_bpath))
-
 	c_cluster := C.CString(msg.Cluster)
 	defer C.free(unsafe.Pointer(c_cluster))
 
@@ -115,19 +150,9 @@ func (s *BucketImpl) BucketDelete(ctx context.Context, msg *proto.BucketDeleteRe
 	}
 	defer C.ccow_tenant_term(tc)
 
-	empty := C.ccow_fsio_is_not_empty(tc, c_bpath, nil)
-	if empty == 1 {
-		return nil, status.Errorf(500, "NFS: Bucket not empty")
-	}
-
 	ret = C.ccow_bucket_delete(tc, c_bucket, C.strlen(c_bucket)+1)
 	if ret != 0 {
 		return nil, status.Errorf(500, "ccow_bucket_delete err=%d", ret)
-	}
-
-	ret = C.ccow_fsio_delete_bucket(tc, c_bpath, nil)
-	if ret != 0 {
-		return nil, status.Errorf(500, "ccow_fsio_delete_bucket err=%d", ret)
 	}
 
 	return &proto.GenericResponse{}, nil
