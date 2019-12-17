@@ -37,6 +37,7 @@ import (
 	"./tenant"
 	"./tenant/bucketImpl"
 	"./tenant/tenantImpl"
+	"./tenant/userImpl"
 	"./snapshot"
 	"./snapshot/snapshotImpl"
 	"./object"
@@ -154,6 +155,7 @@ func (s *Server) Listen() error {
 	)
 	cluster.RegisterClusterServer(gs, &clusterImpl.ClusterImpl{})
 	tenant.RegisterTenantServer(gs, &tenantImpl.TenantImpl{})
+	tenant.RegisterUserServer(gs, &userImpl.UserImpl{})
 	tenant.RegisterBucketServer(gs, &bucketImpl.BucketImpl{})
 	service.RegisterServiceServer(gs, &serviceImpl.ServiceImpl{})
 	snapshot.RegisterSnapshotServer(gs, &snapshotImpl.SnapshotImpl{})

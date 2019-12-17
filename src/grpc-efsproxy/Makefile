@@ -22,6 +22,7 @@ GOPATH?=$(SRCDIR)/src
 
 .get:
 	GOPATH=$(GOPATH) flock -e $(SRCDIR)/.lock go get -v || true
+	GOPATH=$(GOPATH) flock -e $(SRCDIR)/.lock go mod download || true
 	GOPATH=$(GOPATH) flock -e $(SRCDIR)/.lock go get github.com/golang/protobuf || true
 	GOPATH=$(GOPATH) flock -e $(SRCDIR)/.lock make -C $(GOPATH)/src/github.com/golang/protobuf
 	GOPATH=$(GOPATH) flock -e $(SRCDIR)/.lock go get google.golang.org/grpc || true

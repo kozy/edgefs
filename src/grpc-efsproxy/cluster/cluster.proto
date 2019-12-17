@@ -5,6 +5,15 @@ package cluster;
 message GenericResponse {
 }
 
+message ClusterCreateRequest {
+	string cluster = 1;
+	map<string, string> options = 3;
+}
+
+message ClusterDeleteRequest {
+	string cluster = 1;
+}
+
 message ClusterListRequest {
 	string pattern = 1;
 	int32 count = 2;
@@ -26,7 +35,8 @@ message CheckHealthResponse {
 }
 
 service Cluster {
+	rpc ClusterCreate(ClusterCreateRequest) returns (GenericResponse) {}
+	rpc ClusterDelete(ClusterDeleteRequest) returns (GenericResponse) {}
 	rpc ClusterList(ClusterListRequest) returns (ClusterListResponse) {}
 	rpc CheckHealth(CheckHealthRequest) returns (CheckHealthResponse) {}
 }
-
