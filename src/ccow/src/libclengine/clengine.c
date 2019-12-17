@@ -708,8 +708,10 @@ clengine_join_cb(struct cl_node *joined, struct cl_node *members,
 		joined->vdevs = (struct cl_vdev *) opaque;
 		joined->nr_vdevs = opaque_len/sizeof (struct cl_vdev);
 
+		ccowd_fhready_lock(FH_LOCK_WRITE);
 		err = flexhash_add_vdevs(SERVER_FLEXHASH,
 		    joined, fhserver, 0, FH_NOGOOD_HC, FH_NO_REBUILD);
+		ccowd_fhready_unlock(FH_LOCK_WRITE);
 		if (err) {
 			log_error(lg, "Unable to add vdevs to the server ");
 			return;
