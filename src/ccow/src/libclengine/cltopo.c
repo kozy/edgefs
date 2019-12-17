@@ -338,10 +338,16 @@ cltopo_state__response(struct state *st)
 		(struct repmsg_server_list_response *)wqe->msg;
 
 	char *checkpoint = je_malloc(REPLICAST_CHUNK_SIZE_MAX);
+	if (!checkpoint) {
+		log_error(lg, "Failed to allocate memory");
+		state_next(st, EV_ERR);
+		return;
+	}
 	*checkpoint = 0;
 	err = replicast_unpack_uvbuf_nodes(&r->onebuf, msg->nr_members, &rnode,
 	    checkpoint, REPLICAST_CHUNK_SIZE_MAX);
 	if (err) {
+		je_free(checkpoint);
 		state_next(st, EV_ERR);
 		return;
 	}
@@ -371,7 +377,6 @@ cltopo_state__response(struct state *st)
 			if (err) {
 				log_error(lg, "Failed to save checkpoint received.err: %d",
 				    err);
-				je_free(checkpoint);
 				goto cltopo_response_done;
 			}
 		}
