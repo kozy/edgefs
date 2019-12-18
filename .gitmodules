@@ -101,4 +101,8 @@
 [submodule "deps/kvssd/KVSSD"]
 	path = deps/kvssd/KVSSD
 	url = https://github.com/Nexenta/KVSSD.git
-
+[submodule "deps/samba/samba"]
+	path = deps/samba/samba
+	url = https://github.com/Nexenta/samba.git
+	branch = v4-11-stable-nexenta
+	ignore = all
