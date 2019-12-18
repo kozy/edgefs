@@ -31,6 +31,7 @@ import "C"
 import "unsafe"
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"hash/fnv"
@@ -1913,4 +1914,35 @@ func (s *ServiceImpl) ServiceCreate(ctx context.Context, msg *proto.ServiceCreat
 	}
 
 	return &proto.GenericResponse{}, nil
+}
+
+func (s *ServiceImpl) ServiceShow(ctx context.Context, msg *proto.ServiceShowRequest) (*proto.ServiceShowResponse, error) {
+	prop, err := efsutil.GetMDPat("", "svcs", msg.Service, "", "X-")
+	if err != nil {
+		return nil, status.Errorf(500, "Service show error: %v", err)
+	}
+
+	paths, ep := efsutil.GetKeys("", "svcs", msg.Service, "")
+	if ep != nil {
+		return nil, status.Errorf(500, "Service path show error: %v", ep)
+	}
+
+
+	if msg.Stats {
+		kv, es := efsutil.GetKeyValues("", "svcs", msg.Service + ".stat", "", "", 4096, 1000)
+		if es != nil { // ignore stats error
+			return &proto.ServiceShowResponse{Parameters: prop, Paths: paths}, nil
+		}
+		stats := make(map[string]*proto.ServiceStats)
+		for k,v := range kv {
+			stat := new(proto.ServiceStats)
+			e := json.Unmarshal([]byte(v), stat)
+			if e == nil {
+				stats[k] = stat
+			}
+		}
+		return &proto.ServiceShowResponse{Parameters: prop, Paths: paths, Stats: stats}, nil
+	}
+
+	return &proto.ServiceShowResponse{Parameters: prop, Paths: paths}, nil
 }

@@ -17,6 +17,12 @@ message BucketDeleteRequest {
 	string bucket = 3;
 }
 
+message BucketShowRequest {
+	string cluster = 1;
+	string tenant = 2;
+	string bucket = 3;
+}
+
 message BucketListRequest {
 	string cluster = 1;
 	string tenant = 2;
@@ -32,9 +38,14 @@ message BucketListResponse {
 	map<string, BucketInfo> info = 1;
 }
 
+message BucketShowResponse {
+	map<string, string> prop = 1;
+}
+
 service Bucket {
 	rpc BucketCreate(BucketCreateRequest) returns (GenericResponse) {}
 	rpc BucketDelete(BucketDeleteRequest) returns (GenericResponse) {}
+	rpc BucketShow(BucketShowRequest) returns (BucketShowResponse) {}
 	rpc BucketList(BucketListRequest) returns (BucketListResponse) {}
 }
 
@@ -45,6 +56,11 @@ message TenantCreateRequest {
 }
 
 message TenantDeleteRequest {
+	string cluster = 1;
+	string tenant = 2;
+}
+
+message TenantShowRequest {
 	string cluster = 1;
 	string tenant = 2;
 }
@@ -63,9 +79,14 @@ message TenantListResponse {
 	map<string, TenantInfo> info = 1;
 }
 
+message TenantShowResponse {
+	map<string, string> prop = 1;
+}
+
 service Tenant {
 	rpc TenantCreate(TenantCreateRequest) returns (GenericResponse) {}
 	rpc TenantDelete(TenantDeleteRequest) returns (GenericResponse) {}
+	rpc TenantShow(TenantShowRequest) returns (TenantShowResponse) {}
 	rpc TenantList(TenantListRequest) returns (TenantListResponse) {}
 }
 

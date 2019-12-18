@@ -255,3 +255,12 @@ func (s *BucketImpl) BucketList(ctx context.Context, msg *proto.BucketListReques
 
 	return &proto.BucketListResponse{Info: info}, nil
 }
+
+func (s *BucketImpl) BucketShow(ctx context.Context, msg *proto.BucketShowRequest) (*proto.BucketShowResponse, error) {
+	prop, err := efsutil.GetMDPat(msg.Cluster, msg.Tenant, msg.Bucket, "", "")
+	if err != nil {
+		return nil, status.Errorf(500, "Bucket show error: %v", err)
+	}
+
+	return &proto.BucketShowResponse{Prop: prop}, nil
+}
