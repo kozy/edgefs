@@ -233,3 +233,12 @@ func (s *TenantImpl) TenantList(ctx context.Context, msg *proto.TenantListReques
 
 	return &proto.TenantListResponse{Info: info}, nil
 }
+
+func (s *TenantImpl) TenantShow(ctx context.Context, msg *proto.TenantShowRequest) (*proto.TenantShowResponse, error) {
+	prop, err := efsutil.GetMDPat(msg.Cluster, msg.Tenant, "", "", "")
+	if err != nil {
+		return nil, status.Errorf(500, "Tenant show error: %v", err)
+	}
+
+	return &proto.TenantShowResponse{Prop: prop}, nil
+}

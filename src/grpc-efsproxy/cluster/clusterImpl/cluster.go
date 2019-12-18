@@ -144,6 +144,15 @@ func (s *ClusterImpl) ClusterDelete(ctx context.Context, msg *proto.ClusterDelet
 	return &proto.GenericResponse{}, nil
 }
 
+func (s *ClusterImpl) ClusterShow(ctx context.Context, msg *proto.ClusterShowRequest) (*proto.ClusterShowResponse, error) {
+	prop, err := efsutil.GetMDPat(msg.Cluster, "", "", "", "")
+	if err != nil {
+		return nil, status.Errorf(500, "Cluster show error: %v", err)
+	}
+
+	return &proto.ClusterShowResponse{Prop: prop}, nil
+}
+
 
 func (s *ClusterImpl) CheckHealth(ctx context.Context, msg *proto.CheckHealthRequest) (*proto.CheckHealthResponse, error) {
 	return &proto.CheckHealthResponse{Status: "ok"}, nil
