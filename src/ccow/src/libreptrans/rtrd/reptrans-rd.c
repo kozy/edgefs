@@ -70,6 +70,7 @@
 #define DEV_RD_CLOSED       0
 #define DEV_RD_TRANSITION   1
 #define DEV_RD_OPENED       2
+#define S3_PERF_DB_MAX  100000000
 
 static int
 rd_get_opened(struct repdev_rd *rd) {
@@ -4910,6 +4911,7 @@ rd_log_flush_thread(void *arg)
 	int delete_max_reached = 0;
 	int commit_max_reached = 0;
 	long commit_size = 0;
+	size_t flushed_total = 0;
 
 	uv_mutex_lock(&db->log_flush_lock);
 	db->log_flush_cnt = pthread_self();
@@ -5257,7 +5259,7 @@ _start:
 											reptrans_bump_hashcount(dev, s3_chids + i, 1);
 										if (is_rowusage_data_type_tag(ttag))
 											reptrans_bump_rowusage(dev, s3_chids + i, s3_val[i].len);
-										put_size = s3_val[i].len + rd->metaloc.psize*2;
+										put_size += s3_val[i].len;
 
 										if (is_keycache_tt(ttag)) {
 											if (dev->journal && !keydb_blocked) {
@@ -5650,6 +5652,7 @@ _check_err:
 	if (s3buf_n) {
 		char buf[S3_SYNC_PUT_MAX][PATH_MAX] = {{0}};
 		uv_buf_t sub[S3_SYNC_PUT_MAX];
+		size_t put_bytes = 0;
 		for (size_t i = 0; i < s3buf_n; i++) {
 			reptrans_make_s3_key(dev, s3_chids + i, buf[i], PATH_MAX);
 			sub[i].base = buf[i];
@@ -5672,7 +5675,7 @@ _check_err:
 						reptrans_bump_hashcount(dev, s3_chids + i, 1);
 					if (is_rowusage_data_type_tag(ttag))
 						reptrans_bump_rowusage(dev, s3_chids + i, s3_val[i].len);
-
+					put_bytes += s3_val[i].len;
 					if (is_keycache_tt(ttag)) {
 						if (dev->journal && !keydb_blocked) {
 							err = keydb_blocked = rd_key_insert(dev, ttag, md_txn,
@@ -5692,6 +5695,8 @@ _check_err:
 					log_error(lg, "Dev(%s): log_flush %s mdb_cursor_put_attr %d (%s) env_path %s part %d",
 					    dev->name, type_tag_name[ttag],err, mdb_strerror(err), main_env_path, db->part);
 			}
+			rd->flushed_bytes += put_bytes;
+			commit_size += put_bytes;
 		} else {
 			log_notice(lg, "Dev(%s) S3 PUT returned code %d, will retry", dev->name, err);
 			err = 0;
@@ -5847,6 +5852,7 @@ _check_err:
 
 _exit:
 	rd_track_commit_size(-commit_size);
+	flushed_total += commit_size;
 
 	for (int n = 0; n < DEV_SHARDS_MAX; n++) {
 		if (main_cursor[n])
@@ -5920,6 +5926,14 @@ _exit:
 		goto _start;
 	}
 
+	if (flushed_total) {
+		uint64_t duration = 1 + uv_hrtime() - start_us;
+		size_t bps = flushed_total*1000000000UL/duration;
+		avg_ring_update_limited(db->perf + ttag, bps, S3_PERF_DB_MAX);
+		if (ttag == TT_CHUNK_PAYLOAD)
+			log_debug(lg, "Dev(%s) payload flush perf %.3f MB/s",
+				dev->name, db->perf[ttag].mean/1e6);
+	}
 	dev->flushing &= ~(1 << ttag);
 	dev->flushing_part &= ~(1 << db->part);
 
@@ -5988,10 +6002,35 @@ rd_log_append(struct repdev *dev, struct repdev_log *log, type_tag_t ttag,
 	struct repdev_db *db = log->db;
 	MDB_dbi dbi = log->dbi[ttag];
 	size_t len = rtbuf_len(rb);
+	uint64_t delay_us = 0;
+	uint64_t begin = 0;
 	int txn_flags = is_datasync_tt(dev, ttag) ? MDB_TXN_SYNC : 0;
+	/* Maximum performance per DB is limited by the WAL flush performance */
+
+	int need_throttling = rd->s3_ctx && ttag == TT_CHUNK_PAYLOAD && !dev->wal_disabled;
+
+	if (need_throttling) {
+		pthread_mutex_lock(&db->perf_lock);
+		size_t perf_limit = db->perf[ttag].mean;
+		begin = get_timestamp_us();
+		if (!db->perf_throttle_ts || db->perf_throttle_ts + 100000UL < begin) {
+			db->perf_throttle_ts = begin;
+			db->perf_throttle_len = perf_limit/10; /* Limiting 100mS interval */
+		}
+		if (db->perf_throttle_len <= len) {
+			/*
+			 * This is the last request in the current time slot.
+			 * Block other PUT requests until it's done
+			 */
+			delay_us = db->perf_throttle_ts + 100000UL - begin;
+			db->perf_throttle_len = 0;
+		} else {
+			delay_us = len * 1000000UL / perf_limit;
+			db->perf_throttle_len -= len;
+		}
+	}
 
 	data.mv_size = len;
-
 	/*
 	 * Journal on disk organization.
 	 *
@@ -6079,7 +6118,8 @@ _again:
 				 * allow direct put to main TT
 				 */
 				uv_mutex_unlock(&db->log_flush_lock);
-				return -EBUSY;
+				err = -EBUSY;
+				goto _exit;
 			}
 			err = uv_cond_timedwait(&db->log_flush_condvar,
 			    &db->log_flush_lock, 100000LL); // 100us
@@ -6378,6 +6418,15 @@ _exit:
 	if (txn)
 		rdlog_txn_abort(log, txn);
 
+	if (need_throttling) {
+		/* Journal is updated on WAL flush */
+		if (delay_us) {
+			uint64_t duration = get_timestamp_us() - begin;
+			if (delay_us > duration && !err)
+				usleep(delay_us - duration);
+		}
+		pthread_mutex_unlock(&db->perf_lock);
+	}
 	if (!err && (is_keycache_tt(ttag) || ttag == TT_NAMEINDEX)) {
 		MDB_txn* md_txn = NULL;
 		MDB_val keyhv;
@@ -6394,7 +6443,6 @@ _exit:
 			} else if (!attr)
 				key_cache_remove(db->key_cache, &kh, ttag);
 		}
-		/* Journal is updated on WAL flush */
 	}
 	return err;
 }
@@ -6454,7 +6502,7 @@ rd_put_blob_with_attr(struct repdev *dev, type_tag_t ttag,
 			attr = 1;
 		do {
 			err = rd_log_append(dev, log, ttag, hash_type, &keybuf,
-				rb, attr, use_s3);
+				rb, attr, 0);
 		} while (err == -EFAULT && --cnt);
 
 		assert (err != -EEXIST);
@@ -11473,6 +11521,17 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 			uv_rwlock_init(&db->bloom_lock);
 			uv_mutex_init(&db->log_flush_lock);
 			uv_cond_init(&db->log_flush_condvar);
+			pthread_mutex_init(&db->perf_lock, NULL);
+			/* Start WAL flush performance measurement from the middle */
+			for (size_t n = TT_NAMEINDEX; n < TT_LAST; n++) {
+				for (size_t i = 0; i < AVG_RING_SIZE; i++) {
+					db->perf[n].buffer[i] = S3_PERF_DB_MAX/2;
+					db->perf[n].sum += S3_PERF_DB_MAX/2;
+				}
+				db->perf[n].mean = S3_PERF_DB_MAX/2;
+				db->perf[n].oldest = 0;
+			}
+
 			/* init the keycache */
 			if (dev->keycache_enabled == 1) {
 				if (key_cache_ini(&db->key_cache, dev->keycache_size_max, NULL) != 0)

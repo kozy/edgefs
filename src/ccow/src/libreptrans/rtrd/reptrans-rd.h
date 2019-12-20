@@ -407,6 +407,10 @@ struct repdev_db {
     uv_cond_t log_flush_condvar;
     uint16_t flush_error_count[TT_LAST];
     key_cache_t *key_cache;
+    struct avg_ring perf[TT_LAST];
+    size_t perf_throttle_ts;
+    size_t perf_throttle_len;
+    pthread_mutex_t perf_lock;
 };
 
 

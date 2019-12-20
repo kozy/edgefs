@@ -1206,7 +1206,7 @@ client_getcommon_rttransfer(struct state *st)
 		/* wait for more datagrams */
 		req->timer_req->data = st;
 		uv_timer_start(req->timer_req, client_getcommon_sendaccept_timeout,
-			2, 0);
+			10, 0);
 		return;
 	}
 
