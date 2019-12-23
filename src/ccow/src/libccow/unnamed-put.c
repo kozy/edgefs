@@ -135,9 +135,10 @@ unnamedput__term(struct state *st)
 	uint64_t begin = r->req_start; // Set by unnamed_put_send
 	uint64_t slected = r->rtselected_ts; // Time when selected devices were chosen
 	uint64_t rt_begin = r->rt_req_start; // When RT was triggered
+	uint64_t rt_received = r->payload_received_ts; // When RT was triggered
 	uint64_t end = get_timestamp_us(); // Request done
-	log_debug(lg, "UP CHID %016lX: sel %lu uS, RT %lu uS, done %lu, delayed_start %lu",
-		r->chid.u.u.u, slected - begin, rt_begin - begin, end - begin,
+	log_debug(lg, "UP CHID %016lX: sel %lu uS, RT %lu uS, RT recv %lu uS, done %lu, delayed_start %lu",
+		r->chid.u.u.u, slected - begin, rt_begin - begin, rt_received - begin, end - begin,
 		r->delayed_start_us );
 	client_put_common_terminate(st);
 }

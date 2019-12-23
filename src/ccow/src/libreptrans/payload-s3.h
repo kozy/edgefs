@@ -57,5 +57,6 @@ int payload_s3_put(struct payload_s3 *ctx, const char* key, uv_buf_t *data);
 int payload_s3_put_multi(struct payload_s3 *ctx, uv_buf_t* keys, uv_buf_t* data, size_t n);
 int payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf);
 int payload_s3_delete(struct payload_s3 *ctx, const char* key);
+int payload_s3_delete_multi(struct payload_s3 *ctx, uv_buf_t* keys, size_t n);
 
 #endif
