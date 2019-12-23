@@ -259,23 +259,19 @@ __inode_free(ccowfs_inode * inode)
 	if (inode == NULL)
 		return;
 	log_trace(fsio_lg, "inode: %lu (%p)", inode->ino, inode);
-
+	log_debug(fsio_lg, "syncing inode %ju, before free", inode->ino);
+	err = ccowfs_inode_sync(inode, 0);
+	if (err) {
+		log_error(fsio_lg, "can't free inode "
+		    "%ju, it's dirty yet. err: %d",
+		    inode->ino, err);
+		return;
+	}
 	if (!QUEUE_EMPTY(&inode->ci->open_files_head)) {
 		QUEUE_FOREACH(q, &inode->ci->open_files_head) {
 			q_inode = QUEUE_DATA(q, ccowfs_inode, dirty_q);
 			if (q_inode->ino != inode->ino)
 				continue;
-			if (q_inode->dirty != 0) {
-				log_debug(fsio_lg, "syncing inode %ju, before "
-				    "free", inode->ino);
-				err = ccowfs_inode_sync(inode, 0);
-				if (err) {
-					log_error(fsio_lg, "can't free inode "
-					    "%ju, it's dirty yet. err: %d",
-					    inode->ino, err);
-					return;
-				}
-			}
 			QUEUE_REMOVE(q);
 			QUEUE_INIT(&q_inode->dirty_q);
 			break;
