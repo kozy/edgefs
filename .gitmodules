@@ -81,7 +81,7 @@
 [submodule "deps/nfs-ganesha/nfs-ganesha"]
 	path = deps/nfs-ganesha/nfs-ganesha
 	url = https://github.com/Nexenta/nfs-ganesha.git
-	branch = v2.7.4-nexenta
+	branch = V2.7-nexenta
 	ignore = all
 [submodule "deps/nfs-ganesha/nfs-utils"]
 	path = deps/nfs-ganesha/nfs-utils
