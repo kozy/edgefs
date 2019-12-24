@@ -290,6 +290,10 @@ ccowfs_inode_flusher(ci_t * ci, int mem_pressure, int max_count)
 				}
 				flushed++;
 			}
+
+			/* Free unused buffers. */
+			fsio_buffer_cache_flush(q_inode, 1);
+
 			/*
 			 * Put the dirty queue ref and decriment runcount
 			 */
