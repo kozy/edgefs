@@ -34,6 +34,7 @@
 #include "fsio_system.h"
 #include "fsio_flusher.h"
 #include "fsio_inode.h"
+#include "fsio_cache.h"
 #include "fsio_dir.h"
 #include "tc_pool.h"
 
