@@ -555,7 +555,7 @@ clstat_notify_cb(struct cpg_node *sender, void *msg, size_t msg_len)
 				for (size_t i = 0; i < num; i++) {
 					if (strstr(keys[i], substr) && !strstr(keys[i], ip)) {
 						hashtable_remove(clstat_table, keys[i], strlen(keys[i]) + 1);
-						log_debug(lg, "Removed an outdated entry with key %s", keys[i]);
+						log_debug(lg, "Removed an outdated entry with key %s", (char*)keys[i]);
 					}
 				}
 				if (keys)
