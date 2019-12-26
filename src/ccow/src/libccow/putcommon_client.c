@@ -708,6 +708,7 @@ int client_putcommon_guard_rcvd_consensus(struct state *st)
 	if (++r->rcvd_count >= r->selected_count) {
 		log_debug(lg, "Built RCVD concensus (selected_count=%d): rcvd_max_delta=%ld",
 		    r->selected_count, r->rcvd_max_delta);
+		r->payload_received_ts = get_timestamp_us();
 		return 1;
 	}
 

@@ -1824,6 +1824,7 @@ vm_override_test(void **state) {
 
 struct chid_qe {
 	uint512_t chid;
+	crypto_hash_t ht;
 	size_t size;
 	uv_buf_t buf;
 	struct chid_qe* next;
@@ -1901,6 +1902,7 @@ put_perf_test(void **state) {
 		rb->bufs->base = buffer + i;
 		rb->bufs->len = chunk_size;
 		struct chid_qe* e = je_malloc(sizeof(*e));
+		e->next = NULL;
 		rtbuf_hash(rb, HASH_TYPE_DEFAULT, &e->chid);
 		e->buf = rb->bufs[0];
 		if (!qarg.head)
@@ -1967,6 +1969,33 @@ get_thr(void* arg) {
 	return 0;
 }
 
+static void*
+del_thr(void* arg) {
+	struct get_queue_arg* p = arg;
+	uint512_t chid = uint512_null;
+	size_t size;
+	crypto_hash_t ht;
+	char buff[PATH_MAX];
+	while (1) {
+		pthread_mutex_lock(&p->lock);
+		while (!p->head && !p->term)
+			pthread_cond_wait(&p->cond, &p->lock);
+		if (!p->head) {
+			pthread_mutex_unlock(&p->lock);
+			return NULL;
+		}
+		struct chid_qe* q = p->head;
+		chid = q->chid;
+		size = q->size;
+		ht = q->ht;
+		p->head = q->next;
+		je_free(q);
+		pthread_mutex_unlock(&p->lock);
+		assert_int_equal(0, reptrans_delete_blob(p->dev, TT_CHUNK_PAYLOAD, ht, &chid));
+	}
+	return 0;
+}
+
 static int
 get_queue_append(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	uint512_t *key, uv_buf_t *val, void *param) {
@@ -1984,6 +2013,7 @@ get_queue_append(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	qe->chid = *key;
 	qe->size = bstat.size;
 	qe->next = p->head;
+	qe->ht = hash_type;
 	p->head = qe;
 	pthread_cond_signal(&p->cond);
 	pthread_mutex_unlock(&p->lock);
@@ -2029,6 +2059,46 @@ iterate_get_perf_test(void **state) {
 		pthread_cond_destroy(&qarg.cond);
 	}
 }
+
+static void
+iterate_del_perf_test(void **state) {
+	int err =  reptrans_init(0, NULL, NULL,
+		RT_FLAG_STANDALONE | RT_FLAG_CREATE, 1, (char**)transport, NULL);
+
+	assert_true(err > 0);
+	if (err <= 0)
+		return;
+
+	int ndev = libreptrans_enum();
+	assert_true(ndev > 0);
+
+	if (ndev <= 0)
+		return;
+	for (int i = 0; i < ndev; i++) {
+		struct repdev* dev = devices[i];
+		struct vm_get_arg arg = {.rb = NULL };
+
+		struct get_queue_arg qarg = {.dev = dev, .head = NULL, .term = 0 };
+		pthread_mutex_init(&qarg.lock, NULL);
+		pthread_cond_init(&qarg.cond, NULL);
+		pthread_t thr[NTHR];
+		for (size_t i = 0; i < NTHR; i++)
+			pthread_create(thr + i, NULL, del_thr, &qarg);
+
+		reptrans_iterate_blobs(dev, TT_CHUNK_PAYLOAD, get_queue_append, &qarg, 0);
+		while (qarg.head != NULL)
+			usleep(100000);
+		pthread_mutex_lock(&qarg.lock);
+		qarg.term = 1;
+		pthread_cond_broadcast(&qarg.cond);
+		pthread_mutex_unlock(&qarg.lock);
+
+		for (size_t i = 0; i < NTHR; i++)
+			pthread_join(thr[i], NULL);
+		pthread_mutex_destroy(&qarg.lock);
+		pthread_cond_destroy(&qarg.cond);
+	}
+}
 int
 main(int argc, char *argv[])
 {
@@ -2051,9 +2121,13 @@ main(int argc, char *argv[])
 
 	const UnitTest tests[] = {
 #if 0
-		unit_test(iterate_get_perf_test),
+		unit_test(iterate_del_perf_test),
 		unit_test(reptrans_teardown),
 		unit_test(put_perf_test),
+		unit_test(reptrans_teardown),
+		unit_test(iterate_get_perf_test),
+		unit_test(reptrans_teardown),
+		unit_test(iterate_del_perf_test),
 		unit_test(reptrans_teardown),
 #endif
 		unit_test(vm_override_test),

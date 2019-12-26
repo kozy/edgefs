@@ -1118,6 +1118,7 @@ struct putcommon_client_req {
 	int rcvd_count;
 	uint64_t rcvd_max_delta;
 	uint64_t rt_delta_timeout;
+	uint64_t payload_received_ts;
 	int rtsend_timer_fd;
 	int start_timer_fd;
 	UV_HPT_TIMER_T *rtsend_timer_req;

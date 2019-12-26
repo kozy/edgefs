@@ -138,6 +138,7 @@ get_cache_find(struct get_cache* p, char* key, uv_buf_t* out) {
 }
 
 struct perf_cap {
+	char hdr[128];
 	uint64_t ts; /* Timestamp of a measurement interval */
 	size_t size; /* Size of data transfered during a measurement interval */
 	size_t par_ops; /* Max. number of parallel operations */
@@ -148,8 +149,9 @@ struct perf_cap {
 	pthread_mutex_t lock;
 };
 
-static struct perf_cap g_get_perf = {0};
-static struct perf_cap g_put_perf = {0};
+static struct perf_cap g_get_perf = {.hdr = "GET perf"};
+static struct perf_cap g_put_perf = {.hdr = "PUT perf"};
+static struct perf_cap g_del_perf = {.hdr = "DEL perf"};
 
 #define atomic_set(ptr, val, tmp) \
 	do { \
@@ -162,7 +164,7 @@ perf_cache_hit(struct perf_cap* cap) {
 }
 
 static void
-perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur, const char* prefix) {
+perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur) {
 	uint64_t tmp64;
 	size_t tmpst;
 	char buff[128];
@@ -171,7 +173,7 @@ perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur, const char* pre
 		pthread_mutex_init(&cap->lock, NULL);
 	}
 
-	if (!size) {
+	if (!dur) {
 		/* Operation start */
 		uint64_t pops = __sync_add_and_fetch(&cap->par_ops, 1);
 		if (pops > cap->par_ops_max)
@@ -203,7 +205,7 @@ perf_cap_update(struct perf_cap* cap, size_t size, uint64_t dur, const char* pre
 		atomic_set(&cap->dur, 0, tmp64);
 		sprintf(buff+strlen(buff), "avg %lu mS", tmp64/((tmpst ? tmpst : 1)*1000UL));
 
-		log_debug(lg, "%s: %s, perf %.3f MB/s, cache hits %lu", prefix, buff,
+		log_debug(lg, "%s: %s, perf %.3f MB/s, cache hits %lu", cap->hdr, buff,
 			(double)len/(double)(get_timestamp_us() - ts_begin), cap->chits);
 		pthread_mutex_unlock(&cap->lock);
 	}
@@ -410,6 +412,7 @@ struct payload_s3_write_ctx {
 	CURL *req;
 	FILE *ferr;
 	uv_buf_t data;
+	char errbuf[CURL_ERROR_SIZE];
 	int retry;
 	int err;
 };
@@ -462,8 +465,8 @@ payloas_s3_put_create(struct payload_s3 *ctx, const char* key, uv_buf_t *data,
 	curl_easy_setopt(p->req, CURLOPT_SHARE, ctx->share);
 	curl_easy_setopt(p->req, CURLOPT_UPLOAD, 1L);
 
-	errbuf[0] = 0;
-	curl_easy_setopt(p->req, CURLOPT_ERRORBUFFER, errbuf);
+	p->errbuf[0] = 0;
+	curl_easy_setopt(p->req, CURLOPT_ERRORBUFFER, p->errbuf);
 	if (curl_verb) {
 		curl_easy_setopt(p->req, CURLOPT_DEBUGFUNCTION, payload_s3_trace);
 		curl_easy_setopt(p->req, CURLOPT_VERBOSE, 1L);
@@ -511,7 +514,7 @@ payload_s3_put(struct payload_s3 *ctx, const char* key, uv_buf_t *data)
 	uint64_t begin = get_timestamp_us();
 	int retry = 1;
 
-	perf_cap_update(&g_put_perf, 0, 0, "PUT perf");
+	perf_cap_update(&g_put_perf, 0, 0);
 	struct payload_s3_write_ctx* h = NULL;
 	int err = payloas_s3_put_create(ctx, key, data, &h);
 	if (err) {
@@ -555,17 +558,14 @@ _retry:
 	}
 	payload_s3_put_cleanup(h);
 	if (!err)
-		perf_cap_update(&g_put_perf, data->len, get_timestamp_us() - begin,
-			"PUT perf");
+		perf_cap_update(&g_put_perf, data->len, get_timestamp_us() - begin);
 	return err;
 }
 
-int
-payload_s3_put_multi(struct payload_s3 *ctx, uv_buf_t* keys, uv_buf_t* data, size_t n) {
+static int
+payload_s3_put_multi_perform(struct payload_s3 *ctx, struct payload_s3_write_ctx** reqs,
+	size_t n_reqs, struct perf_cap* perf) {
 	assert(ctx);
-	assert(keys);
-	assert(data);
-	struct payload_s3_write_ctx* hdls[n];
 	CURLMcode res = 0;
 	size_t i = 0;
 	int err = 0;
@@ -578,21 +578,14 @@ payload_s3_put_multi(struct payload_s3 *ctx, uv_buf_t* keys, uv_buf_t* data, siz
 		return -ENOMEM;
 	}
 
-	for (; i < n; i++) {
-		char* key = keys[i].base;
-		uv_buf_t val = data[i];
-		int err= payloas_s3_put_create(ctx, key, &val, hdls + i);
-		if (err) {
-			log_error(lg, "Couldn't create S3 PUT request: %d", err);
-			goto _exit;
-		}
-		res = curl_multi_add_handle(cm, hdls[i]->req);
+	for (; i < n_reqs; i++) {
+		res = curl_multi_add_handle(cm, reqs[i]->req);
 		if (CURLM_OK != res) {
-			log_error(lg, "Couldn't add S3 PUT handle to curl_multi: %d",
+			log_error(lg, "Couldn't add S3 handle to curl_multi: %d",
 				res);
 			goto _exit;
 		}
-		perf_cap_update(&g_put_perf, 0, 0, "PUT perf");
+		perf_cap_update(perf, 0, 0);
 	}
 
 _retry:;
@@ -638,9 +631,9 @@ _retry:;
 			CURL *e = m->easy_handle;
 			long response_code = 0;
 			struct payload_s3_write_ctx* h = NULL;
-			for (size_t i = 0; i < n; i++) {
-				if (hdls[i] && hdls[i]->req == e) {
-					h = hdls[i];
+			for (size_t i = 0; i < n_reqs; i++) {
+				if (reqs[i] && reqs[i]->req == e) {
+					h = reqs[i];
 					break;
 				}
 			}
@@ -667,9 +660,8 @@ _retry:;
 						h->err = response_code;
 					else {
 						h->err = 0;
-						assert(h->data.len);
-						perf_cap_update(&g_put_perf, h->data.len,
-							get_timestamp_us() - ts, "PUT perf");
+						perf_cap_update(perf, h->data.len,
+							get_timestamp_us() - ts);
 					}
 				}
 			}
@@ -681,7 +673,8 @@ _retry:;
 					curl_multi_remove_handle(cm, e);
 				} else {
 					n_retry++;
-					payload_s3_put_reset(h);
+					if (h->data.len)
+						payload_s3_put_reset(h);
 				}
 			} else
 				curl_multi_remove_handle(cm, e);
@@ -696,15 +689,39 @@ _retry:;
 
 _exit:
 	for (size_t j = 0; j < i; j++) {
-		if (hdls[j]) {
-			if (!err && hdls[j]->err)
-				err = hdls[j]->err;
-			payload_s3_put_cleanup(hdls[j]);
+		if (reqs[j]) {
+			if (!err && reqs[j]->err)
+				err = reqs[j]->err;
+			payload_s3_put_cleanup(reqs[j]);
 		}
 	}
 	if (cm)
 		curl_multi_cleanup(cm);
 	return err;
+}
+
+int
+payload_s3_put_multi(struct payload_s3 *ctx, uv_buf_t* keys, uv_buf_t* data, size_t n) {
+	assert(ctx);
+	assert(keys);
+	assert(data);
+	struct payload_s3_write_ctx* hdls[n];
+	CURLMcode res = 0;
+	size_t i = 0;
+	int err = 0;
+
+	for (; i < n; i++) {
+		char* key = keys[i].base;
+		uv_buf_t val = data[i];
+		int err= payloas_s3_put_create(ctx, key, &val, hdls + i);
+		if (err) {
+			log_error(lg, "Couldn't create S3 PUT request: %d", err);
+			for (size_t j = 0; j <= i; j++)
+				payload_s3_put_cleanup(hdls[j]);
+			return err;
+		}
+	}
+	return payload_s3_put_multi_perform(ctx,hdls, n, &g_put_perf);
 }
 
 
@@ -760,9 +777,9 @@ payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf)
 			assert(ub.base);
 			memcpy(outbuf->base, ub.base, ub.len);
 			perf_cache_hit(&g_get_perf);
-			perf_cap_update(&g_get_perf, 0, 0, "GET perf");
+			perf_cap_update(&g_get_perf, 0, 0);
 			perf_cap_update(&g_get_perf, outbuf->len,
-				get_timestamp_us() - ts, "GET perf");
+				get_timestamp_us() - ts);
 			return 0;
 		}
 		err = 0;
@@ -776,7 +793,7 @@ payload_s3_get(struct payload_s3 *ctx, const char* key, uv_buf_t *outbuf)
 
 	ts = get_timestamp_us();
 
-	perf_cap_update(&g_get_perf, 0, 0, "GET perf");
+	perf_cap_update(&g_get_perf, 0, 0);
 	sprintf(url, "%s/%s", ctx->bucket_url, key);
 
 	payload_s3_sign_request(ctx, key, "GET", date_header, auth_header);
@@ -846,7 +863,7 @@ _retry:
 		fclose(pfd);
 	if (!err) {
 		perf_cap_update(&g_get_perf, outbuf->len,
-			get_timestamp_us() - ts, "GET perf");
+			get_timestamp_us() - ts);
 	}
 	pthread_mutex_lock(&ctx->get_lock);
 	ctx->parallel_gets--;
@@ -857,52 +874,70 @@ _retry:
 	return err;
 }
 
-int
-payload_s3_delete(struct payload_s3 *ctx, const char *key)
-{
-	CURL *curl;
+
+static int
+payloas_s3_delete_create(struct payload_s3 *ctx, const char* key,
+	struct payload_s3_write_ctx** h) {
+	struct payload_s3_write_ctx* p = je_calloc(1, sizeof(struct payload_s3_write_ctx));
+
 	CURLcode res;
 	char url[2048];
 	char date_header[32];
 	char auth_header[256];
-	char errbuf[CURL_ERROR_SIZE];
-	struct curl_slist *headers = NULL;
-	uint64_t delay = 1;
 	int err = 0;
 
 	sprintf(url, "%s/%s", ctx->bucket_url, key);
 
 	payload_s3_sign_request(ctx, key, "DELETE", date_header, auth_header);
-	headers = curl_slist_append(headers, auth_header);
-	headers = curl_slist_append(headers, date_header);
-	headers = curl_slist_append(headers, "x-amz-content-sha256: UNSIGNED-PAYLOAD");
+	p->headers = curl_slist_append(p->headers, auth_header);
+	p->headers = curl_slist_append(p->headers, date_header);
+	p->headers = curl_slist_append(p->headers, "x-amz-content-sha256: UNSIGNED-PAYLOAD");
 
-	curl = curl_easy_init();
-	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-	curl_easy_setopt(curl, CURLOPT_URL, url);
-	curl_easy_setopt(curl, CURLOPT_SHARE, ctx->share);
-	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
-	curl_easy_setopt(curl, CURLOPT_USERAGENT, EDGE_USER_AGENT);
+	p->req = curl_easy_init();
+	curl_easy_setopt(p->req, CURLOPT_HTTPHEADER,p->headers);
+	curl_easy_setopt(p->req, CURLOPT_URL, url);
+	curl_easy_setopt(p->req, CURLOPT_SHARE, ctx->share);
+	curl_easy_setopt(p->req, CURLOPT_CUSTOMREQUEST, "DELETE");
+	curl_easy_setopt(p->req, CURLOPT_USERAGENT, EDGE_USER_AGENT);
+	p->data.base = NULL;
+	p->data.len = 0;
 
-	errbuf[0] = 0;
-	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errbuf);
+	p->errbuf[0] = 0;
+	curl_easy_setopt(p->req, CURLOPT_ERRORBUFFER, p->errbuf);
 	if (curl_verb) {
-		curl_easy_setopt(curl, CURLOPT_DEBUGFUNCTION, payload_s3_trace);
-		curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+		curl_easy_setopt(p->req, CURLOPT_DEBUGFUNCTION, payload_s3_trace);
+		curl_easy_setopt(p->req, CURLOPT_VERBOSE, 1L);
 	}
 
-	FILE *pfd = fopen("/dev/null", "w");
-	if (pfd)
-		curl_easy_setopt(curl, CURLOPT_STDERR, pfd);
+	p->ferr = fopen("/dev/null", "w");
+	if (p->ferr)
+		curl_easy_setopt(p->req, CURLOPT_STDERR, p->ferr);
+	*h = p;
+	return 0;
+}
+
+int
+payload_s3_delete(struct payload_s3 *ctx, const char *key)
+{
+	struct payload_s3_write_ctx* dc = NULL;
+	CURLcode res;
+	uint64_t delay = 1;
+
+	int err = payloas_s3_delete_create(ctx, key, &dc);
+	if (err) {
+		log_error(lg, "payloas_s3_delete_create() error %d, key %s", err, key);
+		return err;
+	}
+	assert(dc);
 
 _retry:
-	res = curl_easy_perform(curl);
+	res = curl_easy_perform(dc->req);
 	if (res != CURLE_OK) {
 		log_error(lg, "curl_easy_perform() failed: %s", curl_easy_strerror(res));
 		err = -EIO;
 	} else {
 		long response_code;
-		res = curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+		res = curl_easy_getinfo(dc->req, CURLINFO_RESPONSE_CODE, &response_code);
 #if ERR_INJ
 		int resp = err_inj();
 		if (resp)
@@ -925,11 +960,30 @@ _retry:
 				err = -EIO;
 		}
 	}
-	curl_easy_cleanup(curl);
-	curl_slist_free_all(headers);
-	if (pfd)
-		fclose(pfd);
+	payload_s3_put_cleanup(dc);
 	return err;
+}
+
+int
+payload_s3_delete_multi(struct payload_s3 *ctx, uv_buf_t* keys, size_t n) {
+	assert(ctx);
+	assert(keys);
+	struct payload_s3_write_ctx* hdls[n];
+	CURLMcode res = 0;
+	size_t i = 0;
+	int err = 0;
+
+	for (; i < n; i++) {
+		char* key = keys[i].base;
+		int err= payloas_s3_delete_create(ctx, key, hdls + i);
+		if (err) {
+			log_error(lg, "Couldn't create S3 DEL request: %d", err);
+			for (size_t j = 0; j <= i; j++)
+				payload_s3_put_cleanup(hdls[j]);
+			return err;
+		}
+	}
+	return payload_s3_put_multi_perform(ctx,hdls, n, &g_del_perf);
 }
 
 int
