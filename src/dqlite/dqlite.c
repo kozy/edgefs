@@ -37,6 +37,7 @@
 #include <sys/resource.h>
 
 #include "ccowutil.h"
+#include "ccowfsio.h"
 #include "logger.h"
 #include "dqlite.h"
 
@@ -64,6 +65,7 @@ ccow_dq_stop()
 		return err;
 	}
 
+	ccow_fsio_term();
 	dqlite_node_destroy(cdq_server.node);
 	log_notice(lg, "Stopped dqlite node addr: %s, dir: %s\n",
 			cdq_server.addr, cdq_server.dir);
