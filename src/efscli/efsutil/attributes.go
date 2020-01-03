@@ -125,6 +125,7 @@ var flagMap = map[string]FlagValue{
 	"chunk-size": {"chunk-size", "", "s", "", "Chunk size 2^n (from 8K to 4M). E.g 1M",
 		"8192|16384|32768|65536|131072|262144|524288|1048576|2097152|4194304|[0-9]+K|[0-9]+M|[0-9]+k|[0-9]+m",
 		"uint32", C.CCOW_ATTR_CHUNKMAP_CHUNK_SIZE},
+	"btree-order":       {"btree-order", "", "b", "", "Btree order", "[0-9]*", "uint16", C.CCOW_ATTR_BTREE_ORDER},
 	"number-of-versions":       {"number-of-versions", "", "n", "", "Number of versions", "[1-9][0-9]*", "uint16", C.CCOW_ATTR_NUMBER_OF_VERSIONS},
 	"replication-count":        {"replication-count", "", "r", "", "Replication count (1-4). E.g. 2", "[1-4]", "uint8", C.CCOW_ATTR_REPLICATION_COUNT},
 	"sync-put":                 {"sync-put", "", "R", "", "Sync put (1-4). E.g. 1", "[1-4]", "uint8", C.CCOW_ATTR_SYNC_PUT},
@@ -466,6 +467,33 @@ func InheritBucketAttributes(c unsafe.Pointer, bucket map[string]string) error {
 	f.Attr = C.CCOW_ATTR_SELECT_POLICY
 	f.Ctype = "uint8"
 	f.Value = bucket["ccow-select-policy"]
+	e = modifyDefaultAttribute(unsafe.Pointer(c), &f)
+	if e != nil {
+		return e
+	}
+
+	return nil
+}
+
+func SetKeyValueAttributes(c unsafe.Pointer) error {
+	var f FlagValue
+	var e error
+
+	// Chunkmap type
+	f.Name = "Chunkmap type"
+	f.Attr = C.CCOW_ATTR_CHUNKMAP_TYPE
+	f.Ctype = "char"
+	f.Value = "btree_key_val"
+	e = modifyDefaultAttribute(unsafe.Pointer(c), &f)
+	if e != nil {
+		return e
+	}
+
+	// Inline flags
+	f.Name = "Inline data type"
+	f.Attr = C.RT_INLINE_DATA_TYPE_USER_KV
+	f.Ctype = "uint16"
+	f.Value = strconv.FormatInt(C.RT_INLINE_DATA_TYPE_USER_KV, 10)
 	e = modifyDefaultAttribute(unsafe.Pointer(c), &f)
 	if e != nil {
 		return e

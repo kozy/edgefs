@@ -36,23 +36,24 @@ import (
 	"fmt"
 	"strings"
 )
+
 var (
-	ondemandPolicyName = [...]string {"LOCAL", "CACHED", "PINNED", "PERSISTENT"}
+	ondemandPolicyName = [...]string{"LOCAL", "CACHED", "PINNED", "PERSISTENT"}
 )
 
 func GetOndemandPolicyString(cl string, tn string, bk string, obj string) (string, error) {
-	inline_str,err := GetMDKey(cl, tn, bk, obj, "ccow-inline-data-flags")
-		if err != nil {
-			return "", fmt.Errorf("%s: error fetching metadata for object %v: %v",
-				GetFUNC(), obj, err)
-		}
-		inline := 0
-		n,err := fmt.Sscanf(inline_str, "%d", &inline);
-		if err != nil || n != 1 {
-				return "", fmt.Errorf("%s: error parsing inline propery of object %v: %v",
-					GetFUNC(), obj, inline_str)
-		}
-		return ondemandPolicyName[(inline>>12) & 3], nil
+	inline_str, err := GetMDKey(cl, tn, bk, obj, "ccow-inline-data-flags")
+	if err != nil {
+		return "", fmt.Errorf("%s: error fetching metadata for object %v: %v",
+			GetFUNC(), obj, err)
+	}
+	inline := 0
+	n, err := fmt.Sscanf(inline_str, "%d", &inline)
+	if err != nil || n != 1 {
+		return "", fmt.Errorf("%s: error parsing inline propery of object %v: %v",
+			GetFUNC(), obj, inline_str)
+	}
+	return ondemandPolicyName[(inline>>12)&3], nil
 
 }
 
@@ -202,18 +203,18 @@ func PrintKeyValues(cl string, tn string, bk string, obj string, pat string, cmp
 			return "", fmt.Errorf("%s: unpack object size err=%d", GetFUNC(), ret)
 		}
 		if extended {
-			inline_str,err := GetMDKey(cl, tn, bk, gkey, "ccow-inline-data-flags")
+			inline_str, err := GetMDKey(cl, tn, bk, gkey, "ccow-inline-data-flags")
 			if err != nil {
 				return "", fmt.Errorf("%s: error fetching metadata for object %v err=%d",
 					GetFUNC(), gkey, ret)
 			}
 			inline := 0
-			n,err := fmt.Sscanf(inline_str, "%d", &inline);
+			n, err := fmt.Sscanf(inline_str, "%d", &inline)
 			if err != nil || n != 1 {
-					return "", fmt.Errorf("%s: error parsing inline propery of object %v: %v",
-						GetFUNC(), gkey, inline_str)
+				return "", fmt.Errorf("%s: error parsing inline propery of object %v: %v",
+					GetFUNC(), gkey, inline_str)
 			}
-			polstr := ondemandPolicyName[(inline>>12) & 3]
+			polstr := ondemandPolicyName[(inline>>12)&3]
 			fmt.Printf("%20s\t%10s %v %v %v %v %v\n", gkey, polstr,
 				object_deleted, timestamp, generation, schid[0:16], size)
 		} else {
@@ -320,17 +321,26 @@ func PrintKeyStrValues(cl string, tn string, bk string, obj string, pat string, 
 		if r != 0 {
 			return "", fmt.Errorf("%s: unpack version err=%d", GetFUNC(), ret)
 		}
-		if ver != 2 {
-			continue
-		}
 
 		buf := make([]byte, max_len+1)
 		c_buf := C.CString(string(buf))
 		defer C.free(unsafe.Pointer(c_buf))
 
-		r, _ = C.msgpack_unpack_str(u, c_buf, C.uint(max_len))
-		if r != 0 {
-			return "", fmt.Errorf("%s: unpack object=%d", GetFUNC(), ret)
+		if ver == 2 {
+			r, _ = C.msgpack_unpack_str(u, c_buf, C.uint(max_len))
+			if r != 0 {
+				return "", fmt.Errorf("%s: unpack object=%d", GetFUNC(), ret)
+			}
+		} else if ver == 5 {
+			var data *C.uint8_t
+			var nout C.uint32_t
+			r = C.msgpack_unpack_raw(u, &data, &nout)
+			if r != 0 {
+				return "", fmt.Errorf("%s: unpack object=%d", GetFUNC(), ret)
+			}
+			C.memcpy(unsafe.Pointer(c_buf), unsafe.Pointer(data), C.ulong(nout))
+		} else {
+			continue
 		}
 
 		gvalue := C.GoString(c_buf)
