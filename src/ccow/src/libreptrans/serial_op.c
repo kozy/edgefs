@@ -1333,9 +1333,9 @@ namedput_list_run(void *arg) {
 		if (!isDelay(msg) || isFlush(minor)) { // no delay or flush operation
 			// finalize
 			if (c_inprog) {
-				ccow_lookup_t itfinal;
+				ccow_lookup_t itfinal = NULL;
 				err = ccow_finalize(c_inprog, &itfinal);
-				if (!err)
+				if (!err && itfinal)
 					ccow_lookup_release(itfinal);
 				iter = NULL;
 				c_inprog = NULL;
