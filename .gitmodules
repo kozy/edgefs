@@ -111,6 +111,7 @@
 [submodule "deps/dqlite/dqlite"]
 	path = deps/dqlite/dqlite
 	url = https://github.com/Nexenta/dqlite.git
+	branch=dqlite
 [submodule "deps/sqlite/sqlite"]
 	path = deps/sqlite/sqlite
 	url = https://github.com/Nexenta/sqlite.git

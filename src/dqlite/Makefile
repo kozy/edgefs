@@ -18,8 +18,8 @@ CFLAGS += $(ASAN_CPPFLAGS) -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -
 	  -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-parameter \
 	  -Wno-cast-align -Wno-unused-function -D_GNU_SOURCE \
 	  -g -I. -I../ccow/include
-LDFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil
-LXFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil
+LDFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio
+LXFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio
 
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
 
