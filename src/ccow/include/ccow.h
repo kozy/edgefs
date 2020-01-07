@@ -2506,20 +2506,48 @@ ccow_get_default_attribute(ccow_completion_t c, ccow_default_attr_t attr, void* 
  */
 uint64_t ccow_get_segment_guid(ccow_t tc);
 
+/**
+ * Set isgw bid
+ *
+ * @param tc - tenant context
+ * @param c  completion object
+ * @returns segment GUID
+ */
+void set_isgw_bid(ccow_completion_t c, char *bid);
+
+
 struct uint512;
 typedef struct uint512 *uint512_p;
+
 /**
- * An object/tenant referenced by an mdonly snapshot usually doesn't have a local VM
- * It needs to be fetched from remote. The used has to provide the
- * dyn_fetch, tid/bid and optional oid parameters.
+ * Prfetch version manifest
+ * @param tc - tenant context
+ * @param bid the NULL terminated string of name id of the bucket
+ * @param bid_size bucket name size
+ * @param oid the NULL terminated string of name id of the object to lock
+ * @param oid_size object name size
+ * @param seg_id target segment id
+ * @returns 0 on success, error code otherwise
  */
 int
-ccow_clone_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
+ccow_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
 	const char* tid, size_t tid_size,
 	const char* bid, size_t bid_size,
 	const char* oid, size_t oid_size,
-	int dyn_fetch,
+	uint64_t seg_id,
 	ccow_completion_t c);
+
+/**
+ *  Get vm_content_hash_id from completion
+ */
+uint512_p
+ccow_get_vm_content_hash_id(ccow_completion_t c);
+
+/**
+ *  Get vm_name_hash_id from completion
+ */
+uint512_p
+ccow_get_vm_name_hash_id(ccow_completion_t c);
 
 #ifdef	__cplusplus
 }

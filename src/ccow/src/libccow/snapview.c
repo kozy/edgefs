@@ -274,7 +274,7 @@ ccow_snapview_get_chid_by_name(ccow_t tctx, ccow_snapview_t sv_hdl,
  * It needs to be fetched from remote. The used has to provide the
  * dyn_fetch, tid/bid and optional oid parameters.
  */
-int
+static int
 ccow_clone_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
 	const char* tid, size_t tid_size,
 	const char* bid, size_t bid_size,
@@ -342,6 +342,7 @@ ccow_clone_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
 			get_io->attributes |= RD_ATTR_GET_CONSENSUS;
 			ug_op->isgw_dfetch = 1;
 			RT_ONDEMAND_SET(ug_op->metadata.inline_data_flags, ondemandPolicyUnpin);
+
 			/*
 			 * Prepare refentry for ISGW
 			 * Set entry type to inline just for ISGW to distinguish CM/CP/VM
@@ -358,6 +359,93 @@ ccow_clone_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
 	req->offset = 0;
 	return ccow_start_io(get_io);
 }
+
+
+int
+ccow_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
+	const char* tid, size_t tid_size,
+	const char* bid, size_t bid_size,
+	const char* oid, size_t oid_size,
+	uint64_t seg_id,
+	ccow_completion_t c) {
+
+	assert(vmchid);
+	assert(nhid);
+	assert(tc);
+
+	c->vm_name_hash_id = *nhid;
+	struct ccow_op *ug_op;
+	struct ccow_io *get_io;
+	/*
+	 * Fetch metadata of a source object/bucket
+	 */
+	int err = ccow_operation_create(c, CCOW_CLONE, &ug_op);
+	if (err) {
+		log_error(lg, "Operation create error %d", err);
+		return err;
+	}
+
+	err = ccow_unnamedget_create(c, clone_unnamed_get_cb, ug_op, &get_io,
+	    NULL);
+	if (err) {
+		ccow_operation_destroy(ug_op, 1);
+		log_error(lg, "error returned by ccow_unnamedget_create: %d",err);
+		return err;
+	}
+	struct iovec iov;
+	iov.iov_base = "";
+	iov.iov_len = 1;
+
+	ug_op->iov_in = &iov;
+	ug_op->iovcnt_in = 1;
+	ug_op->offset = 0;
+
+	ug_op->chunks = rtbuf_init_mapped((uv_buf_t *)&iov, 1);
+	get_io->attributes |= RD_ATTR_VERSION_MANIFEST;
+	struct getcommon_client_req *req = CCOW_IO_REQ(get_io);
+	if (tid && tid_size > 1 && *tid != 0 && bid && bid_size > 1 && *bid != 0) {
+		ug_op->cid = je_memdup(tc->cid, tc->cid_size);
+		if (!ug_op->cid)
+			return -ENOMEM;
+
+		ug_op->tid = je_memdup(tid, tid_size);
+		if (!ug_op->tid)
+			return -ENOMEM;
+
+		ug_op->bid = je_memdup(bid, bid_size);
+		if (!ug_op->bid)
+			return -ENOMEM;
+
+		ug_op->oid = je_memdup(oid, oid_size);
+		if (!ug_op->oid)
+			return -ENOMEM;
+
+		ug_op->cid_size = tc->cid_size;
+		ug_op->tid_size = tid_size;
+		ug_op->bid_size = bid_size;
+		ug_op->oid_size = oid_size;
+
+		get_io->attributes |= RD_ATTR_GET_CONSENSUS;
+		ug_op->isgw_dfetch = 1;
+		RT_ONDEMAND_SET(ug_op->metadata.inline_data_flags, ondemandPolicyUnpin);
+		ug_op->metadata.uvid_src_guid.l = seg_id;
+
+		/*
+		* Prepare refentry for ISGW
+		* Set entry type to inline just for ISGW to distinguish CM/CP/VM
+		*/
+		req->ref.content_hash_id = *vmchid;
+		req->ref.name_hash_id = *nhid;
+		RT_REF_TYPE_SET(&req->ref, RT_REF_TYPE_INLINE_VERSION);
+		RT_REF_HASH_TYPE_SET(&req->ref, HASH_TYPE_DEFAULT);
+	}
+
+	req->ng_chid = *nhid;
+	req->chid = *vmchid;
+	req->offset = 0;
+	return ccow_start_io(get_io);
+}
+
 
 /*
  * Clone an object from a snapshot handle.

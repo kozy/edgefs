@@ -4850,6 +4850,8 @@ ccow_get_segment_guid(ccow_t tc)
 	return tc->this_guid.l;
 }
 
+
+
 void
 ccow_assign_this_guid(ccow_t tc, char *system_guid, size_t system_guid_size)
 {
@@ -7626,4 +7628,19 @@ ccow_chunk_lookup(ccow_completion_t c, const uint512_t* chid, const uint512_t* n
 		return err;
 	}
 	return 0;
+}
+
+void
+set_isgw_bid(ccow_completion_t c, char *bid) {
+	c->isgw_bid = bid;
+}
+
+uint512_p
+ccow_get_vm_content_hash_id(ccow_completion_t c) {
+	return &c->vm_content_hash_id;
+}
+
+uint512_p
+ccow_get_vm_name_hash_id(ccow_completion_t c) {
+	return &c->vm_name_hash_id;
 }

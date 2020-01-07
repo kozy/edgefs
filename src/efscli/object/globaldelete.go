@@ -21,13 +21,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package keyvalue
+package object
 
 /*
 #include "ccow.h"
+#include "ccowutil.h"
+#include "errno.h"
 */
 import "C"
 import "unsafe"
+
 
 import (
 	"fmt"
@@ -36,35 +39,21 @@ import (
 
 	"github.com/Nexenta/edgefs/src/efscli/efsutil"
 	"github.com/Nexenta/edgefs/src/efscli/validate"
+	"github.com/Nexenta/edgefs/src/efscli/edgex"
 	"github.com/spf13/cobra"
 )
 
-func keyValueCreate(opath string, flags []efsutil.FlagValue) error {
-	e := validate.Flags(flags)
-	if e != nil {
-		return e
-	}
-
-	c_opath := C.CString(opath)
-	defer C.free(unsafe.Pointer(c_opath))
-
-	s := strings.SplitN(opath, "/", 4)
-
-	bucket, errb := efsutil.GetMDPat(s[0], s[1], s[2], "", "")
-	if errb != nil {
-		return errb
-	}
-
-	c_cluster := C.CString(s[0])
+func globalObjectDelete(cl string, tn string, bk string, obj string) error {
+	c_cluster := C.CString(cl)
 	defer C.free(unsafe.Pointer(c_cluster))
 
-	c_tenant := C.CString(s[1])
+	c_tenant := C.CString(tn)
 	defer C.free(unsafe.Pointer(c_tenant))
 
-	c_bucket := C.CString(s[2])
+	c_bucket := C.CString(bk)
 	defer C.free(unsafe.Pointer(c_bucket))
 
-	c_object := C.CString(s[3])
+	c_object := C.CString(obj)
 	defer C.free(unsafe.Pointer(c_object))
 
 	conf, err := efsutil.GetLibccowConf()
@@ -90,59 +79,46 @@ func keyValueCreate(opath string, flags []efsutil.FlagValue) error {
 		return fmt.Errorf("ccow_create_completion err=%d", ret)
 	}
 
-
-	err = efsutil.InheritBucketAttributes(unsafe.Pointer(c), bucket)
-	if err != nil {
-		return err
-	}
-
-	err = efsutil.ModifyDefaultAttributes(unsafe.Pointer(c), flags)
-	if err != nil {
-		return err
-	}
-
-	c_type := C.CString(string("btree_key_val"))
-	defer C.free(unsafe.Pointer(c_type))
-
-	ret = C.ccow_attr_modify_default(C.ccow_completion_t(c), C.CCOW_ATTR_CHUNKMAP_TYPE, unsafe.Pointer(c_type), nil)
+	ret = C.ccow_delete_versioning(c_bucket, C.strlen(c_bucket)+1, c_object, C.strlen(c_object)+1, c)
 	if ret != 0 {
-		return fmt.Errorf("set chunk map err=%d", ret)
-	}
-
-	var f C.uint16_t = C.RT_INLINE_DATA_TYPE_USER_KV
-	ret = C.ccow_attr_modify_default(C.ccow_completion_t(c), C.CCOW_ATTR_INLINE_DATA_FLAGS, unsafe.Pointer(&f), nil)
-	if ret != 0 {
-		return fmt.Errorf("set inline data type err=%d", ret)
-	}
-
-	ret = C.ccow_put(c_bucket, C.strlen(c_bucket)+1, c_object, C.strlen(c_object)+1, c,
-		nil, 0, 0)
-	if ret != 0 {
-		return fmt.Errorf("ccow_put err=%d", ret)
+		return fmt.Errorf("ccow_delete_versioning err=%d", ret)
 	}
 
 	ret = C.ccow_wait(c, 0)
 	if ret != 0 {
-		return fmt.Errorf("object_put wait err=%d", ret)
-	}
-
-	if efsutil.HasCustomAttributes(flags) {
-		return efsutil.ModifyCustomAttributes(s[0], s[1], s[2], s[3], flags)
+		return fmt.Errorf("ccow_delete_versioning wait err=%d", ret)
 	}
 
 	return nil
 }
 
-var (
-	flagsCreate []efsutil.FlagValue
+func globalDelete(opath string) error {
+	s := strings.SplitN(opath, "/", 4)
 
-	createCmd = &cobra.Command{
-		Use:   "create <cluster>/<tenant>/<bucket>/<kvobject>",
-		Short: "create a new kvobject",
-		Long:  "create a new kvobject",
+	err := edgex.GlobalVMAcquire(opath)
+	if err != nil {
+		return err
+	}
+
+	err = globalObjectDelete(s[0], s[1], s[2], s[3])
+
+
+	e := edgex.GlobalVMRelease(opath)
+	if e != nil {
+		fmt.Printf("Put lock release error: %s, value : %v\n", opath, e)
+	}
+	return err
+}
+
+
+var (
+	globalDeleteCmd = &cobra.Command{
+		Use:   "globaldelete  <cluster>/<tenant>/<bucket>/<object>",
+		Short: "globaldelete an existing object",
+		Long:  "globaldelete an existing object",
 		Args:  validate.Object,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := keyValueCreate(args[0], flagsCreate)
+			err := globalDelete(args[0])
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
@@ -152,7 +128,5 @@ var (
 )
 
 func init() {
-	flagsCreate = make([]efsutil.FlagValue, len(flagNames))
-	efsutil.ReadAttributes(createCmd, flagNames, flagsCreate)
-	KeyValueCmd.AddCommand(createCmd)
+	ObjectCmd.AddCommand(globalDeleteCmd)
 }
