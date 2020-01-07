@@ -2506,6 +2506,21 @@ ccow_get_default_attribute(ccow_completion_t c, ccow_default_attr_t attr, void* 
  */
 uint64_t ccow_get_segment_guid(ccow_t tc);
 
+struct uint512;
+typedef struct uint512 *uint512_p;
+/**
+ * An object/tenant referenced by an mdonly snapshot usually doesn't have a local VM
+ * It needs to be fetched from remote. The used has to provide the
+ * dyn_fetch, tid/bid and optional oid parameters.
+ */
+int
+ccow_clone_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
+	const char* tid, size_t tid_size,
+	const char* bid, size_t bid_size,
+	const char* oid, size_t oid_size,
+	int dyn_fetch,
+	ccow_completion_t c);
+
 #ifdef	__cplusplus
 }
 #endif

@@ -274,8 +274,8 @@ ccow_snapview_get_chid_by_name(ccow_t tctx, ccow_snapview_t sv_hdl,
  * It needs to be fetched from remote. The used has to provide the
  * dyn_fetch, tid/bid and optional oid parameters.
  */
-static int
-ccow_clone_vm_prefetch(ccow_t tc, uint512_t* vmchid, uint512_t* nhid,
+int
+ccow_clone_vm_prefetch(ccow_t tc, uint512_p vmchid, uint512_p nhid,
 	const char* tid, size_t tid_size,
 	const char* bid, size_t bid_size,
 	const char* oid, size_t oid_size,
@@ -898,4 +898,3 @@ ccow_snapview_delete(ccow_t tctx, ccow_snapview_t sv_hdl)
 	}
 	return ccow_wait(c, 0);
 }
-
