@@ -5,7 +5,8 @@
 
 SRCDIR=$(NEDGE_HOME)
 PROJECTS_DIRS_PROXY_DEPS=grpc-iscsi grpc-nfs s3gw grpc-s3x grpc-s3 grpc-sql
-PROJECTS_DIRS=efscli ccownbd ccowhttpd grpc-efsproxy corosync-pod-watcher dqlite
+PROJECTS_DIRS=efscli ccownbd ccowhttpd grpc-efsproxy corosync-pod-watcher
+PROJECTS_DIRS_POST_DEPS=dqlite
 GOPATH=`pwd`
 
 MAKEFLAGS += -j
@@ -40,6 +41,9 @@ $(PROJECTS_DIRS_PROXY_DEPS):: .ccow
 $(PROJECTS_DIRS):: .ccow $(PROJECTS_DIRS_PROXY_DEPS)
 	GOPATH=$(GOPATH) $(MAKE) -C $@ $(MAKECMDGOALS)
 
+$(PROJECTS_DIRS_POST_DEPS):: .ccow
+	GOPATH=$(GOPATH) $(MAKE) -C $@ $(MAKECMDGOALS)
+
 # note that .grpc-PROTOCOL needs to be first in this order
 # as .grpc-efsproxy needs .proto interfaces from it
 install: .ccow $(PROJECTS_DIRS_PROXY_DEPS) $(PROJECTS_DIRS)
@@ -61,6 +65,8 @@ install: .ccow $(PROJECTS_DIRS_PROXY_DEPS) $(PROJECTS_DIRS)
 	rm -f $(DESTDIR)$(SRCDIR)/lib/librtkvs.a
 	rm -f $(DESTDIR)$(SRCDIR)/lib/librtlfs.a
 	rm -f $(DESTDIR)$(SRCDIR)/lib/librtrd.a
+
+post-deps: $(PROJECTS_DIRS_POST_DEPS)
 
 uninstall: .ccow-configure
 	-make -C ccow uninstall

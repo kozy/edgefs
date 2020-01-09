@@ -10,7 +10,8 @@ MAKEFLAGS += -j
 CORO_DEPS=jemalloc libqb knet corosync
 DEPS=lmdb libuv nanomsg liberasurecode libbacktrace kvssd \
      json-c h2o smartmontools libco
-CCOW_DEPS=stgt fio nfs-ganesha raft sqlite dqlite
+CCOW_DEPS=stgt fio nfs-ganesha
+DQLITE_DEPS=raft sqlite dqlite
 
 all: install
 
@@ -28,7 +29,13 @@ install: $(DEPS)
 $(CCOW_DEPS)::
 	$(MAKE) -C $@ install
 
-ccow-deps: $(CCOW_DEPS)
+dqlite-deps:
+	# must be serial due to dependency
+	for p in $(DQLITE_DEPS); do \
+		make -C $$p || exit 1; \
+	done
+
+ccow-deps: $(CCOW_DEPS) dqlite-deps
 
 uninstall:
 	for p in $(CORO_DEPS) $(DEPS) $(CCOW_DEPS); do make -C $$p uninstall || exit 1; done

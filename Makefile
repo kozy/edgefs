@@ -140,6 +140,7 @@ deps: .deps
 .edgefs: deps
 	make -C src install
 	make -C deps ccow-deps
+	make -C src post-deps
 	touch $@
 edgefs: .deps .edgefs
 
