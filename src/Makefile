@@ -42,7 +42,7 @@ $(PROJECTS_DIRS):: .ccow $(PROJECTS_DIRS_PROXY_DEPS)
 	GOPATH=$(GOPATH) $(MAKE) -C $@ $(MAKECMDGOALS)
 
 $(PROJECTS_DIRS_POST_DEPS):: .ccow
-	GOPATH=$(GOPATH) $(MAKE) -C $@ $(MAKECMDGOALS)
+	GOPATH=$(GOPATH) $(MAKE) -C $@ install
 
 # note that .grpc-PROTOCOL needs to be first in this order
 # as .grpc-efsproxy needs .proto interfaces from it
