@@ -26,7 +26,7 @@
 
 #include <ccowfsio.h>
 
-#define MAX_OP_COUNT 1024
+#define MAX_OP_COUNT 2048
 #define DEFAULT_LAST_IO (-2)
 
 typedef enum __disk_op_type__
