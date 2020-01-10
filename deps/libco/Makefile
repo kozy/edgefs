@@ -15,6 +15,7 @@ NAME=libco
 	touch $@
 
 install: .build
+	rm -f $(SRCDIR)/lib/libco.so*
 	PREFIX=$(SRCDIR) make -C $(NAME) install
 
 all: install
