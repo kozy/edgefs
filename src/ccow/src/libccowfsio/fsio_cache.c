@@ -113,7 +113,7 @@ typedef struct __fsio_chunk_buffer__
 #define	FETCH_FLAGS_FIRST_CHUNK_ALIGNED	(1 << 1)
 #define	FETCH_FLAGS_LAST_CHUNK_ALIGNED	(1 << 2)
 
-#define IOV_WRITE_MAX	8	/* How many chunks can be written in parallel */
+#define IOV_WRITE_MAX	32	/* How many chunks can be written in parallel */
 
 static void
 map_chunk_to_file(ccowfs_inode *inode, uint64_t chunk_size,
