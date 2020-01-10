@@ -16,6 +16,7 @@ ifeq (${CC},clang)
 DEBUG_LDFLAGS=-fsanitize=address
 else
 DEBUG_LDFLAGS=-lasan
+export EXTLIBS=-lasan
 endif
  
 endif
@@ -27,8 +28,8 @@ endif
 
 .build: .configure
 	PREFIX=$(SRCDIR) EXTFLAGS="$(CFLAGS) $(DEBUG_FLAGS)" \
-	LDFLAGS="$(LDFLAGS) $(DEBUG_LDFLAGS)" LIBS="$(DEBUG_LDFLAGS)" \
-	make -C $(NAME) 
+	EXTLIBS="$(LDFLAGS) $(DEBUG_LDFLAGS)" \
+		make -C $(NAME)
 	touch $@
 
 install: .build
