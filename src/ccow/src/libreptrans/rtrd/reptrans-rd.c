@@ -173,8 +173,20 @@ rd_format_lmdb_part(const char* path) {
 static inline int
 is_log_tt(struct repdev *dev, type_tag_t ttag)
 {
+	struct repdev_rd* rd = dev->device_lfs;
 	if (dev->wal_disabled)
 		return 0;
+
+	if (rd->s3_ctx) {
+		/*
+		 * In S3 offload mode use WAL just for payloads in order
+		 *  to create a number of parallel S3 PUTs
+		 */
+		if (ttag == TT_CHUNK_PAYLOAD)
+			return 1;
+		else
+			return 0;
+	}
 	switch (ttag) {
 		case TT_NAMEINDEX:
 		case TT_VERIFIED_BACKREF:
