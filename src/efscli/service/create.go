@@ -230,6 +230,16 @@ func ServiceCreate(stype string, sname string) error {
 		return efsutil.UpdateMDMany("", "svcs", sname, "", par)
 	}
 
+	if strings.Compare(stype, "dsql") == 0 {
+		par := []efsutil.KeyValue{
+			{"X-Service-Name", sname},
+			{"X-Service-Type", stype},
+			{"X-Description", "DSQL Server"},
+			{"X-Status", "disabled"},
+		}
+		return efsutil.UpdateMDMany("", "svcs", sname, "", par)
+	}
+
 	return fmt.Errorf("service_create invalid service")
 }
 
@@ -237,7 +247,7 @@ var (
 	createCmd = &cobra.Command{
 		Use:   "create <type> <name>",
 		Short: "create a new service",
-		Long:  "create a new service of type: nfs, iscsi, s3, s3s, s3x, swift",
+		Long:  "create a new service of type: nfs, iscsi, s3, s3s, s3x, swift, dsql",
 		Args:  validate.ServiceCreate,
 		Run: func(cmd *cobra.Command, args []string) {
 			err := ServiceCreate(args[0], args[1])

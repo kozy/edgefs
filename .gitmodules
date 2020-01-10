@@ -101,4 +101,17 @@
 [submodule "deps/kvssd/KVSSD"]
 	path = deps/kvssd/KVSSD
 	url = https://github.com/Nexenta/KVSSD.git
-
+[submodule "deps/libco/libco"]
+	path = deps/libco/libco
+	url = https://github.com/Nexenta/libco.git
+[submodule "deps/raft/raft"]
+	path = deps/raft/raft
+	url = https://github.com/Nexenta/raft.git
+	branch=dqlite
+[submodule "deps/dqlite/dqlite"]
+	path = deps/dqlite/dqlite
+	url = https://github.com/Nexenta/dqlite.git
+	branch=dqlite
+[submodule "deps/sqlite/sqlite"]
+	path = deps/sqlite/sqlite
+	url = https://github.com/Nexenta/sqlite.git

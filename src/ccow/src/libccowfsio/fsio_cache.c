@@ -1190,8 +1190,12 @@ out:
 		}
 	}
 
-	if (buffer)
-		je_free(buffer);
+	if (buffer) {
+		if (inode->write_free_cb)
+			inode->write_free_cb(buffer);
+		else
+			je_free(buffer);
+	}
 	if (chunk_list)
 		je_free(chunk_list);
 

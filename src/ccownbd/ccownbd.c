@@ -462,7 +462,14 @@ ccownbd_open(struct ccownbd_info *ci, const char *uri, const char *devfile,
 	ci->bid_size = strlen(ci->bid) + 1;
 	ci->oid_size = strlen(ci->oid) + 1;
 
-	int ccow_fd = open("/opt/nedge/etc/ccow/ccow.json", O_RDONLY);
+
+	char *nedge_home = getenv("NEDGE_HOME");
+	char ccowfile[PATH_MAX];
+	if (nedge_home)
+		snprintf(ccowfile, PATH_MAX, "%s/etc/ccow/ccow.json", nedge_home);
+	else
+		snprintf(ccowfile, PATH_MAX, "%s/etc/ccow/ccow.json", "/opt/nedge");
+	int ccow_fd = open(ccowfile, O_RDONLY);
 	if (ccow_fd < 0) {
 		log_error(lg, "ccow.json open error [%d]: %s", -errno,
 		    strerror(errno));
@@ -517,10 +524,9 @@ ccownbd_open(struct ccownbd_info *ci, const char *uri, const char *devfile,
 	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_CUSTOM |
 			    CCOW_MDTYPE_METADATA, -1))) {
 		if (strcmp(kv->key, "X-volsize") == 0) {
-			ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, size);
+			*size = ccow_kvconvert_to_int64(kv);
 		} else if (strcmp(kv->key, RT_SYSKEY_CHUNKMAP_CHUNK_SIZE) == 0) {
-			ccow_iterator_kvcast(CCOW_KVTYPE_UINT32, kv,
-			    &ci->chunk_size);
+			ci->chunk_size = ccow_kvconvert_to_int64(kv);
 		}
 	}
 	ccow_lookup_release(iter);

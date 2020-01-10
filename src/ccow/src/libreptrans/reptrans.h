@@ -631,7 +631,7 @@ typedef enum {
 
 struct vdevCtlDiscoverArg {
 	const char* name;
-	json_value* cfg;
+	struct _json_value* cfg;
 };
 
 struct reptrans {

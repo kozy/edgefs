@@ -106,6 +106,7 @@ typedef enum __ccow_fsio_inode_type
 typedef struct fsio_super ci_t;
 
 typedef uint64_t inode_t;
+typedef void (*ccow_fsio_write_free_cb) (void *ptr);
 
 /* [TODO] We may not need ccow_fsio_file_t. Just map it to inode */
 typedef struct
@@ -113,6 +114,7 @@ typedef struct
 	void *inode;
 	ci_t *ci;
 	inode_t ino;
+	ccow_fsio_write_free_cb write_free_cb;
 } ccow_fsio_file_t;
 
 typedef struct
@@ -157,6 +159,13 @@ int ccow_fsio_term();
 
 typedef int (*fsio_up_callback) (void *cb_args, inode_t inode,
     uint64_t ccow_fsio_up_flags);
+
+/**
+ * Set free() callback for write buffers for the file descriptor.
+ * Can only be called prior to any write I/Os for the descriptor.
+ */
+void ccow_fsio_write_free_set(ccow_fsio_file_t *file,
+    ccow_fsio_write_free_cb free_cb);
 
 /**
  * CLone file on server side.
@@ -382,7 +391,7 @@ int ccow_fsio_delete(ci_t * ci, inode_t parent, char *name);
  * @param mode access mode of new directory.
  * @param uid owner ID of new directory.
  * @param gid group ID of new directory.
- * @param inode pointer to unique file identifier of newly created node.
+ * @param inode pointer to unique file identifier of newly created node or NULL.
  * @returns 0 on success, or standard error code (errno(3)) if fail.
  */
 int ccow_fsio_mkdir(ci_t * ci, inode_t parent, char *name,

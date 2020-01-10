@@ -227,6 +227,12 @@ typedef struct __ccowfs_inode__
 	 */
 	QUEUE list_q;
 
+	/*
+	 * If defined than write buffer cache will call this function
+	 * instead of built-in free()
+	 */
+	ccow_fsio_write_free_cb write_free_cb;
+
 } ccowfs_inode;
 
 /**  ccowfs_inode_cache_init:

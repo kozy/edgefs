@@ -28,6 +28,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"net"
+	"strconv"
 
 	"github.com/Nexenta/edgefs/src/efscli/efsutil"
 
@@ -74,7 +76,7 @@ func ServiceCreate(cmd *cobra.Command, args []string) error {
 	stype := args[0]
 	name := args[1]
 
-	t, _ := regexp.Compile("^nfs$|^s3$|^s3x$|^iscsi$|^isgw|^swift$")
+	t, _ := regexp.Compile("^nfs$|^s3$|^s3x$|^iscsi$|^isgw|^swift$|^dsql$")
 	if !t.MatchString(stype) {
 		return fmt.Errorf("Invalid service type specified: %s", stype)
 	}
@@ -263,5 +265,50 @@ func ServiceIscsiOpts(opath, opts string) error {
 			return fmt.Errorf("Unknown iSCSI option %s", s[0])
 		}
 	}
+	return nil
+}
+
+func ServiceDsqlOpts(opath, opts string) error {
+	s := strings.Split(opath, "/")
+	if len(s) < 3 {
+		return errors.New("Requires <service> <cluster>/<tenant>/<bucket>")
+	}
+
+	if opts == "" {
+		return errors.New("Requires instances,ipv4-addr:port")
+	}
+
+	s = strings.Split(opts, ",")
+
+	if len(s) !=2 {
+		return errors.New("Requires instances,ipv4-addr:port")
+	}
+
+	instances, err := strconv.Atoi(s[0])
+	if err != nil {
+		return errors.New("Instances is not an integer")
+	}
+
+	if instances <= 0 {
+		return errors.New("Invalid value of instances")
+	}
+
+	addr := strings.Split(s[1], ":")
+	if len(addr) != 2 {
+		return errors.New("Expecting IPv4 address and port, addr:port")
+	}
+	ip := net.ParseIP(addr[0])
+	if ip == nil {
+		return errors.New("Invalid IPv4 address")
+	}
+	port, err := strconv.Atoi(addr[1])
+	if err != nil {
+		return errors.New("Port is not an integer")
+	}
+
+	if port < 1024 || port > 65536 {
+		return errors.New("Port number is out of range")
+	}
+
 	return nil
 }
