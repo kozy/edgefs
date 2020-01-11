@@ -182,7 +182,7 @@ func LocalExportAdd(Service string, Cluster string, Tenant string, Bucket string
 		"    Pseudo = \"/" + exportPath + "\";\n" +
 		"    Access_Type = RW;\n" +
 		"    Squash = No_root_squash;\n" +
-		"    Protocols = 3;\n" +
+		"    Protocols = 3,4;\n" +
 		"    MaxRead = 1048576;\n" +
 		"    MaxWrite = 1048576;\n" +
 		"    PrefRead = 1048576;\n" +
