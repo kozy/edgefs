@@ -346,13 +346,13 @@ func prefetchGlobalVM(gvm GVMR) error {
 		return fmt.Errorf("%s: ccow_wait err=%d", efsutil.GetFUNC(), ret)
 	}
 
-	// if gvm.Deleted == 0 {
-	// 	ret = C.ccow_ondemand_policy_change(tc, c_bucket, C.strlen(c_bucket)+1,
-	// 		c_object, C.strlen(c_object)+1, C.ulong(gvm.Genid), C.ondemand_policy_t(C.ondemandPolicyPersist));
-	// 	if ret != 0 {
-	// 		return fmt.Errorf("Persist error: %d", ret)
-	// 	}
-	// }
+	if gvm.Deleted == 0 {
+		ret = C.ccow_ondemand_policy_change(tc, c_bucket, C.strlen(c_bucket)+1,
+			c_object, C.strlen(c_object)+1, C.ulong(gvm.Genid), C.ondemand_policy_t(C.ondemandPolicyPersist));
+		if ret != 0 {
+			return fmt.Errorf("Persist error: %d", ret)
+		}
+	}
 	return nil
 }
 
