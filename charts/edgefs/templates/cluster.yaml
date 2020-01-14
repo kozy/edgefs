@@ -130,7 +130,7 @@ metadata:
 spec:
   edgefsImageName: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
   serviceAccount: rook-edgefs-cluster
-  dataDirHostPath: /var/lib/edgefs-ci/{{ .Release.Namespace }}
+  dataDirHostPath: /var/lib/edgefs-ci-{{ .Release.Namespace }}
   #dataVolumeSize: 10Gi
   #devicesResurrectMode: "restoreZapWait"
   #dashboard:
