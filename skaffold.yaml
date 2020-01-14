@@ -2,15 +2,13 @@ apiVersion: skaffold/v1beta10
 kind: Config
 build:
   artifacts:
-  - image: changeme
+  - image: cloudserver-250320/edgefs
     context: .
-    docker: {}
   tagPolicy:
     envTemplate:
-      template: '{{.DOCKER_REGISTRY}}/cloudserver-250320/edgefs:{{.VERSION}}'
-  local: {}
+      template: '{{.DOCKER_REGISTRY}}/{{.IMAGE_NAME}}:{{.VERSION}}'
   cluster:
-    timeout: 2h
+    timeout: 1h
     resources:
       requests:
         cpu: 8
@@ -27,7 +25,7 @@ profiles:
     - docker: {}
     tagPolicy:
       envTemplate:
-        template: '{{.DOCKER_REGISTRY}}/cloudserver-250320/edgefs:{{.DIGEST_HEX}}'
+        template: '{{.DOCKER_REGISTRY}}/{{.IMAGE_NAME}}:{{.DIGEST_HEX}}'
     local: {}
   deploy:
     helm:
@@ -35,5 +33,5 @@ profiles:
       - name: edgefs
         chartPath: charts/edgefs
         setValueTemplates:
-          image.repository: '{{.DOCKER_REGISTRY}}/cloudserver-250320/edgefs'
+          image.repository: '{{.DOCKER_REGISTRY}}/{{.IMAGE_NAME}}'
           image.tag: '{{.DIGEST_HEX}}'
