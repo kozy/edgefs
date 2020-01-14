@@ -7,15 +7,7 @@ build:
   tagPolicy:
     envTemplate:
       template: '{{.DOCKER_REGISTRY}}/{{.IMAGE_NAME}}:{{.VERSION}}'
-  cluster:
-    timeout: 1h
-    resources:
-      requests:
-        cpu: 8
-        memory: 16Gi
-      limits:
-        cpu: 12
-        memory: 32Gi
+  local: {}
 deploy:
   kubectl: {}
 profiles:
