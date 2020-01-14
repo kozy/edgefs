@@ -160,6 +160,17 @@ func Object(cmd *cobra.Command, args []string) error {
 	return fmt.Errorf("Invalid object specified: %s ", args[0])
 }
 
+func KeyValue(cmd *cobra.Command, args []string) error {
+	if len(args) < 1 {
+		return errors.New("Requires object name")
+	}
+	r, _ := regexp.Compile("^[^/ ]+/[^/ ]+/[^/ ]+/.*$")
+	if r.MatchString(args[0]) {
+		return nil
+	}
+	return fmt.Errorf("Invalid object specified: %s ", args[0])
+}
+
 func ObjectPutGet(cmd *cobra.Command, args []string) error {
 	if len(args) < 2 {
 		return errors.New("Requires <object name> <file name>")

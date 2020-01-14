@@ -575,6 +575,7 @@ ccow_parse_config__tenant(struct ccow *tc, json_value *tenant)
 	uint32_t ec_data_mode = RT_SYSVAL_EC_DATA_MODE;
 	uint64_t ec_trg_policy = RT_SYSVAL_EC_TRG_POLICY;
 	uint8_t  file_object_transparency = RT_SYSVAL_FILE_OBJECT_TRANSPARANCY;
+	uint8_t  segid_preserve = RT_SYSVAL_SEGID_PRESERVE;
 	uint64_t object_delete_after = RT_SYSVAL_OBJECT_DELETE_AFTER;
 	uint64_t slg_timeout = RT_SYSVAL_SERVERLIST_GET_TIMEOUT;
 	uint64_t tp_size = CCOW_TP_SIZE_DEFAULT;
@@ -1203,6 +1204,18 @@ ccow_parse_config__tenant(struct ccow *tc, json_value *tenant)
 				return -EINVAL;
 			}
 			file_object_transparency = v->u.integer;
+		} else if (strcmp(namekey, "segid_preserve") == 0) {
+			if (v->type != json_integer) {
+				log_error(lg, "Syntax error: segid_preserve "
+					"is not an integer: -EINVAL");
+				return -EINVAL;
+			}
+			if (v->u.integer < 0 || v->u.integer > 1) {
+				log_error(lg, "Syntax error: segid_preserve "
+					"wrong value: %ld", v->u.integer);
+				return -EINVAL;
+			}
+			segid_preserve = v->u.integer;
 		} else if (strcmp(namekey, "api_depth") == 0) {
 			if (v->type != json_integer) {
 				log_error(lg, "Syntax error: api_depth "
@@ -1278,6 +1291,7 @@ _default_exit:
 	tc->ec_data_mode = ec_data_mode;
 	tc->ec_trg_policy = ec_trg_policy;
 	tc->file_object_transparency = file_object_transparency;
+	tc->segid_preserve = segid_preserve;
 	tc->object_delete_after = object_delete_after;
 	tc->inline_data_flags = 0;
 	tc->slg_timeout = slg_timeout;
@@ -4836,6 +4850,8 @@ ccow_get_segment_guid(ccow_t tc)
 	return tc->this_guid.l;
 }
 
+
+
 void
 ccow_assign_this_guid(ccow_t tc, char *system_guid, size_t system_guid_size)
 {
@@ -7614,3 +7630,17 @@ ccow_chunk_lookup(ccow_completion_t c, const uint512_t* chid, const uint512_t* n
 	return 0;
 }
 
+void
+set_isgw_bid(ccow_completion_t c, char *bid) {
+	c->isgw_bid = bid;
+}
+
+uint512_p
+ccow_get_vm_content_hash_id(ccow_completion_t c) {
+	return &c->vm_content_hash_id;
+}
+
+uint512_p
+ccow_get_vm_name_hash_id(ccow_completion_t c) {
+	return &c->vm_name_hash_id;
+}

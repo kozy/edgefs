@@ -37,6 +37,7 @@ import (
 	"github.com/Nexenta/edgefs/src/efscli/tenant"
 	"github.com/Nexenta/edgefs/src/efscli/user"
 	"github.com/Nexenta/edgefs/src/efscli/device"
+	"github.com/Nexenta/edgefs/src/efscli/keyvalue"
 
 	"github.com/spf13/cobra"
 )
@@ -58,6 +59,7 @@ func main() {
 	efscliCmd.AddCommand(user.UserCmd)
 	efscliCmd.AddCommand(device.DeviceCommand)
 	efscliCmd.AddCommand(snapshot.SnapshotCmd)
+	efscliCmd.AddCommand(keyvalue.KeyValueCmd)
 
 	if err := efscliCmd.Execute(); err != nil {
 		fmt.Println(err)

@@ -407,6 +407,8 @@ unnamedget_process_payload(struct state *st)
 			if (strcmp(op->tid, RT_SYSVAL_TENANT_SVCS) && !op->isgw_dfetch &&
 				ccow_bucket_isgw_lookup(op->cid, op->tid, bid, NULL) == 0)
 				op->isgw_dfetch = 1;
+			if (bid && op->oid)
+				log_error(lg, "Path: %s/%s/%s/%s isgw_dfetch: %d", op->cid, op->tid, bid, op->oid, op->isgw_dfetch);
 		}
 		/*
 		 * Preset some of completion defaults for comp-hash while
@@ -1055,6 +1057,10 @@ unnamedget_dynfetch_request(struct state *st) {
 			 */
 			mdonly_policy = ondemandPolicyUnpin;
 		}
+		if (bid && op->oid)
+			log_error(lg, "Path: %s/%s/%s/%s mdonly_policy: %d", op->cid, op->tid, bid, op->oid, mdonly_policy);
+
+
 		/*
 		 * The ISGW for dynamic fetch isn't chosen or failed.
 		 * Trying to find another

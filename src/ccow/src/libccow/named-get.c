@@ -636,6 +636,7 @@ namedget_process_payload(struct state *st)
 		!op->isgw_dfetch &&
 		ccow_bucket_isgw_lookup(op->cid, op->tid, bid, NULL) == 0)
 		op->isgw_dfetch = 1;
+
 	/*
 	 * Preset some of completion defaults for comp-hash while
 	 * doing stream or normal (below) PUTs
