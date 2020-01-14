@@ -15,7 +15,7 @@ pipelineConfig:
       postBuild:
         replace: true
         steps:
-        - sh: jx step post build --image $DOCKER_REGISTRY/nexenta/$APP_NAME:$PREVIEW_VERSION
+        - sh: jx step post build --image $DOCKER_REGISTRY/cloudserver-250320/$APP_NAME:$PREVIEW_VERSION
           name: post-build
       promote:
         replace: true

@@ -1,4 +1,4 @@
-apiVersion: skaffold/v1beta2
+apiVersion: skaffold/v1beta10
 kind: Config
 build:
   artifacts:
@@ -7,10 +7,17 @@ build:
     docker: {}
   tagPolicy:
     envTemplate:
-      template: '{{.DOCKER_REGISTRY}}/nexenta/edgefs:{{.VERSION}}'
+      template: '{{.DOCKER_REGISTRY}}/cloudserver-250320/edgefs:{{.VERSION}}'
   local: {}
   cluster:
     timeout: 2h
+    resources:
+      requests:
+        cpu: 8
+        memory: 16Gi
+      limits:
+        cpu: 12
+        memory: 32Gi
 deploy:
   kubectl: {}
 profiles:
@@ -20,7 +27,7 @@ profiles:
     - docker: {}
     tagPolicy:
       envTemplate:
-        template: '{{.DOCKER_REGISTRY}}/nexenta/edgefs:{{.DIGEST_HEX}}'
+        template: '{{.DOCKER_REGISTRY}}/cloudserver-250320/edgefs:{{.DIGEST_HEX}}'
     local: {}
   deploy:
     helm:
@@ -28,5 +35,5 @@ profiles:
       - name: edgefs
         chartPath: charts/edgefs
         setValueTemplates:
-          image.repository: '{{.DOCKER_REGISTRY}}/nexenta/edgefs'
+          image.repository: '{{.DOCKER_REGISTRY}}/cloudserver-250320/edgefs'
           image.tag: '{{.DIGEST_HEX}}'
