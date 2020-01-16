@@ -1306,6 +1306,11 @@ push_stats(struct repdev *dev)
 	auditc_low_objid(gauge, "reptrans.incoming_batches_queued", &dev->vdevid,
 			stat->ttag_entries[TT_BATCH_INCOMING_QUEUE]);
 
+	auditc_low_objid(gauge, "reptrans.s3_offload_size", &dev->vdevid,
+			stat->s3_offload_capacity);
+	auditc_low_objid(gauge, "reptrans.s3_offload_used", &dev->vdevid,
+			stat->s3_offload_used);
+
 	ccowd_fhready_lock(FH_LOCK_READ);
 	auditc_low_rowusage(gauge, "reptrans.rowusagecounters", &dev->vdevid,
 		ccow_daemon->flexhash->numrows, ccow_daemon->flexhash);
