@@ -76,7 +76,6 @@ cdq_start(struct cdq_client *client)
 		return -1;
 	}
 
-	printf("Connected to the server ...\n");
 	/* Initialize client */
 	err = clientInit(&client->cl, client->net_fd);
 	if (err) {
@@ -84,7 +83,6 @@ cdq_start(struct cdq_client *client)
 		return -1;
 	}
 
-	printf("Sending handshake to the server ...\n");
 	/* Perform handshake */
 	err = clientSendHandshake(&client->cl);
 	if (err) {
@@ -94,16 +92,7 @@ cdq_start(struct cdq_client *client)
 		cdq_stop(client);
 		return -1;
 	}
-#if 0
-	err = clientRecvEmpty(&client->cl);
-	if (err) {
-		/* Log the error */
-		fprintf(stderr, "Failed to receive handshake response: %s"
-			       "	error: %s\n",
-				client->srv_ipaddr, strerror(errno));
-		cdq_stop(client);
-	}
-#endif
+
 	return err;
 }
 
@@ -120,8 +109,6 @@ cdq_db_open(struct cdq_client *client, const char *dbname)
 		cdq_stop(client);
 		return err;
 	}
-	printf("Send reqeust to open database: %s\n", dbname);
-	printf("Waiting to receive db_id\n");
 	err = clientRecvDb(&client->cl);
 	return err;
 }
@@ -154,7 +141,6 @@ cdq_exec_stmt(struct cdq_client *client, unsigned stmt_id,
 
 	err = clientSendExec(&client->cl, stmt_id);
 	if (err) {
-		printf("Failed to send exec\n");
 		return err;
 	}
 	err = clientRecvResult(&client->cl, last_insert_id, rows_affected);

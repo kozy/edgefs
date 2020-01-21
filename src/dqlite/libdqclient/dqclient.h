@@ -19,5 +19,7 @@ int cdq_db_open(struct cdq_client *client, const char *dbname);
 int cdq_prepare_stmt(struct cdq_client *client, char *stmt, unsigned *stmt_id);
 int cdq_exec_stmt(struct cdq_client *client, unsigned stmt_id,
 		unsigned *last_insert_id, unsigned *rows_affected);
+int cdq_query_stmt(struct cdq_client *client, unsigned stmt_id,
+		struct rows *rows);
 
 #endif /* __DQCLIENT_H__ */

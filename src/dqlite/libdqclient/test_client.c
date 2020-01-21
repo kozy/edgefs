@@ -1,19 +1,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <inttypes.h>
+
 #include "dqclient.h"
 
-#if 0
 static char *create_tbl_stmt =
-		"CREATE TABLE IF NOT EXISTS model (key TEXT, value TEXT)";
-#else
-static char *create_tbl_stmt =
-		"CREATE TABLE test (n INT)";
-#endif
+		"CREATE TABLE IF NOT EXISTS test (n INT)";
 static char *update_tbl_stmt =
-		"INSERT OR REPLACE INTO model(key, value) VALUES(%s, %s)";
+		"INSERT INTO test (n) VALUES(123)";
 static char *query_tbl_stmt =
-		"SELECT value FROM model WHERE key = %s";
+		"SELECT n FROM test";
 
 static char stmt[4096];
 
@@ -23,7 +19,9 @@ main(int argc, char **argv)
 	int err;
 	unsigned stmt_id, last_insert_id = 0, rows_affected = 0;
 	struct cdq_client client;
-	char *dbname = "test";
+	struct rows rows;
+
+	char *dbname = "test.db";
 
 	memset(&client, 0, sizeof client);
 	if (argc != 3) {
@@ -36,6 +34,8 @@ main(int argc, char **argv)
 		exit(1);
 	}
 	client.srv_ipaddr = strdup(argv[2]);
+
+	//sqlite3_initialize();
 
 	err = cdq_start(&client);
 	if (err !=0) {
@@ -68,22 +68,45 @@ main(int argc, char **argv)
 	}
 	printf("Table created ...\n");
 
-#if 0
-	sprintf(stmt, update_tbl_stmt, "my-key", "my_value");
-	printf("Statement : %s\n", stmt);
-	err = cdq_prepare_stmt(&client, stmt, &stmt_id);
+	err = cdq_prepare_stmt(&client, "BEGIN", &stmt_id);
+	err = err ? err : cdq_exec_stmt(&client, stmt_id, &last_insert_id, &rows_affected);
 	if (err != 0) {
-		fprintf(stderr, "Unable to prepare update statement\n");
+		fprintf(stderr, "Failed to start transaction\n");
+		goto err_;
+	}
+	err = cdq_prepare_stmt(&client, update_tbl_stmt, &stmt_id);
+	if (err != 0) {
+		fprintf(stderr, "Unable to prepare INSERT statement\n");
 		goto err_;
 	}
 
 	err = cdq_exec_stmt(&client, stmt_id, &last_insert_id, &rows_affected);
 	if (err != 0) {
-		fprintf(stderr, "Failed to update table\n");
+		fprintf(stderr, "Failed to insert into table\n");
 		goto err_;
 	}
-	printf("Table updated <my-key, my-value> ...\n");
-#endif
+
+	err = cdq_prepare_stmt(&client, "COMMIT", &stmt_id);
+	err = err ? err : cdq_exec_stmt(&client, stmt_id, &last_insert_id, &rows_affected);
+	if (err != 0) {
+		fprintf(stderr, "Failed to commit transaction\n");
+		goto err_;
+	}
+	printf("Updated table with a value ...\n");
+
+	err = cdq_prepare_stmt(&client, query_tbl_stmt, &stmt_id);
+	if (err != 0) {
+		fprintf(stderr, "Unable to prepare Query statement\n");
+		goto err_;
+	}
+
+	err = cdq_query_stmt(&client, stmt_id, &rows);
+	if (err != 0) {
+		fprintf(stderr, "Query failed\n");
+	} else {
+		fprintf(stdout, "Query successful ...\n");
+	}
+	clientCloseRows(&rows);
 
 err_:
 	cdq_stop(&client);
