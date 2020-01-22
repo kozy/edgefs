@@ -1108,7 +1108,8 @@ clengine_notify_cb(struct cl_node *sender, void *msg, size_t msg_len)
 		uint16_t ndevs = 0;
 		err = reptrans_blob_lookup(ttag, hash_type, &chid, &vdevs, &ndevs);
 		if (err) {
-			log_error(lg, "Blob lookup error");
+			if (err != -ENODEV)
+				log_error(lg, "Blob lookup error %d", err);
 			return;
 		}
 
