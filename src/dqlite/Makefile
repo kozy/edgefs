@@ -1,5 +1,7 @@
 SRCDIR=$(NEDGE_HOME)
 TARGET_BIN = ccow-sql
+TARGET_LIB = libdqclient
+
 TARGET_SRCS = dqlite.c
 #
 # Activate by exporing this env variable:
@@ -24,17 +26,25 @@ LXFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
 
 .PHONY: all
-all: ${TARGET_BIN} install
+all: $(TARGET_LIB)/libdqclient.a ${TARGET_BIN} install
+
+$(TARGET_LIB)/libdqclient.a: $(TARGET_LIB)
+	$(MAKE) -C $(TARGET_LIB) all
+
+$(TARGET_LIB)-clean:
+	$(MAKE) -C $(TARGET_LIB) clean
 
 $(TARGET_BIN): $(TARGET_OBJS)
 	gcc -o $@ $^ $(LXFLAGS)
 
-install: $(TARGET_BIN)
+install: $(TARGET_BIN) $(TARGET_LIB)/libdqclient.a
 	mkdir -p $(DESTDIR)$(SRCDIR)/sbin 2> /dev/null || true
 	cp -a $(TARGET_BIN) $(DESTDIR)$(SRCDIR)/sbin
+	cp -a $(TARGET_LIB)/libdqclient.a $(DESTDIR)$(SRCDIR)/lib
 
 uninstall:
 	rm -f $(DESTDIR)$(SRCDIR)/sbin/$(TARGET_BIN)
+	rm -f $(DESTDIR)$(SRCDIR)/lib/libdqclient.a
 
-clean:
+clean: $(TARGET_LIB)-clean
 	rm -f $(TARGET_BIN) *.o
