@@ -61,7 +61,11 @@ typedef struct opp_status {
 	size_t  n_cp_lost; /* Number of lost chunk payloads */
 	size_t  n_cpar_lost; /* Number of lost parity chunks */
 	size_t  n_cm_zl_erc_err; /* number of verified ZL with wrong ERC */
+	size_t  n_cm_zl_1repl; /* number of verified ZL with ERC=1 */
 	size_t  n_cm_tl_erc_err; /* number of verified TL with wrong ERC */
+	size_t  n_cm_tl_1repl; /* number of verified TL with ERC=1 */
+	size_t  n_cp_erc_err; /* number of verified CP with wrong ERC */
+	size_t  n_cp_1rep;  /* Number of CP with ERC=1 (critical value) */
 	uint128_t hostid; /* Information collected on this host */
 	size_t n_vdevs; /* Number of vdevs on this host */
 	uint64_t* vdevs_usage; /* Array of VDEVs disk usage, %*100 */

@@ -88,6 +88,10 @@ opps_state__response(struct state *st)
 	r->result->n_cm_zl_pp = msg->n_cm_zl_pp;
 	r->result->n_cm_zl_erc_err = msg->n_cm_zl_erc_err;
 	r->result->n_cm_tl_erc_err = msg->n_cm_tl_erc_err;
+	r->result->n_cm_tl_1repl = msg->n_cm_tl_1repl;
+	r->result->n_cm_zl_1repl = msg->n_cm_zl_1repl;
+	r->result->n_cp_erc_err = msg->n_cp_erc_err;
+	r->result->n_cp_1rep = msg->n_cp_1rep;
 	r->result->pp_algo = msg->pp_algo;
 	r->result->pp_data_number = msg->pp_data_number;
 	r->result->pp_parity_number = msg->pp_parity_number;
