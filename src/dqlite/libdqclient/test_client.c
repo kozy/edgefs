@@ -35,8 +35,6 @@ main(int argc, char **argv)
 	}
 	client.srv_ipaddr = strdup(argv[2]);
 
-	//sqlite3_initialize();
-
 	err = cdq_start(&client);
 	if (err !=0) {
 		fprintf(stderr, "Failed to start client\n");
@@ -59,7 +57,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "Failed to prepate create table statement\n");
 		goto err_;
 	}
-	printf("Prepare statement successful id: %u ...\n", stmt_id);
+	printf("Prepare statement successful ...\n");
 
 	err = cdq_exec_stmt(&client, stmt_id, &last_insert_id, &rows_affected);
 	if (err != 0) {
@@ -106,7 +104,7 @@ main(int argc, char **argv)
 	} else {
 		fprintf(stdout, "Query successful ...\n");
 	}
-	clientCloseRows(&rows);
+	cdq_rows_close(&rows);
 
 err_:
 	cdq_stop(&client);
