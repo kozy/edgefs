@@ -4158,6 +4158,9 @@ rd_lmdb_stat(struct repdev *dev)
 	uint64_t ver_entries = 0;
 	uint64_t capacity = 0;
 	uint64_t physical_capacity = 0;
+	uint64_t s3_ocp = 0;
+	uint64_t s3_used = 0;
+	uint64_t ttagused = 0;
 	long blk = 0, ssz = 0;
 
 	repdev_status_t status;
@@ -4165,25 +4168,25 @@ rd_lmdb_stat(struct repdev *dev)
 	if (status == REPDEV_STATUS_UNAVAILABLE)
 		return -ENODEV;
 
-	if (!rd->s3_ctx) {
-		err = rd_get_size(dev->path, &blk, &ssz);
-		if (!err) {
-			physical_capacity = blk * ssz;
-		} else {
-			dev->stats.used = 0;
-			if (err == -ENOENT) {
-				struct rd_fault_signature fs = {
-					.error = err,
-					.source = 'm',
-					.plevel = 0
-				};
-				rd_dev_faulted(dev, &fs);
-				err = -ENODEV;
-			}
-			goto out;
+	err = rd_get_size(dev->path, &blk, &ssz);
+	if (!err) {
+		physical_capacity = blk * ssz;
+	} else {
+		dev->stats.used = 0;
+		if (err == -ENOENT) {
+			struct rd_fault_signature fs = {
+				.error = err,
+				.source = 'm',
+				.plevel = 0
+			};
+			rd_dev_faulted(dev, &fs);
+			err = -ENODEV;
 		}
-	} else
-		physical_capacity = capacity = rd->payload_s3_capacity;
+		goto out;
+	}
+
+	if (rd->s3_ctx)
+		s3_ocp = rd->payload_s3_capacity;
 
 	key_cache_stat_t keycache_stats_aggr = { 0, 0, 0 };
 	size_t ttag_entries[TT_LAST] = {0};
@@ -4202,8 +4205,7 @@ rd_lmdb_stat(struct repdev *dev)
 
 		MDB_envinfo env_info;
 		mdb_env_info(db->env[0], &env_info);
-		if (!rd->s3_ctx)
-			capacity += env_info.me_mapsize;
+		capacity += env_info.me_mapsize;
 
 		keycache_stats_aggr.hit += db->key_cache->stats.hit;
 		keycache_stats_aggr.miss += db->key_cache->stats.miss;
@@ -4272,6 +4274,10 @@ rd_lmdb_stat(struct repdev *dev)
 				ttag_size[tt] += mst.ms_psize *
 					(mst.ms_branch_pages + mst.ms_leaf_pages +
 					mst.ms_overflow_pages);
+
+				if (is_rowusage_data_type_tag(tt))
+					ttagused += mst.ms_psize *
+						(mst.ms_overflow_pages + mst.ms_leaf_pages);
 			}
 		}
 		mdb_txn_abort(txn);
@@ -4282,11 +4288,10 @@ rd_lmdb_stat(struct repdev *dev)
 	if (rd->s3_ctx) {
 		/* For S3 payload use different approach because the main DB
 		 * contains only stubs which doesn't reflect actual data size.
+		 * Estimation isn't 100% accurate because it includes LMDB's overhead
 		 */
-		size_t dcap = reptrans_rowusage_full(dev);
-		ttag_size[TT_CHUNK_PAYLOAD] = dcap
-			- ttag_size[TT_CHUNK_MANIFEST]
-			- ttag_size[TT_PARITY_MANIFEST];
+		size_t rowused = reptrans_rowusage_full(dev);
+		s3_used = rowused > ttagused ? (rowused - ttagused) : 0;
 	}
 
 	for (int tt = TT_NAMEINDEX; tt < TT_LAST; tt++) {
@@ -4299,6 +4304,8 @@ rd_lmdb_stat(struct repdev *dev)
 	atomic_set_uint64(&dev->stats.physical_capacity, physical_capacity);
 	atomic_set_uint64(&dev->stats.capacity, capacity);
 	atomic_set_uint64(&dev->stats.used, total_used_space);
+	atomic_set_uint64(&dev->stats.s3_offload_capacity, s3_ocp);
+	atomic_set_uint64(&dev->stats.s3_offload_used, s3_used);
 	dev->stats.keycache = keycache_stats_aggr;
 	dev->stats.num_objects = ttag_entries[TT_NAMEINDEX];
 	if (rd->mdcache) {

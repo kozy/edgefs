@@ -229,6 +229,8 @@ struct reptrans_devinfo_req {
 
 	uint64_t ttag_entries[TT_LAST];
 	uint64_t ttag_size[TT_LAST];
+	uint64_t s3_offload_capacity; /* Only set if S3 payloads offload is enabled */
+	uint64_t s3_offload_used;
 
 	struct reptrans_gw_stats gw_stats_get_lat;
 	struct reptrans_gw_stats gw_stats_put_lat;
