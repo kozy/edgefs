@@ -86,12 +86,12 @@ static void
 rtsock_shutdown_cb(uv_shutdown_t *req, int status)
 {
 	if (status) {
-		log_error(lg, "TCP shutdown failed, handle %p", req->data);
-		return;
+		log_error(lg, "TCP shutdown failed, handle %p status: %d", req->data, status);
 	}
 
 	rt_tcp_t *rtsock = req->data;
-	rtsock_close(rtsock);
+	if (rtsock)
+		rtsock_close(rtsock);
 }
 
 static void
@@ -357,6 +357,9 @@ replicast_client_connect_cb(uv_connect_t *req, int status)
 
 	QUEUE_INSERT_TAIL(&robj->rtsock_queue, &rtsock->item);
 
+	uv_tcp_nodelay(&rtsock->tchandle, 1);
+	uv_tcp_keepalive(&rtsock->tchandle, 1, TCP_KEEP_ALIVE_TIMEOUT);
+
 	int err, namelen;
 	if (rtsock->robj->ipv4) {
 		namelen = sizeof(struct sockaddr_in);
@@ -482,4 +485,3 @@ replicast_destroy_tcp_client(struct replicast *robj)
 		rtsock_shutdown(rtsock);
 	}
 }
-
