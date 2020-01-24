@@ -370,8 +370,10 @@ struct repdev_rd {
     char *payload_s3_bucket_url;
     char *payload_s3_region;
     char *payload_s3_key_file;
+    size_t payload_s3_get_cache_size;
     size_t payload_s3_capacity;
     size_t payload_s3_sync_put;
+    size_t payload_s3_sync_get;
     struct payload_s3 *s3_ctx;
 };
 

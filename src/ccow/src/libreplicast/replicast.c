@@ -8145,6 +8145,18 @@ int replicast_pack_opp_status_result(msgpack_p *p, struct repmsg_opps_result *ms
 	err = msgpack_pack_int16(p, msg->status);
 	if (err)
 		return err;
+	err = msgpack_pack_uint64(p, msg->n_cm_tl_1repl);
+	if (err)
+		return err;
+	err = msgpack_pack_uint64(p, msg->n_cm_zl_1repl);
+	if (err)
+		return err;
+	err = msgpack_pack_uint64(p, msg->n_cp_1rep);
+	if (err)
+		return err;
+	err = msgpack_pack_uint64(p, msg->n_cp_erc_err);
+	if (err)
+		return err;
 	err = replicast_pack_uint128(p, &msg->hostid);
 	if (err)
 		return err;
@@ -8232,7 +8244,18 @@ int replicast_unpack_opp_status_result(msgpack_u *u, struct repmsg_opps_result *
 	err = msgpack_unpack_int16(u, &msg->status);
 	if (err)
 		return err;
-
+	err = msgpack_unpack_uint64(u, &msg->n_cm_tl_1repl);
+	if (err)
+		return err;
+	err = msgpack_unpack_uint64(u, &msg->n_cm_zl_1repl);
+	if (err)
+		return err;
+	err = msgpack_unpack_uint64(u, &msg->n_cp_1rep);
+	if (err)
+		return err;
+	err = msgpack_unpack_uint64(u, &msg->n_cp_erc_err);
+	if (err)
+		return err;
 	err = replicast_unpack_uint128(u, &msg->hostid);
 	if (err)
 		return err;

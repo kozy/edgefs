@@ -11056,6 +11056,21 @@ rd_dev_open_envs(struct repdev* dev) {
 				    dev->name, db->part, dev->keycache_size_max);
 		}
 	}
+	if (rd->payload_s3_bucket_url && !rd->s3_ctx) {
+		err = payload_s3_init(rd->payload_s3_bucket_url,
+			rd->payload_s3_region, rd->payload_s3_key_file,
+			rd->payload_s3_get_cache_size, &rd->s3_ctx);
+		if (err) {
+			log_error(lg, "Dev(%s) S3 payload init error %d", dev->name, err);
+			goto _exit;
+		}
+		rd->s3_ctx->parallel_gets_max = rd->payload_s3_sync_get;
+		log_notice(lg, "Dev(%s) S3 payload enabled. The min. chunk size %u kB, "
+			"capacity %lu MB, sync. put %lu, sync get max. %lu",
+			dev->name, dev->payload_put_min_kb, rd->payload_s3_capacity/(1024LU*1024LU),
+			rd->payload_s3_sync_put, rd->s3_ctx->parallel_gets_max);
+	}
+
 
 	if (maintenance) {
 		err = rd_command_process(dev, &rd->metaloc, 1);
@@ -11687,6 +11702,7 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 	rd->payload_s3_key_file = payload_s3_key_file;
 	rd->payload_s3_region = payload_s3_region;
 	rd->payload_s3_sync_put = payload_s3_sync_put;
+	rd->payload_s3_get_cache_size = payload_s3_get_cache_size;
 	if (rd->payload_s3_bucket_url && payload_s3_capacity <= 0) {
 		log_error(lg, "Dev(%s) invalid S3 bucket capacity %lu."
 			" It must be greater than 0 and expressed in GB",
@@ -11695,7 +11711,9 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 		goto _exit;
 	}
 	rd->payload_s3_capacity = payload_s3_capacity*1024UL*1024UL*1024UL;
-	if (!rd->s3_ctx && rd->payload_s3_bucket_url) {
+	dev->payload_put_min_kb = payload_s3_min_kb;
+	rd->payload_s3_sync_get = payload_s3_sync_get;
+	if (rd->payload_s3_bucket_url) {
 		if (journal) {
 			/* We do not support external journal when S3 offload is enabled
 			 * Use all-SSD configuration instead
@@ -11717,19 +11735,6 @@ rd_repdev_prepare(struct rd_create_repdev_arg* p) {
 			log_notice(lg, "Dev(%s) S3 payload capacity is not defined. Using default value (1TB)", dev->name);
 			rd->payload_s3_capacity = 1024UL*1024UL*1024UL*1024UL;
 		}
-		err = payload_s3_init(rd->payload_s3_bucket_url,
-			rd->payload_s3_region, rd->payload_s3_key_file,
-			payload_s3_get_cache_size, &rd->s3_ctx);
-		if (err) {
-			log_error(lg, "Dev(%s) S3 payload init error %d", name, err);
-			goto _exit;
-		}
-		dev->payload_put_min_kb = payload_s3_min_kb;
-		rd->s3_ctx->parallel_gets_max = payload_s3_sync_get;
-		log_notice(lg, "Dev(%s) S3 payload enabled. The min. chunk size %u kB, "
-			"capacity %lu MB, sync. put %lu, sync get max. %lu",
-			name, payload_s3_min_kb, rd->payload_s3_capacity/(1024LU*1024LU),
-			rd->payload_s3_sync_put, rd->s3_ctx->parallel_gets_max);
 	}
 
 	if (dev->path)
