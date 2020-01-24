@@ -328,7 +328,7 @@ int cbr_connect(struct connbroker_context *brx, rt_connect_cb cb, void *cb_data)
 		return -EEXIST;
 	}
 	if (err) {
-	    log_debug(lg, "Broker %p: destroying replicust client",	rb);
+	    log_error(lg, "Broker %p connect error: %d destroying replicust client", rb, err);
 		cbr_destroy_replicast_client(rb);
 		return err;
 	}
