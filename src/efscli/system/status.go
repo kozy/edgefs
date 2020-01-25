@@ -415,58 +415,58 @@ func SystemStatus(isSummary bool) error {
 		totalMdoffloadCapacity += mdoffloadCapacity
 		totalS3offloadCapacity += s3offloadCapacity
 		totalS3offloadUsed += s3offloadUsed
+	}
 
-		if isSummary {
-			totalAvailable := totalCapacity - totalUsed
-			totalUtilization := float64(100 * totalUsed / totalCapacity)
-			fmt.Printf("capacity %+v %+v\n", totalCapacity, sizefmt.ByteSize(float64(totalCapacity)))
-			fmt.Printf("used %+v %+v\n", totalUsed, sizefmt.ByteSize(float64(totalUsed)))
-			fmt.Printf("available %+v %+v\n", totalAvailable, sizefmt.ByteSize(float64(totalAvailable)))
-			fmt.Printf("utilization %+v %+v%%\n", totalUtilization, totalUtilization)
-			if totalMdoffloadCapacity > 0 {
-				fmt.Printf("MD ooffload capacity %+v %+v\n", totalMdoffloadCapacity, sizefmt.ByteSize(float64(totalMdoffloadCapacity)))
-				fmt.Printf("MD offload used %+v %+v\n", totalMdoffloadUsed, sizefmt.ByteSize(float64(totalMdoffloadUsed)))
-			}
-			if totalS3offloadCapacity > 0 {
-				fmt.Printf("S3 offload buckets capacity %+v %+v\n", totalS3offloadCapacity, sizefmt.ByteSize(float64(totalS3offloadCapacity)))
-				fmt.Printf("S3 offload buckets used %+v %+v\n", totalS3offloadUsed, sizefmt.ByteSize(float64(totalS3offloadUsed)))
-			}
-
-			fmt.Printf("versions %+v %+vM\n", totalNumObjects, totalNumObjects / int64(1000000))
-			m, _ := readTrlogMarker()
-			if err != nil {
-				fmt.Printf("trlogmark err=%v\n", err)
-			} else if m > 0 && m != -1 {
-				cursec := time.Now().UnixNano() / 1000000000
-				fmt.Printf("trlogmark %+v -%+vs\n", m / int64(1000000), cursec - (m / int64(1000000)))
-			}
-
-			conf, err := efsutil.GetLibccowConf()
-			if err != nil {
-				return err
-			}
-
-			c_conf := C.CString(string(conf))
-			defer C.free(unsafe.Pointer(c_conf))
-	
-			cl := C.CString("")
-			defer C.free(unsafe.Pointer(cl))
-
-			var tc C.ccow_t
-
-			ret := C.ccow_admin_init(c_conf, cl, 1, &tc)
-			if ret != 0 {
-				return fmt.Errorf("%s: ccow_admin_init err=%d", efsutil.GetFUNC(), ret)
-			}
-			defer C.ccow_tenant_term(tc)
-
-			guid := C.GoString(C.ccow_get_system_guid_formatted(tc))
-			fmt.Printf("guid %+s\n", guid);
-
-			segid := guid[0:16]
-			fmt.Printf("segid %+s\n", segid);
-			return nil
+	if isSummary {
+		totalAvailable := totalCapacity - totalUsed
+		totalUtilization := float64(100 * totalUsed / totalCapacity)
+		fmt.Printf("capacity %+v %+v\n", totalCapacity, sizefmt.ByteSize(float64(totalCapacity)))
+		fmt.Printf("used %+v %+v\n", totalUsed, sizefmt.ByteSize(float64(totalUsed)))
+		fmt.Printf("available %+v %+v\n", totalAvailable, sizefmt.ByteSize(float64(totalAvailable)))
+		fmt.Printf("utilization %+v %+v%%\n", totalUtilization, totalUtilization)
+		if totalMdoffloadCapacity > 0 {
+			fmt.Printf("MD ooffload capacity %+v %+v\n", totalMdoffloadCapacity, sizefmt.ByteSize(float64(totalMdoffloadCapacity)))
+			fmt.Printf("MD offload used %+v %+v\n", totalMdoffloadUsed, sizefmt.ByteSize(float64(totalMdoffloadUsed)))
 		}
+		if totalS3offloadCapacity > 0 {
+			fmt.Printf("S3 offload buckets capacity %+v %+v\n", totalS3offloadCapacity, sizefmt.ByteSize(float64(totalS3offloadCapacity)))
+			fmt.Printf("S3 offload buckets used %+v %+v\n", totalS3offloadUsed, sizefmt.ByteSize(float64(totalS3offloadUsed)))
+		}
+
+		fmt.Printf("versions %+v %+vM\n", totalNumObjects, totalNumObjects / int64(1000000))
+		m, _ := readTrlogMarker()
+		if err != nil {
+			fmt.Printf("trlogmark err=%v\n", err)
+		} else if m > 0 && m != -1 {
+			cursec := time.Now().UnixNano() / 1000000000
+			fmt.Printf("trlogmark %+v -%+vs\n", m / int64(1000000), cursec - (m / int64(1000000)))
+		}
+
+		conf, err := efsutil.GetLibccowConf()
+		if err != nil {
+			return err
+		}
+
+		c_conf := C.CString(string(conf))
+		defer C.free(unsafe.Pointer(c_conf))
+
+		cl := C.CString("")
+		defer C.free(unsafe.Pointer(cl))
+
+		var tc C.ccow_t
+
+		ret := C.ccow_admin_init(c_conf, cl, 1, &tc)
+		if ret != 0 {
+			return fmt.Errorf("%s: ccow_admin_init err=%d", efsutil.GetFUNC(), ret)
+		}
+		defer C.ccow_tenant_term(tc)
+
+		guid := C.GoString(C.ccow_get_system_guid_formatted(tc))
+		fmt.Printf("guid %+s\n", guid);
+
+		segid := guid[0:16]
+		fmt.Printf("segid %+s\n", segid);
+		return nil
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
