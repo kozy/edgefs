@@ -34,6 +34,8 @@ import (
 	"./cluster/clusterImpl"
 	"./service"
 	"./service/serviceImpl"
+	"./system"
+	"./system/systemImpl"
 	"./tenant"
 	"./tenant/bucketImpl"
 	"./tenant/tenantImpl"
@@ -159,6 +161,7 @@ func (s *Server) Listen() error {
 	tenant.RegisterBucketServer(gs, &bucketImpl.BucketImpl{})
 	service.RegisterServiceServer(gs, &serviceImpl.ServiceImpl{})
 	snapshot.RegisterSnapshotServer(gs, &snapshotImpl.SnapshotImpl{})
+	system.RegisterSystemServer(gs, &systemImpl.SystemImpl{})
 	object.RegisterObjectServer(gs, &objectImpl.ObjectImpl{})
 	reflection.Register(gs)
 	if release == "" {
