@@ -1535,20 +1535,17 @@ out:
 	}
 
 	if (locked) {
-		if (INODE_IS_S3OBJ(inode->ino)) {
-			/** Cannot maintain S3 object data in cache.
-			 *	There is no way to detect changes in object data.
-			 *	Free-up the chunk buffers as we have the chunk locks.
-			 *	Let the chunk heads be in the list as we don't have the list lock.
-			 *	Chunk heads will be removed as part of flush.
-			 */
-			for (uint64_t i=0; i<cnt; i++) {
-				je_free(chunk_list[i]->buff);
-				chunk_list[i]->buff = NULL;
-				chunk_list[i]->data_size = 0;
-				chunk_list[i]->chunk_size = 0;
-				chunk_list[i]->dirty = 0;
-			}
+		/*
+		 * Free-up the chunk buffers as we have the chunk locks.
+		 * Let the chunk heads be in the list as we don't have the list lock.
+		 * Chunk heads will be removed as part of flush.
+		 */
+		for (uint64_t i=0; i<cnt; i++) {
+			je_free(chunk_list[i]->buff);
+			chunk_list[i]->buff = NULL;
+			chunk_list[i]->data_size = 0;
+			chunk_list[i]->chunk_size = 0;
+			chunk_list[i]->dirty = 0;
 		}
 		cache_unlock_multiple_chunks(inode, chunk_list, cnt);
 	}
