@@ -108,6 +108,21 @@ func main() {
 	parts := strings.Split(addr, ":");
 	port, _ := strconv.Atoi(parts[1])
 
+	var clusterNodes strings.Builder;
+
+	/* Create list of all nodes in the cluster */
+	for idx = 0; idx < instances; idx++ {
+		if idx == instances -1 {
+			fmt.Fprintf(&clusterNodes, "%d,%s:%s",
+				int(*srvId) + idx, parts[0],
+				strconv.FormatInt(int64(port + idx), 10))
+		} else {
+			fmt.Fprintf(&clusterNodes, "%d,%s:%s;",
+				int(*srvId) + idx, parts[0],
+				strconv.FormatInt(int64(port + idx), 10))
+		}
+	}
+
 	for idx = 0; idx < instances; idx++ {
 		dbdir := fmt.Sprintf("%s/%s", bpath,
 			strconv.FormatInt(int64(*srvId) + int64(idx), 10))
@@ -117,7 +132,7 @@ func main() {
 				"at", dbdir, newaddr)
 		InitCmd("ccow-sql", []string{"-i",
 			strconv.FormatInt(int64(*srvId) + int64(idx), 10),
-			"-a", newaddr, "-d", dbdir})
+			"-a", newaddr, "-d", dbdir, "-o", clusterNodes.String()})
 	}
 
 	os.Exit(0)

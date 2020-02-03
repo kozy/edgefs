@@ -19,9 +19,9 @@ CFLAGS += $(ASAN_CPPFLAGS) -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -
 	  -Wpointer-arith -Wbad-function-cast -Wcast-align -Wextra \
 	  -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-parameter \
 	  -Wno-cast-align -Wno-unused-function -D_GNU_SOURCE \
-	  -g -I. -I../ccow/include
-LDFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio
-LXFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio
+	  -g -I. -I../ccow/include -I/opt/nedge/include/dqlite
+LXFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio \
+	   $(TARGET_LIB)/libdqclient.a
 
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
 
@@ -34,7 +34,7 @@ $(TARGET_LIB)/libdqclient.a: $(TARGET_LIB)
 $(TARGET_LIB)-clean:
 	$(MAKE) -C $(TARGET_LIB) clean
 
-$(TARGET_BIN): $(TARGET_OBJS)
+$(TARGET_BIN): $(TARGET_LIB)/libdqclient.a $(TARGET_OBJS)
 	gcc -o $@ $^ $(LXFLAGS)
 
 install: $(TARGET_BIN) $(TARGET_LIB)/libdqclient.a

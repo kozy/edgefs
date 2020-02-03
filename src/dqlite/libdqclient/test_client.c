@@ -33,12 +33,11 @@ main(int argc, char **argv)
 		fprintf(stderr, "Expecting server id to be an integer\n");
 		exit(1);
 	}
-	client.srv_ipaddr = strdup(argv[2]);
+	snprintf(client.srv_ipaddr, INET_ADDRSTRLEN, "%s", argv[2]);
 
 	err = cdq_start(&client);
 	if (err !=0) {
 		fprintf(stderr, "Failed to start client\n");
-		free(client.srv_ipaddr);
 		exit(1);
 	}
 	printf("Started client ...\n");
@@ -46,7 +45,6 @@ main(int argc, char **argv)
 	err = cdq_db_open(&client, dbname);
 	if (err != 0) {
 		fprintf(stderr, "Failed to open db - %s\n", dbname);
-		free(client.srv_ipaddr);
 		exit(1);
 	}
 	printf("Open DB successful ...\n");
@@ -108,5 +106,4 @@ main(int argc, char **argv)
 
 err_:
 	cdq_stop(&client);
-	free(client.srv_ipaddr);
 }

@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
+#include "json.h"
 #include "dqclient.h"
 
 /*
@@ -164,4 +165,235 @@ cdq_query_stmt(struct cdq_client *client, unsigned stmt_id, struct rows *rows)
 	}
 	err = clientRecvRows(&client->cl, rows);
 	return err;
+}
+
+int
+cdq_join_node(struct cdq_client *client, uint64_t node_id, char *node_ip)
+{
+	int err;
+
+	err = clientSendJoin(&client->cl, node_id, node_ip);
+	if (err) {
+		return err;
+	}
+	err = clientRecvEmpty(&client->cl);
+	if (err) {
+		return err;
+	}
+	err = clientSendPromote(&client->cl, node_id);
+	if (err) {
+		return err;
+	}
+	err = clientRecvEmpty(&client->cl);
+	return err;
+}
+
+int
+cdq_leave_node(struct cdq_client *client, uint64_t node_id)
+{
+	int err;
+
+	err = clientSendRemove(&client->cl, node_id);
+	if (err) {
+		return err;
+	}
+	err = clientRecvEmpty(&client->cl);
+	return err;
+}
+
+int
+cdq_node_leave_cluster(uint64_t leader_id, char *leader_ip,
+		uint64_t candidate_id)
+{
+	int err;
+	struct cdq_client client;
+
+	if (leader_ip == NULL)
+		return -EINVAL;
+
+	memset(&client, 0, sizeof client);
+	client.srv_id =  leader_id;
+	strncpy(client.srv_ipaddr, leader_ip, INET_ADDRSTRLEN + 6);
+
+	err = cdq_start(&client);
+	if (err != 0) {
+		return ECONNREFUSED;
+	}
+	err = cdq_leave_node(&client, candidate_id);
+	if (err != 0) {
+		return EPROTO;
+	}
+	cdq_stop(&client);
+	return 0;
+}
+
+int
+cdq_node_join_cluster(uint64_t leader_id, char *leader_ip,
+			uint64_t candidate_id, char *candidate_ip)
+{
+	int err;
+	struct cdq_client client;
+
+	if (leader_ip == NULL)
+		return EINVAL;
+
+	/* Connect to a leader */
+	memset(&client, 0, sizeof client);
+	client.srv_id =  leader_id;
+	strncpy(client.srv_ipaddr, leader_ip, INET_ADDRSTRLEN + 6);
+
+	err = cdq_start(&client);
+	if (err != 0) {
+		cdq_stop(&client);
+		return ECONNREFUSED;
+	}
+
+	/* Send candidate node information to the leader */
+	err = cdq_join_node(&client, candidate_id, candidate_ip);
+	if (err != 0) {
+		cdq_stop(&client);
+		return EPROTO;
+	}
+	cdq_stop(&client);
+	return 0;
+}
+
+int
+cdq_get_cluster_nodes(uint64_t id, char *addr)
+{
+	int err;
+	struct servers servers;
+	struct cdq_client client;
+
+	memset(&client, 0, sizeof client);
+	client.srv_id =  id;
+	strncpy(client.srv_ipaddr, addr, INET_ADDRSTRLEN + 6);
+
+	err = cdq_start(&client);
+	if (err != 0) {
+		cdq_stop(&client);
+		return ECONNREFUSED;
+	}
+
+	err = clientSendCluster(&client.cl);
+	if (err) {
+		cdq_stop(&client);
+		return err;
+	}
+	err = clientRecvServers(&client.cl, &servers);
+	if (err == 0) {
+		printf("Number of servers: %lu\n", servers.servers_nr);
+		for (uint64_t i = 0; i < servers.servers_nr; i++) {
+			printf("%lu. Server Info\n", i + 1);
+			printf("id - %d\n", servers.nodes[i].id);
+			printf("IP Addr - %s\n", servers.nodes[i].addr);
+		}
+	}
+	clientCloseServers(&servers);
+	cdq_stop(&client);
+	return err;
+}
+
+int
+cdq_is_leader(uint64_t id, char *addr)
+{
+	int err;
+	struct server server;
+	struct cdq_client client;
+
+	memset(&client, 0, sizeof client);
+	client.srv_id =  id;
+	strncpy(client.srv_ipaddr, addr, INET_ADDRSTRLEN + 6);
+
+	err = cdq_start(&client);
+	if (err != 0) {
+		cdq_stop(&client);
+		return 0;
+	}
+
+	err = clientSendLeader(&client.cl);
+	if (err) {
+		cdq_stop(&client);
+		return 0;
+	}
+	err = clientRecvServer(&client.cl, &server);
+	if (err == 0) {
+		/* Connected to the leader */
+		if (server.addr[0] != '\0') {
+			cdq_stop(&client);
+			return 1;
+		}
+	}
+	cdq_stop(&client);
+	return 0;
+}
+
+/*
+ * All node information passed a json string
+ */
+int
+cdq_get_leader(char *jsonstr, uint64_t *leader_id, char **ipaddr)
+{
+	json_value *o, *nodes;
+	char *srv_ip = NULL;
+	int got_id = 0, got_ip = 0, srv_id = 0, got_leader = 0;
+
+	if (leader_id == NULL || ipaddr == NULL) {
+		return -EFAULT;
+	}
+
+	o = json_parse(jsonstr, strlen(jsonstr));
+	if (o == NULL || o->type != json_object) {
+		return -EINVAL;
+	}
+
+	if (strcmp(o->u.object.values[0].name, "nodes") != 0) {
+		return -EINVAL;
+	}
+
+	nodes = o->u.object.values[0].value;
+	if (nodes == NULL) {
+		return -EINVAL;
+	}
+	if (nodes->type != json_array) {
+		return -EINVAL;
+	}
+
+	for (size_t j = 0; j < nodes->u.array.length; j++) {
+		json_value *n = nodes->u.array.values[j];
+		for (size_t i = 0; i < n->u.object.length; i++) {
+			char *key = n->u.object.values[i].name;
+			json_value *v = n->u.object.values[i].value;
+
+			if (strcmp(key, "id") == 0) {
+				if (v->type != json_integer) {
+					continue;
+				}
+				got_id = 1;
+				srv_id = v->u.integer;
+			}
+			if (strcmp(key, "ipaddr_port") == 0) {
+				if (v->type != json_string) {
+					continue;
+				}
+				got_ip = 1;
+				srv_ip = v->u.string.ptr;
+			}
+			if (got_id && got_ip) {
+				if((cdq_is_leader(srv_id, srv_ip))) {
+					got_leader = 1;
+					*leader_id = srv_id;
+					*ipaddr = strdup(srv_ip);
+					break; /* stop search */
+				}
+			}
+		}
+		/* Found leader stop search */
+		if (*leader_id > 0)
+			break;
+		got_id = got_ip = 0;
+	}
+	json_value_free(o);
+
+	return got_leader ? 0 : -ENOENT;
 }
