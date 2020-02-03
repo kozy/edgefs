@@ -281,9 +281,8 @@ func ConfigNode() {
 			// adjust log file location
 			output := regexp.MustCompile(`/opt/nedge`).ReplaceAllString(string(input), os.Getenv("NEDGE_HOME"))
 	
-			// adjust netmtu to the current value of selected server interface name
-			ifname0 := strings.Split(nodeConfig.Ccowd.Network.ServerInterfaces, ";")[0]
-			netmtu := DetectMTU(ifname0)
+			// Use the smallest possible MTU value
+			netmtu := 1400
 			output = regexp.MustCompile(`netmtu:.*`).ReplaceAllString(output, "netmtu: "+strconv.Itoa(netmtu))
 	
 			if err = ioutil.WriteFile(nedgeHome+CorosyncConfFile, []byte(output), 0666); err != nil {
