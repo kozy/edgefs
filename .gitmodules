@@ -26,7 +26,7 @@
 [submodule "deps/corosync/corosync"]
 	path = deps/corosync/corosync
 	url = https://github.com/Nexenta/corosync.git
-	branch = v3.0.1-nexenta
+	branch = v3-nexenta
 	ignore = all
 [submodule "deps/liberasurecode/gf-complete"]
 	path = deps/liberasurecode/gf-complete
