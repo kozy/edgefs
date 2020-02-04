@@ -709,9 +709,9 @@ interate_nfs_bucket(ccow_t tc, const char* bid, size_t bid_size, const char* oid
 				log_error(lg,"Shard unpack error %d", err);
 				return err;
 			}
-			count++;
 			if (!strcmp(kv->key, ".") || !strcmp(kv->key, "..") || !strlen(kv->key))
 				continue;
+			count++;
 			char* p = strchr(buf, ';');
 			if (p) {
 				*p = 0;
@@ -721,8 +721,10 @@ interate_nfs_bucket(ccow_t tc, const char* bid, size_t bid_size, const char* oid
 					 */
 					char pbuff[PATH_MAX];
 					sprintf(pbuff, "%s/%s", prefix, kv->key);
-					interate_nfs_bucket(tc, bid, bid_size, buf, sizeof(buf) + 1,
+					err = interate_nfs_bucket(tc, bid, bid_size, buf, sizeof(buf) + 1,
 						pbuff, cb, arg);
+					if (err)
+						goto _exit;
 				} else {
 					if (cb) {
 						char lbuf[PATH_MAX];
