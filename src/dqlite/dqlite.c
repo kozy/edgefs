@@ -117,14 +117,19 @@ ccow_dq_leave_cluster()
 		return -ENOENT;
 	}
 
-	log_notice(lg, "DQLite node (%lu) attempting to leave "
-			"the cluster\n", cdq_server.id);
-	err = cdq_node_leave_cluster(leader_id, leader_ip, cdq_server.id);
+	/* If we are the leader, then leave cluster will fail */
+	if (leader_id != cdq_server.id) {
+		log_notice(lg, "DQLite node (%lu) attempting to leave "
+				"the cluster\n", cdq_server.id);
+		err = cdq_node_leave_cluster(leader_id, leader_ip,
+						cdq_server.id);
 
-	if (err) {
-		log_error(lg, "Failed to leave the cluster. error - %d\n", err);
-	} else {
-		log_notice(lg, "DQLite node left the cluster.\n");
+		if (err) {
+			log_error(lg, "Failed to leave the cluster. "
+					"error - %d\n", err);
+		} else {
+			log_notice(lg, "DQLite node left the cluster.\n");
+		}
 	}
 	return err;
 }

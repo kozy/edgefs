@@ -289,7 +289,8 @@ cdq_get_cluster_nodes(uint64_t id, char *addr)
 			printf("IP Addr - %s\n", servers.nodes[i].addr);
 		}
 	}
-	clientCloseServers(&servers);
+	if (servers.servers_nr)
+		clientCloseServers(&servers);
 	cdq_stop(&client);
 	return err;
 }
