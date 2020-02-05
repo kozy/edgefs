@@ -46,7 +46,8 @@ bin_PROGRAMS = daemon_test client_test libcrypto_test \
         pseudo_delete simple_wait sharded_list_test user_list_test \
         gwlru_api_test  acl_list_test ec_unencode_test bucket_list_objects \
         ccowtp_test reptrans_pattern_test fs_verify_dentry ccow_isgw_test \
-        ccow_lookup_test kvs_backend_perf kvssd_backend_test
+        ccow_lookup_test kvs_backend_perf kvssd_backend_test \
+	sharded_list_basic_fs_dir_test
 
 DISABLED=libflexhash_test flexhash_sim fhzone_test
 
@@ -343,6 +344,12 @@ sharded_list_test_CFLAGS = -I$(top_srcdir)/src/libflexhash \
             -I$(top_srcdir)/src/libreplicast -I$(top_srcdir)/src/libccow
 sharded_list_test_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
          $(top_srcdir)/src/libflexhash/libflexhash.la \
+            $(top_srcdir)/src/libccowd/libccowd.la -luv -lcrypto $(ASAN_LIB)
+
+sharded_list_basic_fs_dir_test_SOURCES = sharded_list_basic_fs_dir_test.c cmocka.c common.c
+sharded_list_basic_fs_dir_test_LDFLAGS = $(AM_LDFLAGS) -luv -lcrypto -lccow
+sharded_list_basic_fs_dir_test_CFLAGS = -I$(top_srcdir)/src/libccow
+sharded_list_basic_fs_dir_test_LDADD = $(top_srcdir)/src/libccowutil/libccowutil.la \
             $(top_srcdir)/src/libccowd/libccowd.la -luv -lcrypto $(ASAN_LIB)
 
 user_list_test_SOURCES = user_list_test.c cmocka.c common.c
