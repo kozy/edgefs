@@ -4,6 +4,9 @@ TARGET_SRCS = dqclient.c
 TEST_DQCLIENT = test_client
 TEST_DQCLIENT_SRCS = test_client.c
 
+STRESS_TEST = stress_test
+STRESS_TEST_SRCS = stress_test.c
+
 ifndef NEDGE_NDEBUG
 ASAN_CPPFLAGS=-fsanitize=address -fno-omit-frame-pointer -fno-common
 ASAN_LDFLAGS=-fsanitize=address -fno-omit-frame-pointer -fno-common -lasan
@@ -21,8 +24,9 @@ LDFLAGS += $(ASAN_LDFLAGS) -L /opt/nedge/lib -lccowutil -ldqlite
 
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
 TEST_DQCLIENT_OBJS = $(TEST_DQCLIENT_SRCS:.c=.o)
+STRESS_TEST_OBJS = $(STRESS_TEST_SRCS:.c=.o)
 
-all: $(TARGET_LIB).a test_client
+all: $(TARGET_LIB).a $(TEST_DQCLIENT) $(STRESS_TEST)
 
 $(TARGET_LIB).a: $(TARGET_OBJS)
 	ar rcs $@ $^
@@ -30,5 +34,8 @@ $(TARGET_LIB).a: $(TARGET_OBJS)
 $(TEST_DQCLIENT): $(TEST_DQCLIENT_OBJS) $(TARGET_OBJS) $(TARGET_LIB).a
 	gcc -o $@ $^  $(LDFLAGS)
 
+$(STRESS_TEST): $(STRESS_TEST_OBJS) $(TARGET_LIB).a
+	gcc -o $@ $^  $(LDFLAGS)
+
 clean:
-	rm -f $(TEST_DQCLIENT) $(TARGET_LIB).a *.o
+	rm -f $(STRESS_TEST) $(TEST_DQCLIENT) $(TARGET_LIB).a *.o

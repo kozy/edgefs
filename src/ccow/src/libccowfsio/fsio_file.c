@@ -268,6 +268,9 @@ ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
         buffer_size, buffer, write_amount);
 
 	*write_amount = 0;
+	if (buffer_size == 0 || buffer == NULL) {
+		return 0;
+	}
 
 	err = get_file_inode(file);
 	if (err) {

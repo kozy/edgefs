@@ -207,8 +207,11 @@ signal_handler(int signum)
 	terminating = 1;
 	log_flush(lg);
 
-	/* Ignore error and stop */
 	err = ccow_dq_leave_cluster();
+	if (err) {
+		log_error(lg, "Failed to leave the cluster\n");
+		return;
+	}
 
 	if (daemonize) {
 		unlink(pidfile);
@@ -217,7 +220,8 @@ signal_handler(int signum)
 	log_notice(lg, "Stopping the DQLite node (%lu)\n", cdq_server.id);
 	err = ccow_dq_stop();
 	if (err) {
-		log_error(lg, "Failed to stop ccow-sql\n");
+		log_error(lg, "Failed to stop DQLite node\n");
+		return;
 	}
 
 	log_flush(lg);
@@ -591,6 +595,10 @@ main(int argc, char *argv[])
 			}
 		} while (err != 0 && retry < JOIN_RETRY);
 
+		if (err != 0) {
+			log_error(lg, "Failed to join cluster. Exiting ...\n");
+			goto err_;
+		}
 		/* Keep node running even if it fails to join the cluster */
 		if (verbose == 1) {
 			ccow_dq_check_cluster_info();
