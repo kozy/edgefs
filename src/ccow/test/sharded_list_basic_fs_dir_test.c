@@ -54,6 +54,7 @@
  * TODO: Random delete.
  */
 
+int ccow_mh_immdir = 0;
 int verbose = 0;
 int dd = 0;
 uint64_t global_i = 0;
@@ -82,6 +83,14 @@ dir_create(void **state)
 	err = ccow_shard_context_create(oid, oid_size, FSIO_DIR_SHARD_COUNT,
 	    &dir_list_context);
 	assert_int_equal(err, 0);
+
+	/*
+	 * Directories are eventual in our model if X-MH-ImmDir == 0 (default).
+	 */
+	if (ccow_mh_immdir == 0) {
+		printf("%s context set eventual: %s", __func__, oid);
+		ccow_shard_context_set_eventual(dir_list_context, 1, 1);
+	}
 
 	ccow_shard_context_set_overwrite(dir_list_context, 0);
 
@@ -450,6 +459,15 @@ main(int argc, char **argv) {
 		default:
 			break;
 		}
+	}
+
+	char* mh = getenv("CCOW_MH_IMMDIR");
+	if (mh != NULL && strcmp(mh, "0") == 0) {
+		ccow_mh_immdir = 0;
+		printf("Context set eventual\n");
+	} else {
+		ccow_mh_immdir = 1;
+		printf("Context set immediate\n");
 	}
 
 	const UnitTest tests[] = {
