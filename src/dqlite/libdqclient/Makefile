@@ -21,6 +21,7 @@ CFLAGS += -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -Wendif-labels \
  -I./include -I. -L. $(ASAN_CPPFLAGS)
 
 LDFLAGS += $(ASAN_LDFLAGS) -L /opt/nedge/lib -lccowutil -ldqlite
+STRESS_TEST_LDFLAGS = -lpthread
 
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
 TEST_DQCLIENT_OBJS = $(TEST_DQCLIENT_SRCS:.c=.o)
@@ -35,7 +36,7 @@ $(TEST_DQCLIENT): $(TEST_DQCLIENT_OBJS) $(TARGET_OBJS) $(TARGET_LIB).a
 	gcc -o $@ $^  $(LDFLAGS)
 
 $(STRESS_TEST): $(STRESS_TEST_OBJS) $(TARGET_LIB).a
-	gcc -o $@ $^  $(LDFLAGS)
+	gcc -o $@ $^  $(LDFLAGS) $(STRESS_TEST_LDFLAGS)
 
 clean:
 	rm -f $(STRESS_TEST) $(TEST_DQCLIENT) $(TARGET_LIB).a *.o
