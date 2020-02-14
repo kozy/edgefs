@@ -653,7 +653,7 @@ _retry:;
 					if (resp)
 						response_code = resp;
 #endif
-					if (response_code == 503) {
+					if (response_code / 100 == 5) {
 						/* AWS slowdown response */
 						will_retry = 1;
 					} else if ((response_code / 100) != 2)
@@ -836,7 +836,7 @@ _retry:
 			response_code = resp;
 #endif
 		if (res == CURLE_OK) {
-			if (response_code == 503) {
+			if (response_code / 100 == 5) {
 				if (delay < 80) {
 					usleep(delay*100000);
 					delay <<= 1;
