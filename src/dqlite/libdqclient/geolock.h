@@ -20,8 +20,11 @@ typedef struct geo_lock {
 /* Function declarations */
 int geolock_create_lock_tbl(struct cdq_client *client);
 int geolock_get_lock_rec(struct cdq_client *client, const char *path_key,
-		geo_lock_t *lock_rec);
+		geo_lock_t *lock_rec, int *rec_count);
 int geolock_insert_lock_rec(struct cdq_client *client, geo_lock_t *lock_rec);
+
+int geolock_is_locked(struct cdq_client *client, const char *path_key,
+		int *is_locked);
 int geolock_lock(struct cdq_client *client, const char *path_key,
 		uint64_t genid);
 int geolock_unlock(struct cdq_client *client, const char *path_key,

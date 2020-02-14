@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <errno.h>
 #include "geolock.h"
 
 static char *global_lock_tbl_stmt = 
@@ -31,6 +32,9 @@ static char *insert_lock_rec_stmt =
 static char *select_lock_stmt =
 	"SELECT * from GVMR WHERE path = '%s'";
 
+static char *check_lock_stmt =
+	"SELECT * from GVMR WHERE path = '%s' and lockstate = 1";
+
 static char *mark_for_deletion_stmt =
 	"UPDATE GVMR SET deleted = 1 WHERE path = '%s'";
 
@@ -46,12 +50,12 @@ sql_exec_stmt(struct cdq_client *client, char *sql_stmt)
 	err = cdq_prepare_stmt(client, sql_stmt, &stmt_id);
 	if (err != 0) {
 		fprintf(stderr, "Prepare failed\n");
-		return -1;
+		return -EINVAL;
 	}
 	err = cdq_exec_stmt(client, stmt_id, &last_insert_id, &rows_affected);
 	if (err != 0) {
 		fprintf(stderr, "Execute failed\n");
-		return -1;
+		return -EIO;
 	}
 	return 0;
 }
@@ -63,38 +67,92 @@ geolock_create_lock_tbl(struct cdq_client *client)
 }
 
 int
-geolock_get_lock_rec(struct cdq_client *client, const char *path_key,
-			geo_lock_t *lock_rec)
+geolock_is_locked(struct cdq_client *client, const char *path_key, int *locked)
 {
 	char stmt[4096];
 	int err, recs_nr = 0;
 	unsigned stmt_id;
 	struct rows rows;
-	struct row *rec, *first;
+	struct row *rec;
+
+	if (locked == NULL)
+		return -EINVAL;
+
+	*locked = 0;
 
 	sprintf(stmt, select_lock_stmt, path_key);
 	err = cdq_prepare_stmt(client, stmt, &stmt_id);
 	if (err != 0) {
-		return -1;
+		return -EINVAL;
 	}
+
+	memset(&rows, 0, sizeof rows);
 	err = cdq_query_stmt(client, stmt_id, &rows);
 	if (err == 0) {
-#if 0
-		first = rec = rows.next;
-		printf("REC pointer: %p\n", rec);
-		while(rec) {
-			recs_nr++;
-			rec = rec->next++;
-			printf("ROW: %p\n", rec);
+		if (rows.next != NULL) {
+			*locked = rows.next->values[9].integer;
+			cdq_rows_close(&rows);
+		} else {
+			err = -ENOENT;
 		}
-		printf("No. of lock records selected - %d\n", recs_nr);
-		printf("ROW: %p\n", rows.next);
-#endif
+	} else {
+		err = -EIO;
+	}
+	return err;
+}
+
+static void
+copy_lock_rec(struct row *rec, geo_lock_t *lock_rec)
+{
+	strcpy(lock_rec->path, rec->values[0].text);
+	lock_rec->genid = rec->values[1].integer;
+	lock_rec->uvid = rec->values[2].integer;
+	lock_rec->deleted = rec->values[3].integer;
+	strcpy(lock_rec->nhid, rec->values[4].text);
+	strcpy(lock_rec->vmchid, rec->values[5].text);
+	lock_rec->segid = rec->values[6].integer;
+	lock_rec->size = rec->values[7].integer;
+	lock_rec->lock_time = rec->values[8].integer;
+	lock_rec->lock_state = rec->values[9].integer;
+}
+
+int
+geolock_get_lock_rec(struct cdq_client *client, const char *path_key,
+			geo_lock_t *lock_rec, int *rec_count)
+{
+	char stmt[4096];
+	int err, recs_nr = 0;
+	unsigned stmt_id;
+	struct rows rows;
+	struct row *rec;
+
+	sprintf(stmt, check_lock_stmt, path_key);
+	err = cdq_prepare_stmt(client, stmt, &stmt_id);
+	if (err != 0) {
+		return -EINVAL;
+	}
+
+	memset(&rows, 0, sizeof rows);
+	err = cdq_query_stmt(client, stmt_id, &rows);
+	if (err == 0) {
+		rec = rows.next;
+		if (rec != NULL && lock_rec != NULL) {
+			copy_lock_rec(rec, lock_rec);
+		}
+
+		while (rec) {
+			recs_nr++;
+			rec = rec->next;
+		}
+		if (recs_nr == 0)
+			err = -ENOENT;
+		*rec_count = recs_nr;
 		cdq_rows_close(&rows);
+	} else {
+		err = -EIO;
 	}
 	
-	return err ? -1 : 0;
-	
+	return err;
 }
 
 int

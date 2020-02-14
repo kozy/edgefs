@@ -7,7 +7,7 @@
 int
 main(int argc, char **argv)
 {
-	int err;
+	int err, is_locked = 0, rec_count = 0;
 	unsigned stmt_id, last_insert_id = 0, rows_affected = 0;
 	struct cdq_client client;
 	struct rows rows;
@@ -65,13 +65,13 @@ main(int argc, char **argv)
 	}
 	printf("Inserted lock record\n");
 
-	memset(&db_rec, 0, sizeof db_rec);
-	err = geolock_get_lock_rec(&client, lock_rec.path, &db_rec);
+	/* Check if record is locked */
+	err = geolock_is_locked(&client, lock_rec.path, &is_locked);
 	if (err != 0) {
 		fprintf(stderr, "Failed to fetch lock record\n");
 		exit(1);
 	}
-	printf("Fetched lock record\n");
+	printf("Lock status : %s\n", is_locked ? "locked" : "unlocked");
 
 	/* Lock the object */
 	err = geolock_lock(&client, lock_rec.path, lock_rec.genid);
@@ -81,6 +81,37 @@ main(int argc, char **argv)
 	}
 	printf("Changed lock record state to locked ...\n");
 
+	memset(&db_rec, 0, sizeof db_rec);
+	err = geolock_get_lock_rec(&client, lock_rec.path, &db_rec, &rec_count);
+	if (err != 0) {
+		fprintf(stderr, "Failed to fetch lock record\n");
+		exit(1);
+	}
+
+	if (rec_count != 0) {
+		printf("Fetched lock record\n");
+		printf("Record\n====\n");
+		printf("%s,\n", db_rec.path);
+		printf("%lu,\n", db_rec.genid);
+		printf("%lu,\n", db_rec.uvid);
+		printf("%u,\n", db_rec.deleted);
+		printf("%s,\n", db_rec.nhid);
+		printf("%s,\n", db_rec.vmchid);
+		printf("%lu,\n", db_rec.segid);
+		printf("%u,\n", db_rec.size);
+		printf("%lu,\n", db_rec.lock_time);
+		printf("%u\n", db_rec.lock_state);
+		printf("=====\n");
+	}
+
+	/* Check if record is locked */
+	err = geolock_is_locked(&client, lock_rec.path, &is_locked);
+	if (err != 0) {
+		fprintf(stderr, "Failed to fetch lock record\n");
+		exit(1);
+	}
+	printf("Lock status : %s\n", is_locked ? "locked" : "unlocked");
+
 	/* Unlock the object */
 	err = geolock_unlock(&client, lock_rec.path, lock_rec.genid);
 	if (err != 0) {
@@ -88,6 +119,14 @@ main(int argc, char **argv)
 		exit(1);
 	}
 	printf("Changed lock record state to unlocked ...\n");
+
+	/* Check if record is locked */
+	err = geolock_is_locked(&client, lock_rec.path, &is_locked);
+	if (err != 0) {
+		fprintf(stderr, "Failed to fetch lock record\n");
+		exit(1);
+	}
+	printf("Lock status : %s\n", is_locked ? "locked" : "unlocked");
 
 	printf("Deleting lock table\n");
 	test_geolock_delete_tbl(&client);
