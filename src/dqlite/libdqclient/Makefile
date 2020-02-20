@@ -1,11 +1,14 @@
 TARGET_LIB = libdqclient
-TARGET_SRCS = dqclient.c
+TARGET_SRCS = dqclient.c geolock.c
 
 TEST_DQCLIENT = test_client
 TEST_DQCLIENT_SRCS = test_client.c
 
 STRESS_TEST = stress_test
 STRESS_TEST_SRCS = stress_test.c
+
+TEST_GEOLOCK = test_geolock
+TEST_GEOLOCK_SRCS = test_geolock.c
 
 ifndef NEDGE_NDEBUG
 ASAN_CPPFLAGS=-fsanitize=address -fno-omit-frame-pointer -fno-common
@@ -26,8 +29,9 @@ STRESS_TEST_LDFLAGS = -lpthread
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
 TEST_DQCLIENT_OBJS = $(TEST_DQCLIENT_SRCS:.c=.o)
 STRESS_TEST_OBJS = $(STRESS_TEST_SRCS:.c=.o)
+TEST_GEOLOCK_OBJS = $(TEST_GEOLOCK_SRCS:.c=.o)
 
-all: $(TARGET_LIB).a $(TEST_DQCLIENT) $(STRESS_TEST)
+all: $(TARGET_LIB).a $(TEST_DQCLIENT) $(STRESS_TEST) $(TEST_GEOLOCK)
 
 $(TARGET_LIB).a: $(TARGET_OBJS)
 	ar rcs $@ $^
@@ -37,6 +41,9 @@ $(TEST_DQCLIENT): $(TEST_DQCLIENT_OBJS) $(TARGET_OBJS) $(TARGET_LIB).a
 
 $(STRESS_TEST): $(STRESS_TEST_OBJS) $(TARGET_LIB).a
 	gcc -o $@ $^  $(LDFLAGS) $(STRESS_TEST_LDFLAGS)
+
+$(TEST_GEOLOCK): $(TEST_GEOLOCK_OBJS) $(TARGET_LIB).a
+	gcc -o $@ $^  $(LDFLAGS)
 
 clean:
 	rm -f $(STRESS_TEST) $(TEST_DQCLIENT) $(TARGET_LIB).a *.o
