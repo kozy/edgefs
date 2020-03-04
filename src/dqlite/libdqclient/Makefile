@@ -1,5 +1,5 @@
 TARGET_LIB = libdqclient
-TARGET_SRCS = dqclient.c geolock.c
+TARGET_SRCS = dqclient.c geolock.c glm_dqlite.c
 
 TEST_DQCLIENT = test_client
 TEST_DQCLIENT_SRCS = test_client.c
@@ -13,6 +13,9 @@ TEST_GEOLOCK_SRCS = test_geolock.c
 ifndef NEDGE_NDEBUG
 ASAN_CPPFLAGS=-fsanitize=address -fno-omit-frame-pointer -fno-common
 ASAN_LDFLAGS=-fsanitize=address -fno-omit-frame-pointer -fno-common -lasan
+else
+ASAN_CPPFLAGS=-DUSE_JE_MALLOC -O2
+ASAN_LDFLAGS=-ljemalloc -fno-omit-frame-pointer
 endif
 
 CFLAGS += -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -Wendif-labels \
@@ -23,7 +26,8 @@ CFLAGS += -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -Wendif-labels \
  -I/opt/nedge/include/dqlite -I/opt/nedge/include/json-c \
  -I./include -I. -L. $(ASAN_CPPFLAGS)
 
-LDFLAGS += $(ASAN_LDFLAGS) -L /opt/nedge/lib -lccowutil -ldqlite
+LDFLAGS += $(ASAN_LDFLAGS) -L /opt/nedge/lib -lccowutil -lccowfsio -ldqlite
+
 STRESS_TEST_LDFLAGS = -lpthread
 
 TARGET_OBJS = $(TARGET_SRCS:.c=.o)
@@ -31,10 +35,13 @@ TEST_DQCLIENT_OBJS = $(TEST_DQCLIENT_SRCS:.c=.o)
 STRESS_TEST_OBJS = $(STRESS_TEST_SRCS:.c=.o)
 TEST_GEOLOCK_OBJS = $(TEST_GEOLOCK_SRCS:.c=.o)
 
-all: $(TARGET_LIB).a $(TEST_DQCLIENT) $(STRESS_TEST) $(TEST_GEOLOCK)
+all: $(TARGET_LIB).a $(TARGET_LIB).so $(TEST_DQCLIENT) $(STRESS_TEST) $(TEST_GEOLOCK)
 
 $(TARGET_LIB).a: $(TARGET_OBJS)
 	ar rcs $@ $^
+
+$(TARGET_LIB).so: $(TARGET_OBJS)
+	gcc -shared -o $@ $^ -L /opt/nedge/lib -ldqlite
 
 $(TEST_DQCLIENT): $(TEST_DQCLIENT_OBJS) $(TARGET_OBJS) $(TARGET_LIB).a
 	gcc -o $@ $^  $(LDFLAGS)

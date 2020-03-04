@@ -75,6 +75,11 @@ struct fsio_super {
 	ccow_snapview_t sv_handle;
 	uint64_t objects_genid;
 
+	/* Geolock service references */
+	void	*glm_client;
+	void	*glm_ops;
+	unsigned int glm_enabled;
+
 	api_stats api_debug_stats[MAX_FSIO_API];
 
 	/* Quota support bytes limit and objects limit */

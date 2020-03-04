@@ -3,6 +3,7 @@ TARGET_BIN = ccow-sql
 TARGET_LIB = libdqclient
 
 TARGET_SRCS = dqlite.c
+
 #
 # Activate by exporing this env variable:
 #
@@ -19,7 +20,7 @@ CFLAGS += $(ASAN_CPPFLAGS) -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -
 	  -Wpointer-arith -Wbad-function-cast -Wcast-align -Wextra \
 	  -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-parameter \
 	  -Wno-cast-align -Wno-unused-function -D_GNU_SOURCE \
-	  -g -I. -I../ccow/include -I/opt/nedge/include/dqlite
+	  -g -I. -I../ccow/include -I$(DESTDIR)/include/dqlite
 LXFLAGS += $(ASAN_LDFLAGS) -ldqlite -L$(NEDGE_HOME)/lib -lccowutil -lccowfsio \
 	   $(TARGET_LIB)/libdqclient.a
 
@@ -41,10 +42,13 @@ install: $(TARGET_BIN) $(TARGET_LIB)/libdqclient.a
 	mkdir -p $(DESTDIR)$(SRCDIR)/sbin 2> /dev/null || true
 	cp -a $(TARGET_BIN) $(DESTDIR)$(SRCDIR)/sbin
 	cp -a $(TARGET_LIB)/libdqclient.a $(DESTDIR)$(SRCDIR)/lib
+	cp -a $(TARGET_LIB)/libdqclient.so $(DESTDIR)$(SRCDIR)/lib
+	cp -a $(TARGET_LIB)/dqclient.h $(DESTDIR)$(SRCDIR)/include
+	cp -a $(TARGET_LIB)/geolock.h $(DESTDIR)$(SRCDIR)/include
 
 uninstall:
 	rm -f $(DESTDIR)$(SRCDIR)/sbin/$(TARGET_BIN)
-	rm -f $(DESTDIR)$(SRCDIR)/lib/libdqclient.a
+	rm -f $(DESTDIR)$(SRCDIR)/lib/libdqclient.*
 
 clean: $(TARGET_LIB)-clean
 	rm -f $(TARGET_BIN) *.o
