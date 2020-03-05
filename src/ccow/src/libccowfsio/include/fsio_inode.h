@@ -205,6 +205,11 @@ typedef struct __ccowfs_inode__
 	uint64_t logical_size;;
 	uint64_t prev_logical_size;;
 
+	/* Geolock */
+	pthread_mutex_t glm_mutex;
+	unsigned int glm_ref_count;
+	unsigned int glm_cached;
+
 	/* in-memory inode expiration marker and genid */
 	uint64_t expire_us;
 

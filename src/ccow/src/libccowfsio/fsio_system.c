@@ -44,6 +44,11 @@
 #include <fsio_recovery.h>
 #include <tc_pool.h>
 
+/* Extern functions */
+extern int ccow_fsio_glm_init(char *service_name, char *ccow_config_file,
+		ci_t *ci);
+extern void ccow_fsio_glm_term(ci_t *ci);
+
 /* [TBD] At presetn adding and removing to the export list is not guarded by
  * any lock.
  * The addExport and removeExport happen in Ganesha dBus thread.
@@ -1154,6 +1159,7 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 {
 	int64_t dummy;
 	ccow_t tc;
+	char *glm_service;
 	int err = 0, nonfatal_err = 0, locked = 0;
 
 	log_trace(fsio_lg, "ci: %p, uri: \"%s\", "
@@ -1184,6 +1190,13 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	ci->bid_size = strlen(ci->bid) + 1;
 	ci->up_cb = up_cb;
 	ci->up_cb_args = up_cb_args;
+
+	glm_service = getenv("CCOW_GEOLOCK_SERVICE");
+	if (glm_service != NULL) {
+		err = ccow_fsio_glm_init(glm_service, ccow_config, ci);
+		if (err)
+			goto out;
+	}
 
 	tc_pool_find_handle(ci->cid, ci->tid, &ci->tc_pool_handle);
 	if (! ci->tc_pool_handle){
@@ -1341,6 +1354,10 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	}
 out:
 	assert(err || ci->inode_cache.inode_table);
+
+	if (ci->glm_enabled) {
+		ccow_fsio_glm_term(ci);
+	}
 
 	if (locked) {
 		err = ccow_range_lock(tc, ci->bid, ci->bid_size, "", 1, 0, 1, CCOW_LOCK_UNLOCK);
