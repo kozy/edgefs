@@ -30,11 +30,9 @@ package systemImpl
 #include "private/trlog.h"
 */
 import "C"
-import "unsafe"
-
 import (
-	proto ".."
-	"golang.org/x/net/context"
+	"strings"
+	"unsafe"
 
 	"bufio"
 	"encoding/json"
@@ -46,7 +44,9 @@ import (
 	"strconv"
 	"time"
 
+	proto ".."
 	"../../efsutil"
+	"golang.org/x/net/context"
 )
 
 const (
@@ -461,6 +461,17 @@ func SystemStatus(isSummary bool, st *proto.SystemStatusResponse, res *proto.Sys
 		res.Guid = guid
 
 		res.Segid = guid[0:16]
+
+		var zone string
+		zfile, et := ioutil.ReadFile("/etc/timezone")
+		if et != nil {
+			t := time.Now()
+			zone, _ = t.Zone()
+		} else {
+			zone = string(zfile)
+		}
+		res.Timezone = strings.TrimSpace(zone)
+
 		return nil
 	}
 
