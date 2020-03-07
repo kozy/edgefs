@@ -49,6 +49,8 @@ message SystemSummaryResponse {
 
 	string guid = 12;
 	string segid = 13;
+
+	string timezone = 14;
 }
 
 

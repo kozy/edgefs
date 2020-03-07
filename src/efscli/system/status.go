@@ -34,18 +34,19 @@ import "unsafe"
 
 import (
 	"bufio"
-	"fmt"
-	"time"
-	"github.com/Nexenta/edgefs/src/efscli/efsutil"
-	"github.com/olekukonko/tablewriter"
-	"github.com/spf13/cobra"
-	"github.com/im-kulikov/sizefmt"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"regexp"
 	"strconv"
+	"time"
+
+	"github.com/Nexenta/edgefs/src/efscli/efsutil"
+	"github.com/im-kulikov/sizefmt"
+	"github.com/olekukonko/tablewriter"
+	"github.com/spf13/cobra"
 )
 
 const (
@@ -115,7 +116,7 @@ func SystemStatus(isSummary bool) error {
 			// Loading VDEVs
 			if vdev_if, ok := cp_kv["vdevlist"]; ok {
 				if vdevs, ok := vdev_if.([]interface{}); ok {
-					for _, vdev_if := range(vdevs) {
+					for _, vdev_if := range vdevs {
 						if vdev_kv, ok := vdev_if.(map[string]interface{}); ok {
 							sid := vdev_kv["serverid"].(string)
 							vid := vdev_kv["vdevid"].(string)
@@ -165,7 +166,7 @@ func SystemStatus(isSummary bool) error {
 			}
 			state := "ONLINE"
 			now := int(time.Now().Unix())
-			if now > ts + dbStatExpiration {
+			if now > ts+dbStatExpiration {
 				state = "FAULTED"
 			} else {
 				v, err := strconv.ParseFloat(st, 64)
@@ -218,7 +219,7 @@ func SystemStatus(isSummary bool) error {
 				return err
 			}
 			now := int(time.Now().Unix())
-			if now > ts + dbStatExpiration {
+			if now > ts+dbStatExpiration {
 				continue
 			}
 			if _, ok := sdmap[sid]; !ok {
@@ -246,7 +247,7 @@ func SystemStatus(isSummary bool) error {
 				return err
 			}
 			now := int(time.Now().Unix())
-			if now > ts + dbStatExpiration {
+			if now > ts+dbStatExpiration {
 				continue
 			}
 			if _, ok := sdmap[sid]; !ok {
@@ -279,7 +280,7 @@ func SystemStatus(isSummary bool) error {
 				return err
 			}
 			now := int(time.Now().Unix())
-			if now > ts + dbStatExpiration {
+			if now > ts+dbStatExpiration {
 				continue
 			}
 			if _, ok := vdmap[vdevid]; !ok {
@@ -303,7 +304,7 @@ func SystemStatus(isSummary bool) error {
 				return err
 			}
 			now := int(time.Now().Unix())
-			if now > ts + dbStatExpiration {
+			if now > ts+dbStatExpiration {
 				continue
 			}
 			if _, ok := vdmap[vdevid]; !ok {
@@ -327,7 +328,7 @@ func SystemStatus(isSummary bool) error {
 				return err
 			}
 			now := int(time.Now().Unix())
-			if now > ts + dbStatExpiration {
+			if now > ts+dbStatExpiration {
 				continue
 			}
 			if _, ok := vdmap[vdevid]; !ok {
@@ -433,13 +434,13 @@ func SystemStatus(isSummary bool) error {
 			fmt.Printf("S3 offload buckets used %+v %+v\n", totalS3offloadUsed, sizefmt.ByteSize(float64(totalS3offloadUsed)))
 		}
 
-		fmt.Printf("versions %+v %+vM\n", totalNumObjects, totalNumObjects / int64(1000000))
+		fmt.Printf("versions %+v %+vM\n", totalNumObjects, totalNumObjects/int64(1000000))
 		m, _ := readTrlogMarker()
 		if err != nil {
 			fmt.Printf("trlogmark err=%v\n", err)
 		} else if m > 0 && m != -1 {
 			cursec := time.Now().UnixNano() / 1000000000
-			fmt.Printf("trlogmark %+v -%+vs\n", m / int64(1000000), cursec - (m / int64(1000000)))
+			fmt.Printf("trlogmark %+v -%+vs\n", m/int64(1000000), cursec-(m/int64(1000000)))
 		}
 
 		conf, err := efsutil.GetLibccowConf()
@@ -462,17 +463,28 @@ func SystemStatus(isSummary bool) error {
 		defer C.ccow_tenant_term(tc)
 
 		guid := C.GoString(C.ccow_get_system_guid_formatted(tc))
-		fmt.Printf("guid %+s\n", guid);
+		fmt.Printf("guid %+s\n", guid)
 
 		segid := guid[0:16]
-		fmt.Printf("segid %+s\n", segid);
+		fmt.Printf("segid %+s\n", segid)
+
+		var zone string
+		zfile, et := ioutil.ReadFile("/etc/timezone")
+		if et != nil {
+			t := time.Now()
+			zone, _ = t.Zone()
+		} else {
+			zone = string(zfile)
+		}
+		fmt.Printf("timezone %s\n", zone)
+
 		return nil
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
 	table.SetBorder(false)
 	table.SetAlignment(tablewriter.ALIGN_CENTER)
-	hdr := []string{"SID","HOST","POD"}
+	hdr := []string{"SID", "HOST", "POD"}
 	if verbose > 0 {
 		hdr = append(hdr, "VDEV", "DISK")
 	}
@@ -512,22 +524,22 @@ func SystemStatus(isSummary bool) error {
 			row := []string{sid, hostName, contID}
 			// Output target-related information only
 			util, mdutil, s3util := 0, 0, 0
-			used,_ := strconv.Atoi(sdmap[sid]["used"])
-			capacity,_ := strconv.Atoi(sdmap[sid]["capacity"])
+			used, _ := strconv.Atoi(sdmap[sid]["used"])
+			capacity, _ := strconv.Atoi(sdmap[sid]["capacity"])
 			if capacity > 0 {
 				util = 10000 * used / capacity
 			}
 
 			if _, ok := sdmap[sid]["mdoffload_capacity"]; ok && totalMdoffloadCapacity > 0 {
-				c,_ := strconv.Atoi(sdmap[sid]["mdoffload_capacity"])
-				u,_ := strconv.Atoi(sdmap[sid]["mdoffload_used"])
+				c, _ := strconv.Atoi(sdmap[sid]["mdoffload_capacity"])
+				u, _ := strconv.Atoi(sdmap[sid]["mdoffload_used"])
 				if c > 0 {
 					mdutil = 10000 * u / c
 				}
 			}
 			if _, ok := sdmap[sid]["s3_offload_capacity"]; ok && totalS3offloadCapacity > 0 {
-				c,_ := strconv.Atoi(sdmap[sid]["s3_offload_capacity"])
-				u,_ := strconv.Atoi(sdmap[sid]["s3_offload_used"])
+				c, _ := strconv.Atoi(sdmap[sid]["s3_offload_capacity"])
+				u, _ := strconv.Atoi(sdmap[sid]["s3_offload_used"])
 				if c > 0 {
 					s3util = 10000 * u / c
 				}
@@ -555,7 +567,7 @@ func SystemStatus(isSummary bool) error {
 			table.Append(row)
 		} else if verbose == 1 {
 			if gw {
-				row := []string{sid, hostName, contID, "-", "-", "N/A"};
+				row := []string{sid, hostName, contID, "-", "-", "N/A"}
 				if totalMdoffloadCapacity > 0 {
 					row = append(row, "N/A")
 				}
@@ -567,22 +579,22 @@ func SystemStatus(isSummary bool) error {
 				continue
 			}
 			for vdevid, vals := range vdevs {
-				util, mdutil, s3util := 0,0,0
-				used,_ := strconv.Atoi(vdmap[vdevid]["used"])
-				capacity,_ := strconv.Atoi(vdmap[vdevid]["capacity"])
+				util, mdutil, s3util := 0, 0, 0
+				used, _ := strconv.Atoi(vdmap[vdevid]["used"])
+				capacity, _ := strconv.Atoi(vdmap[vdevid]["capacity"])
 				if capacity > 0 {
-					util = 10000 * used/capacity
+					util = 10000 * used / capacity
 				}
 				if _, ok := vdmap[vdevid]["mdoffload_total"]; ok && totalMdoffloadCapacity > 0 {
-					c,_ := strconv.Atoi(vdmap[vdevid]["mdoffload_total"])
-					u,_ := strconv.Atoi(vdmap[vdevid]["mdoffload_used"])
+					c, _ := strconv.Atoi(vdmap[vdevid]["mdoffload_total"])
+					u, _ := strconv.Atoi(vdmap[vdevid]["mdoffload_used"])
 					if c > 0 {
 						mdutil = 10000 * u / c
 					}
 				}
 				if _, ok := vdmap[vdevid]["s3_offload_size"]; ok && totalS3offloadCapacity > 0 {
-					c,_ := strconv.Atoi(vdmap[vdevid]["s3_offload_size"])
-					u,_ := strconv.Atoi(vdmap[vdevid]["s3_offload_used"])
+					c, _ := strconv.Atoi(vdmap[vdevid]["s3_offload_size"])
+					u, _ := strconv.Atoi(vdmap[vdevid]["s3_offload_used"])
 					if c > 0 {
 						s3util = 10000 * u / c
 					}
