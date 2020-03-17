@@ -210,6 +210,11 @@ ccow_fsio_inode_glm_lock(ccowfs_inode * inode)
 	char nhid_str[UINT512_STR_BYTES + 1],
 		vmhid_str[UINT512_STR_BYTES + 1];
 
+	/* Make sure geo locking is enabled */
+	if (!inode->ci->glm_enabled) {
+		return 0;
+	}
+
 	/* Check if GLM is locally cached */
 	pthread_mutex_lock(&inode->glm_mutex);
 	if (inode->glm_cached) {
@@ -249,8 +254,14 @@ int
 ccow_fsio_inode_glm_unlock(ccowfs_inode * inode)
 {
 	int err = 0;
-	struct dqlite_glm_ops *glm_ops = inode->ci->glm_ops;
+	struct dqlite_glm_ops *glm_ops;
 
+	/* Make sure geo locking is enabled */
+	if (!inode->ci->glm_enabled) {
+		return 0;
+	}
+
+	glm_ops = inode->ci->glm_ops;
 	/* Regular lock should be released. Then release glm lock */
 	pthread_mutex_lock(&inode->glm_mutex);
 	assert(inode->glm_cached == 1);
@@ -258,12 +269,15 @@ ccow_fsio_inode_glm_unlock(ccowfs_inode * inode)
 
 	inode->glm_ref_count--;
 	if (inode->glm_ref_count == 0) {
+		pthread_mutex_unlock(&inode->glm_mutex);
 		/* If there is an error, we assume that we still have lock */
 		err = glm_ops->unlock(inode->ci->glm_client,
+				&inode->glm_mutex,
 				inode->ino_str, inode->genid,
 				&inode->glm_cached);
+	} else {
+		pthread_mutex_unlock(&inode->glm_mutex);
 	}
-	pthread_mutex_unlock(&inode->glm_mutex);
 	return err;
 }
 

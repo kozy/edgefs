@@ -31,8 +31,8 @@ struct dqlite_glm_ops {
 	int (*lock) (void *client, pthread_mutex_t *mutex, char *ino_str,
 			unsigned int oid_size, char *nhid, char *vmchid,
 			uint64_t genid, uint32_t deleted, unsigned int *cached);
-	int (*unlock) (void *client, char *ino_str, uint64_t genid,
-			unsigned int *cached);
+	int (*unlock) (void *client, pthread_mutex_t *mutex, char *ino_str,
+			uint64_t genid, unsigned int *cached);
 };
 
 #endif /* __GLMOPs_H_ */
