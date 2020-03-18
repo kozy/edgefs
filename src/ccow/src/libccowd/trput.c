@@ -29,6 +29,7 @@
 #include "reptrans.h"
 #include "trput.h"
 #include "flexhash.h"
+#include "ccowfsio.h"
 #include "trlog.h"
 
 extern int ccowd_terminating;
@@ -290,9 +291,21 @@ need_bucket_update(struct trlog_data *data) {
 }
 
 static int
+is_nfs_stat(struct trlog_data *rec) {
+	if (!rec->oid) {
+		return 0;
+	}
+	size_t lreq = strlen(rec->oid);
+	if (lreq <= LFLUSHER_STAT) {
+		return 0;
+	}
+	return (memcmp_quick(rec->oid, LFLUSHER_STAT, FLUSHER_STAT_OBJ, LFLUSHER_STAT) == 0);
+}
+
+static int
 trput_process_object(ccow_t tc, struct trlog_data *data,
     ccow_completion_t c_inprog, ccow_completion_t c_fot, int *index,
-    int *index_fot, struct mlist_node *res_node, int *one_bucket_updates)
+    int *index_fot, struct mlist_node *res_node, int *one_bucket_updates, int nfs_stat)
 {
 	static uint64_t process_counter = 0;
 	int err = 0;
@@ -342,8 +355,8 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 	process_counter++;
 
 	log_debug(lg, "TRLOG[%lu]: entering trlog update type:%d delta: %ld data-delta: %ld"
-	    " c->size: %lu", process_counter, data->trtype, delta_size, data->deltasize,
-	    c->logical_sz);
+	    " c->size: %lu %s/%s/%s : %s", process_counter, data->trtype, delta_size, data->deltasize,
+	    c->logical_sz, data->cid, data->tid, data->bid, data->oid);
 
 	// Pack data
 	err = pack_container_value(p, data);
@@ -405,7 +418,7 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			    op->status, data->cid, data->tid, data->bid, data->oid,
 			    trlog_mlist_ht_exists(&ccow_daemon->trhdl, res_node));
 			op->status = 0;
-		} else {
+		} else if (!nfs_stat) {
 			if ((c->logical_sz < (uint64_t)labs(delta_size)) && (data->trtype & TRLOG_OBJ_DELETE))
 				log_debug(lg, "TRLOG : Unable to process a duplicate request");
 			else {
@@ -430,7 +443,7 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 			}
 		}
 
-		if (c_fot && need_bucket_update(data)) {
+		if (c_fot && need_bucket_update(data) && !nfs_stat) {
 			log_debug(lg, "TRLOG FOT: add");
 			// Pack inode data
 			err = pack_inode_value(p_fot, data);
@@ -502,17 +515,19 @@ trput_process_object(ccow_t tc, struct trlog_data *data,
 		 * Update size if transaction is update and insert/delete object succeeds.
 		 * This means object has not been previously inserted or deleted
 		 */
-		int64_t new_size = c->logical_sz;
-		new_size += delta_size;
-		if (new_size < 0) {
-			log_debug(lg, "TRLOG : Negative size update request, setting size to zero");
-			new_size = 0;
-		} else if (new_size) {
-			(*one_bucket_updates)++;
-			c->needs_final_put = 1;
+		if (!nfs_stat) {
+			int64_t new_size = c->logical_sz;
+			new_size += delta_size;
+			if (new_size < 0) {
+				log_debug(lg, "TRLOG : Negative size update request, setting size to zero");
+				new_size = 0;
+			} else if (new_size) {
+				(*one_bucket_updates)++;
+				c->needs_final_put = 1;
+			}
+			c->logical_sz_mod = 1;
+			c->logical_sz = new_size;
 		}
-		c->logical_sz_mod = 1;
-		c->logical_sz = new_size;
 	}
 
 	/* pass-through */
@@ -555,6 +570,7 @@ trput_process_result(ccow_t tc, struct mlist_node *result_head,
 	int entries = 0;
 	int one_bucket_updates = 0;
 	int index = 0, index_fot;
+	int nfs_stat = 0;
 	uint64_t genid = 0, genid_fot = 0;
 	uint64_t last_batch_seq_ts = 0;
 	uint64_t from_batch_seq_ts = batch_seq_ts - 10 * 1000000UL;
@@ -614,6 +630,16 @@ trput_process_result(ccow_t tc, struct mlist_node *result_head,
 		if (err) {
 			log_error(lg, "Error adding TSOBJ entry: %d", err);
 			goto _err;
+		}
+
+		nfs_stat = is_nfs_stat(&rec);
+		if (nfs_stat) {
+			log_debug(lg, "TRLOG stat record: %s/%s/%s: %s", rec.cid, rec.tid, rec.bid, rec.oid);
+			if (rec.trtype & TRLOG_DIR_CREATE) {
+				rec.trtype |= TRLOG_OBJ_CREATE;
+			} else if (rec.trtype & TRLOG_DIR_UPDATE) {
+				rec.trtype |= TRLOG_OBJ_UPDATE;
+			}
 		}
 
 		if (!(rec.trtype & TRLOG_OBJ_CREATE) &&
@@ -796,7 +822,7 @@ trput_process_result(ccow_t tc, struct mlist_node *result_head,
 
 
 		err = trput_process_object(tc, &rec, c_inprog, c_fot,
-		    &index, &index_fot, res_node, &one_bucket_updates);
+		    &index, &index_fot, res_node, &one_bucket_updates, nfs_stat);
 		if (err) {
 			log_error(lg, "Error processing TSOBJ entry %s: %d",
 			    entry, err);

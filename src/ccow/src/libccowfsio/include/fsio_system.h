@@ -163,5 +163,6 @@ int s3dir_add(ci_t *ci, inode_t parent_ino, char *name, struct s3dir **out_s3dir
 int s3dir_expire_check(struct s3dir *d);
 void s3dir_invalidate_all(ci_t *ci);
 int s3dir_free_cache(ci_t *ci);
+char *get_flusher_stat_obj(ccow_t tc, char *buf);
 
 #endif /* __FSIO_SYSTEM_H__ */

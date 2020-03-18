@@ -39,13 +39,15 @@ extern "C"
 #define S3OBJECTS_DIR_NAME (".objects")
 #define LOST_FOUND_DIR_MODE (S_IFDIR | (00777))
 #define FSIO_DIR_SHARD_COUNT 4
-#define	FLUSHER_STAT_OBJ ".nexenta_nedge_nfs_stat_counter"
+#define FLUSHER_STAT_OBJ ".nexenta_nedge_nfs_stat_counter"
+#define LFLUSHER_STAT (sizeof(FLUSHER_STAT_OBJ) - 1)
 #define RECOVERY_TABLE_STR (".nexenta_nedge_nfs_inode_recovery")
 #define RECOVERY_TABLE_SHARD_COUNT 16
 #define INODE_OBJECT_LOOKUP (".nexenta_inode2oid")
 #define INODE_MASTER_STR (".nexenta_nedge_nfs_inode_master")
 #define SNAPVIEW_OID (".nexenta_nedge_nfs_snapview")
 #define NULL_OID ("(null)")
+#define MAX_SEGMENT_STAT 1024
 
 
 #define	X_FILE_MODE	"X-file-mode"
