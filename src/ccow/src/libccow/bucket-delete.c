@@ -154,7 +154,7 @@ _done:
 }
 
 static int
-fsio_delete_bucket(ccow_t tc, const char *bid, size_t bid_size)
+fsio_delete_bucket(ccow_t tc, const char *bid, size_t bid_size, char *nfs_stat_object[], int num_nfs_stat)
 {
 	ccow_shard_context_t list_shard_context;
 	ccow_completion_t c;
@@ -163,9 +163,13 @@ fsio_delete_bucket(ccow_t tc, const char *bid, size_t bid_size)
 	err = 0;
 	c = NULL;
 
-	/* FLUSHER_STAT_OBJ */
-	err = ccow_shard_context_create(FLUSHER_STAT_OBJ,
-	    strlen(FLUSHER_STAT_OBJ) + 1, 1, &list_shard_context);
+	/* FLUSHER STAT OBJ */
+	char flusher_stat_obj[128];
+	uint64_t segid = ccow_get_segment_guid(tc);
+	sprintf(flusher_stat_obj,"%s%lX", FLUSHER_STAT_OBJ, segid);
+
+	err = ccow_shard_context_create(flusher_stat_obj,
+	    strlen(flusher_stat_obj) + 1, 1, &list_shard_context);
 	if (err) {
 		log_error(lg, "ccow_shard_context_create failed, err %d",
 		    err);
@@ -181,6 +185,31 @@ fsio_delete_bucket(ccow_t tc, const char *bid, size_t bid_size)
 		    err);
 		goto out;
 	}
+
+	// delete extra stat objects
+	if (num_nfs_stat > 0) {
+		err = ccow_create_completion(tc, NULL, NULL, num_nfs_stat, &c);
+		if (err) {
+			log_error(lg, "ccow_create_completion failed, err %d", err);
+			goto out;
+		}
+		for (int i=0; i < num_nfs_stat; i++) {
+			err = ccow_delete_notrlog(bid, bid_size, nfs_stat_object[i],
+				strlen(nfs_stat_object[i]) + 1, c);
+			if (err) {
+				log_error(lg, "ccow_delete failed, err %d", err);
+				goto out;
+			}
+			err = ccow_wait(c, -1);
+			if (err && err != -ENOENT) {
+				log_error(lg, "ccow_wait failed, err %d", err);
+				goto out;
+			}
+		}
+		if (c)
+			ccow_release(c);
+	}
+
 
 	/* RECOVERY_TABLE_STR */
 	err = ccow_shard_context_create(RECOVERY_TABLE_STR,
@@ -407,6 +436,12 @@ _cleanup:
 	return err;
 }
 
+static void
+free_nfs_stats(char *nfs_stat_object[],	int num_nfs_stat) {
+	for (int i=0; i < num_nfs_stat; i++) {
+		je_free(nfs_stat_object[i]);
+	}
+}
 
 int
 ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
@@ -414,6 +449,8 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 	int err;
 	struct ccow *tc = tctx;
 	ccow_completion_t c;
+	char *nfs_stat_object[MAX_SEGMENT_STAT];
+	int num_nfs_stat = 0;
 
 	/* check to see if bucket has objects, disallow delete */
 	err = ccow_create_completion(tc, NULL, NULL, 1, &c);
@@ -438,6 +475,12 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 		int found = 0;
 		while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, pos++))) {
 			if (kv && kv->key) {
+				if (kv->key_size > LFLUSHER_STAT &&
+				    memcmp_quick(kv->key, LFLUSHER_STAT, FLUSHER_STAT_OBJ, LFLUSHER_STAT) == 0) {
+					if (num_nfs_stat < MAX_SEGMENT_STAT)
+						nfs_stat_object[num_nfs_stat++] = je_strndup(kv->key, kv->key_size);
+					continue;
+				}
 				if (test_object(tc, bid, bid_size, kv->key, kv->key_size)) {
 					found = 1;
 					break;
@@ -467,6 +510,7 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 		err = test_root(tc, bid, bid_size);
 		if (err == -EPERM) {
 			log_error(lg, "NFS root not empty %d",  err);
+			free_nfs_stats(nfs_stat_object, num_nfs_stat);
 			return RT_ERR_NOT_EMPTY;
 		}
 	}
@@ -474,14 +518,18 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 	// Check services
 	if (tc->cid_size > 1 && tc->tid_size > 1 && bid_size > 1) {
 		err = bucket_used_by_service(tc, bid, bid_size);
-		if (err)
+		if (err) {
+			free_nfs_stats(nfs_stat_object, num_nfs_stat);
 			return err;
+		}
 	}
 
 	/* try to delete bucket object */
 	err = ccow_create_completion(tc, NULL, NULL, 2, &c);
-	if (err)
+	if (err) {
+		free_nfs_stats(nfs_stat_object, num_nfs_stat);
 		return err;
+	}
 
 	err = ccow_tenant_put(tc->cid, tc->cid_size, tc->tid,
 	    tc->tid_size, bid, bid_size, "", 1, c, NULL, 0,
@@ -489,12 +537,14 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 	if (err) {
 		log_error(lg, "Delete bucket 2 err: %d", err);
 		ccow_release(c);
+		free_nfs_stats(nfs_stat_object, num_nfs_stat);
 		return err;
 	}
 
 	err = ccow_wait(c, 0);
 	if (err) {
 		log_error(lg, "Delete bucket object err: %d", err);
+		free_nfs_stats(nfs_stat_object, num_nfs_stat);
 		return err;
 	}
 
@@ -505,12 +555,14 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 	    RD_ATTR_LOGICAL_DELETE | RD_ATTR_EXPUNGE_OBJECT | RD_ATTR_NO_TRLOG);
 	if (err) {
 		ccow_release(c);
+		free_nfs_stats(nfs_stat_object, num_nfs_stat);
 		return err;
 	}
 
 	err = ccow_wait(c, 1);
 	if (err && err != -ENOENT) {
 		log_error(lg, "Delete bucket 4 err: %d", err);
+		free_nfs_stats(nfs_stat_object, num_nfs_stat);
 		return err;
 	}
 
@@ -521,7 +573,8 @@ ccow_bucket_delete(ccow_t tctx, const char *bid, size_t bid_size)
 
 	// Delete NFS objects
 	if (tc->cid_size > 1 && tc->tid_size > 1 && bid_size > 1) {
-		err = fsio_delete_bucket(tc, bid, bid_size);
+		err = fsio_delete_bucket(tc, bid, bid_size, nfs_stat_object, num_nfs_stat);
+		free_nfs_stats(nfs_stat_object, num_nfs_stat);
 		if (err) {
 			log_error(lg, "Delete bucket fsio objects err: %d", err);
 			return err;
