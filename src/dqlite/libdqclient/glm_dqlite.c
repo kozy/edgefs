@@ -111,28 +111,32 @@ dqlite_glm_ilock(void *cl, pthread_mutex_t *mutex, char *ino_str,
 		return err;
 	}
 
-	if (!locked) {
-		err = geolock_lock(client, ino_str, genid);
-	} else {
+	if (locked) {
 		_inode_wait_for_glm_mutex(client, ino_str);
-		err = geolock_lock(client, ino_str, genid);
 	}
+
+	err = geolock_lock(client, ino_str, genid);
 	if (err == 0) {
+		pthread_mutex_lock(mutex);
 		*cached = 1;
+		pthread_mutex_unlock(mutex);
 	}
 	return err;
 }
 
 static int
-dqlite_glm_iunlock(void *cl, char *ino_str, uint64_t genid,
-		unsigned int *cached)
+dqlite_glm_iunlock(void *cl, pthread_mutex_t *mutex, char *ino_str,
+		uint64_t genid, unsigned int *cached)
 {
 	int err = 0;
 	struct cdq_client *client = cl;
 
 	err = geolock_unlock(client, ino_str, genid);
-	if (err == 0)
+	if (err == 0) {
+		pthread_mutex_lock(mutex);
 		*cached = 0;
+		pthread_mutex_unlock(mutex);
+	}
 	return err;
 }
 
