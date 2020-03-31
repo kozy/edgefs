@@ -263,9 +263,9 @@ static void read_attributes(objio_info_t *ci, ccow_lookup_t iter) {
 			memcpy(&ci->nhid, kv->value, sizeof(uint512_t));
 		} else if (strcmp(kv->key, "multipart") == 0) {
 			ci->multipart = (int) ccow_kvconvert_to_int64(kv);
-		} else if (strcmp(kv->key, "x-container-meta-quota-bytes") == 0) {
+		} else if (strcmp(kv->key, "X-container-meta-quota-bytes") == 0) {
 			ci->quota_bytes = (int) ccow_kvconvert_to_int64(kv);
-		} else if (strcmp(kv->key, "x-container-meta-quota-count") == 0) {
+		} else if (strcmp(kv->key, "X-container-meta-quota-count") == 0) {
 			ci->quota_count = (int) ccow_kvconvert_to_int64(kv);
 		} else if (strcmp(kv->key, RT_SYSKEY_TX_GENERATION_ID) == 0) {
 			ci->genid = *(uint64_t *)kv->value;
@@ -309,9 +309,9 @@ static void add_attributes(objio_info_t *ci, ccow_lookup_t iter) {
 	struct ccow_metadata_kv *kv = NULL;
 	log_trace(lg, "attrs address: %p", ci->attrs);
 	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_CUSTOM, pos++))) {
-		if (strcmp(kv->key, "x-container-meta-quota-bytes") == 0) {
+		if (strcmp(kv->key, "X-container-meta-quota-bytes") == 0) {
 			ci->quota_bytes = (int) ccow_kvconvert_to_int64(kv);
-		} else if (strcmp(kv->key, "x-container-meta-quota-count") == 0) {
+		} else if (strcmp(kv->key, "X-container-meta-quota-count") == 0) {
 			ci->quota_count = (int) ccow_kvconvert_to_int64(kv);
 		} else if (strstr(kv->key, "x-amz-meta") && kv->value_size < MAX_ITEM_SIZE) {
 			param_add(kv->key, kv->key_size, kv->value, kv->value_size, ci->attrs);

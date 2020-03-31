@@ -1133,9 +1133,9 @@ ccow_fsio_get_export_quota(ci_t * ci)
 	pos = 0;
 	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_METADATA |
 	    CCOW_MDTYPE_CUSTOM, pos++))) {
-		if (strcmp(kv->key, "x-container-meta-quota-bytes") == 0) {
+		if (strcmp(kv->key, "X-container-meta-quota-bytes") == 0) {
 			ci->quota_bytes = (uint64_t) ccow_kvconvert_to_int64(kv);
-		} else if (strcmp(kv->key, "x-container-meta-quota-count") == 0) {
+		} else if (strcmp(kv->key, "X-container-meta-quota-count") == 0) {
 			ci->quota_count = (uint64_t) ccow_kvconvert_to_int64(kv);
 		}
 	}

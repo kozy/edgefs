@@ -68,10 +68,10 @@ add_s3_headers_conditional(s3_generator_t *self, h2o_req_t *req) {
 	add_response_header(req, "content-type", self->rq->ci->content_type);
 
 	if (self->rq->ci->quota_count)
-		add_response_header_uint64(req, "x-container-meta-quota-count", self->rq->ci->quota_count);
+		add_response_header_uint64(req, "X-container-meta-quota-count", self->rq->ci->quota_count);
 
 	if (self->rq->ci->quota_bytes)
-		add_response_header_uint64(req, "x-container-meta-quota-bytes", self->rq->ci->quota_bytes);
+		add_response_header_uint64(req, "X-container-meta-quota-bytes", self->rq->ci->quota_bytes);
 
 
 	if (self->rq->ci->num_vers > 1) {
