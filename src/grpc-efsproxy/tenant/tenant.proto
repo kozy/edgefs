@@ -1,4 +1,4 @@
-syntax = "proto3"; 
+syntax = "proto3";
 package tenant;
 
 message GenericResponse {
@@ -12,6 +12,12 @@ message BucketCreateRequest {
 }
 
 message BucketDeleteRequest {
+	string cluster = 1;
+	string tenant = 2;
+	string bucket = 3;
+}
+
+message BucketShowRequest {
 	string cluster = 1;
 	string tenant = 2;
 	string bucket = 3;
@@ -32,10 +38,31 @@ message BucketListResponse {
 	map<string, BucketInfo> info = 1;
 }
 
+message BucketShowResponse {
+	map<string, string> prop = 1;
+}
+
 service Bucket {
 	rpc BucketCreate(BucketCreateRequest) returns (GenericResponse) {}
 	rpc BucketDelete(BucketDeleteRequest) returns (GenericResponse) {}
+	rpc BucketShow(BucketShowRequest) returns (BucketShowResponse) {}
 	rpc BucketList(BucketListRequest) returns (BucketListResponse) {}
+}
+
+message TenantCreateRequest {
+	string cluster = 1;
+	string tenant = 2;
+	map<string, string> options = 3;
+}
+
+message TenantDeleteRequest {
+	string cluster = 1;
+	string tenant = 2;
+}
+
+message TenantShowRequest {
+	string cluster = 1;
+	string tenant = 2;
 }
 
 message TenantListRequest {
@@ -52,7 +79,58 @@ message TenantListResponse {
 	map<string, TenantInfo> info = 1;
 }
 
+message TenantShowResponse {
+	map<string, string> prop = 1;
+}
+
 service Tenant {
+	rpc TenantCreate(TenantCreateRequest) returns (GenericResponse) {}
+	rpc TenantDelete(TenantDeleteRequest) returns (GenericResponse) {}
+	rpc TenantShow(TenantShowRequest) returns (TenantShowResponse) {}
 	rpc TenantList(TenantListRequest) returns (TenantListResponse) {}
 }
 
+
+message UserCreateRequest {
+	string cluster = 1;
+	string tenant = 2;
+	string username = 3;
+	string password = 4;
+	string admin = 5;
+	string authkey = 6;
+	string secret = 7;
+}
+
+message UserCreateResponse {
+	string authkey = 1;
+	string secret = 2;
+}
+
+message UserDeleteRequest {
+	string cluster = 1;
+	string tenant = 2;
+	string username = 3;
+}
+
+message UserListRequest {
+	string cluster = 1;
+	string tenant = 2;
+	string marker = 3;
+}
+
+message UserInfo {
+	string username = 1;
+	string usertype = 2;
+	string identity = 3;
+	int32 admin = 4;
+}
+
+message UserListResponse {
+	repeated UserInfo info = 1;
+}
+
+service User {
+	rpc UserCreate(UserCreateRequest) returns (UserCreateResponse) {}
+	rpc UserDelete(UserDeleteRequest) returns (GenericResponse) {}
+	rpc UserList(UserListRequest) returns (UserListResponse) {}
+}

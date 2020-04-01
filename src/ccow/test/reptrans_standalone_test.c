@@ -1822,10 +1822,55 @@ vm_override_test(void **state) {
 		rtbuf_destroy(arg.rb);
 }
 
+struct chid_qe {
+	uint512_t chid;
+	crypto_hash_t ht;
+	size_t size;
+	uv_buf_t buf;
+	struct chid_qe* next;
+};
+
+struct get_queue_arg {
+	struct repdev* dev;
+	struct chid_qe* head;
+	pthread_mutex_t lock;
+	pthread_cond_t cond;
+	uint64_t total;
+	int term;
+
+};
+
+#define NTHR 16
+
+static void*
+put_thr(void* arg) {
+	struct get_queue_arg* p = arg;
+	size_t len = 0;
+	while (!p->term) {
+		pthread_mutex_lock(&p->lock);
+		while (!p->head && !p->term)
+			pthread_cond_wait(&p->cond, &p->lock);
+		if (!p->head) {
+			pthread_mutex_unlock(&p->lock);
+			break;
+		}
+		struct chid_qe* q = p->head;
+		p->head = q->next;
+		pthread_mutex_unlock(&p->lock);
+		rtbuf_t* rb = rtbuf_init_mapped(&q->buf, 1);
+		atomic_add64(&p->total, q->buf.len);
+		assert_int_equal(reptrans_put_blob_with_attr(p->dev, TT_CHUNK_PAYLOAD,
+			HASH_TYPE_DEFAULT, rb, &q->chid, 0, get_timestamp_us()), 0);
+		rtbuf_free(rb);
+		je_free(q);
+	}
+	return NULL;
+}
+
 static void
 put_perf_test(void **state) {
-	size_t entries = 100*1024;
-	size_t chunk_size = 16*1024;
+	size_t entries = 10*1024;
+	size_t chunk_size = 1024*1024;
 
 	int err =  reptrans_init(0, NULL, NULL,
 		RT_FLAG_STANDALONE | RT_FLAG_CREATE, 1, (char**)transport, NULL);
@@ -1840,68 +1885,56 @@ put_perf_test(void **state) {
 	if (err <= 0)
 		return;
 	struct repdev* dev = devices[1];
+	struct get_queue_arg qarg = {.dev =dev, .head= NULL, .term = 0, .total = 0 };
+	pthread_mutex_init(&qarg.lock, NULL);
+	pthread_cond_init(&qarg.cond, NULL);
+	srand(clock());
 
 	char* buffer = je_malloc(chunk_size + entries);
 	uv_buf_t ub = {.base = buffer, .len = chunk_size + entries};
 	random_buffer(ub);
 	rtbuf_t* rb = rtbuf_init_mapped(&ub, 1);
-
-	struct backref br = {
-		.name_hash_id = { { {34, 23}, {0x45, 13} }, { {14, 15}, {1, 0} } },
-		.ref_chid = { { {10, 11}, {12, 13} }, { {14, 15}, {16, 17} } },
-		.generation = 0,
-		.uvid_timestamp = 0,
-		.ref_type = TT_CHUNK_MANIFEST,
-		.ref_hash = HASH_TYPE_DEFAULT,
-		.rep_count = 1,
-		.attr = VBR_ATTR_CP
-	};
-
-	srand(clock());
 	uint64_t dur_max = 0, dur_min = 0, dur_avg = 0;
 	/* Put required number of blobs */
+	printf("Creating a chunk queue\n");
+	fflush(stdout);
 	for(size_t i=0; i < entries; i++) {
-		uint512_t chid = uint512_null;
-		chid.u.u.u = rand();
 		rb->bufs->base = buffer + i;
 		rb->bufs->len = chunk_size;
-		br.uvid_timestamp = get_timestamp_us();
-		uint64_t ts = get_timestamp_us();
-		err = reptrans_put_blob_with_attr(dev, TT_CHUNK_PAYLOAD, HASH_TYPE_DEFAULT, rb, &chid, 0, ts);
-		assert_int_equal(err, 0);
-		err = reptrans_put_backref(dev, &chid, HASH_TYPE_DEFAULT, &br);
-		assert_int_equal(err, 0);
-		uint64_t dur = get_timestamp_us() - ts;
-		if (dur > dur_max)
-			dur_max= dur;
-		if (dur < dur_min)
-			dur_min = dur;
-		dur_avg += dur;
-		assert_int_equal(err, 0);
+		struct chid_qe* e = je_malloc(sizeof(*e));
+		e->next = NULL;
+		rtbuf_hash(rb, HASH_TYPE_DEFAULT, &e->chid);
+		e->buf = rb->bufs[0];
+		if (!qarg.head)
+			qarg.head = e;
+		else {
+			e->next = qarg.head;
+			qarg.head = e;
+		}
 	}
-	dur_avg /= entries;
-	printf("Inserted %lu chunk, duration min/max/avg(uS): %lu/%lu/%lu\n",
-		entries, dur_min, dur_max, dur_avg);
+	/* Starting the PUT */
+	pthread_t thr[NTHR];
+	for (size_t i = 0; i < NTHR; i++)
+		pthread_create(thr + i, NULL, put_thr, &qarg);
+	while (qarg.head != NULL) {
+		usleep(1000000);
+		printf("PUT perf %.3f MB/s\n", qarg.total/1e6);
+		qarg.total = 0;
+		fflush(stdout);
+	}
+	pthread_mutex_lock(&qarg.lock);
+	qarg.term = 1;
+	pthread_cond_broadcast(&qarg.cond);
+	pthread_mutex_unlock(&qarg.lock);
+
+	for (size_t i = 0; i < NTHR; i++)
+		pthread_join(thr[i], NULL);
+	pthread_mutex_destroy(&qarg.lock);
+	pthread_cond_destroy(&qarg.cond);
+
 	rtbuf_destroy(rb);
 	je_free(buffer);
 }
-
-struct chid_qe {
-	uint512_t chid;
-	size_t size;
-	struct chid_qe* next;
-};
-
-struct get_queue_arg {
-	struct repdev* dev;
-	struct chid_qe* head;
-	pthread_mutex_t lock;
-	pthread_cond_t cond;
-	int term;
-
-};
-
-#define NTHR 16
 
 static void*
 get_thr(void* arg) {
@@ -1936,6 +1969,33 @@ get_thr(void* arg) {
 	return 0;
 }
 
+static void*
+del_thr(void* arg) {
+	struct get_queue_arg* p = arg;
+	uint512_t chid = uint512_null;
+	size_t size;
+	crypto_hash_t ht;
+	char buff[PATH_MAX];
+	while (1) {
+		pthread_mutex_lock(&p->lock);
+		while (!p->head && !p->term)
+			pthread_cond_wait(&p->cond, &p->lock);
+		if (!p->head) {
+			pthread_mutex_unlock(&p->lock);
+			return NULL;
+		}
+		struct chid_qe* q = p->head;
+		chid = q->chid;
+		size = q->size;
+		ht = q->ht;
+		p->head = q->next;
+		je_free(q);
+		pthread_mutex_unlock(&p->lock);
+		assert_int_equal(0, reptrans_delete_blob(p->dev, TT_CHUNK_PAYLOAD, ht, &chid));
+	}
+	return 0;
+}
+
 static int
 get_queue_append(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	uint512_t *key, uv_buf_t *val, void *param) {
@@ -1953,6 +2013,7 @@ get_queue_append(struct repdev *dev, type_tag_t ttag, crypto_hash_t hash_type,
 	qe->chid = *key;
 	qe->size = bstat.size;
 	qe->next = p->head;
+	qe->ht = hash_type;
 	p->head = qe;
 	pthread_cond_signal(&p->cond);
 	pthread_mutex_unlock(&p->lock);
@@ -1998,6 +2059,46 @@ iterate_get_perf_test(void **state) {
 		pthread_cond_destroy(&qarg.cond);
 	}
 }
+
+static void
+iterate_del_perf_test(void **state) {
+	int err =  reptrans_init(0, NULL, NULL,
+		RT_FLAG_STANDALONE | RT_FLAG_CREATE, 1, (char**)transport, NULL);
+
+	assert_true(err > 0);
+	if (err <= 0)
+		return;
+
+	int ndev = libreptrans_enum();
+	assert_true(ndev > 0);
+
+	if (ndev <= 0)
+		return;
+	for (int i = 0; i < ndev; i++) {
+		struct repdev* dev = devices[i];
+		struct vm_get_arg arg = {.rb = NULL };
+
+		struct get_queue_arg qarg = {.dev = dev, .head = NULL, .term = 0 };
+		pthread_mutex_init(&qarg.lock, NULL);
+		pthread_cond_init(&qarg.cond, NULL);
+		pthread_t thr[NTHR];
+		for (size_t i = 0; i < NTHR; i++)
+			pthread_create(thr + i, NULL, del_thr, &qarg);
+
+		reptrans_iterate_blobs(dev, TT_CHUNK_PAYLOAD, get_queue_append, &qarg, 0);
+		while (qarg.head != NULL)
+			usleep(100000);
+		pthread_mutex_lock(&qarg.lock);
+		qarg.term = 1;
+		pthread_cond_broadcast(&qarg.cond);
+		pthread_mutex_unlock(&qarg.lock);
+
+		for (size_t i = 0; i < NTHR; i++)
+			pthread_join(thr[i], NULL);
+		pthread_mutex_destroy(&qarg.lock);
+		pthread_cond_destroy(&qarg.cond);
+	}
+}
 int
 main(int argc, char *argv[])
 {
@@ -2019,10 +2120,14 @@ main(int argc, char *argv[])
 
 
 	const UnitTest tests[] = {
-#if 1
-		unit_test(iterate_get_perf_test),
+#if 0
+		unit_test(iterate_del_perf_test),
 		unit_test(reptrans_teardown),
 		unit_test(put_perf_test),
+		unit_test(reptrans_teardown),
+		unit_test(iterate_get_perf_test),
+		unit_test(reptrans_teardown),
+		unit_test(iterate_del_perf_test),
 		unit_test(reptrans_teardown),
 #endif
 		unit_test(vm_override_test),

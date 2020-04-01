@@ -26,7 +26,7 @@
 [submodule "deps/corosync/corosync"]
 	path = deps/corosync/corosync
 	url = https://github.com/Nexenta/corosync.git
-	branch = v3.0.1-nexenta
+	branch = v3-nexenta
 	ignore = all
 [submodule "deps/liberasurecode/gf-complete"]
 	path = deps/liberasurecode/gf-complete
@@ -81,7 +81,7 @@
 [submodule "deps/nfs-ganesha/nfs-ganesha"]
 	path = deps/nfs-ganesha/nfs-ganesha
 	url = https://github.com/Nexenta/nfs-ganesha.git
-	branch = v2.7.4-nexenta
+	branch = V2.7-nexenta
 	ignore = all
 [submodule "deps/nfs-ganesha/nfs-utils"]
 	path = deps/nfs-ganesha/nfs-utils
@@ -106,3 +106,17 @@
 	url = https://github.com/Nexenta/samba.git
 	branch = v4-11-stable-nexenta
 	ignore = all
+[submodule "deps/libco/libco"]
+	path = deps/libco/libco
+	url = https://github.com/Nexenta/libco.git
+[submodule "deps/raft/raft"]
+	path = deps/raft/raft
+	url = https://github.com/Nexenta/raft.git
+	branch=dqlite
+[submodule "deps/dqlite/dqlite"]
+	path = deps/dqlite/dqlite
+	url = https://github.com/Nexenta/dqlite.git
+	branch=dqlite
+[submodule "deps/sqlite/sqlite"]
+	path = deps/sqlite/sqlite
+	url = https://github.com/Nexenta/sqlite.git

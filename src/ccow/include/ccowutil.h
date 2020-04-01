@@ -318,7 +318,8 @@ static inline int uint256_hweight(const uint256_t *pv)
  * uint512_t library
  * =================
  */
-typedef struct { uint256_t u; uint256_t l; } uint512_t;
+struct uint512 { uint256_t u; uint256_t l; };
+typedef struct uint512 uint512_t;
 extern uint512_t uint512_null;
 #define UINT512_BYTES sizeof (uint512_t)
 #define uint512_lo(pv) ((pv)->l)
@@ -468,8 +469,8 @@ static inline int memcmp_safe(const void *m1, size_t s1, const void *m2,
 
 #define UNUSED(x) UNUSED_ ## x __attribute__((__unused__))
 
-#define panic(panicmsg...) do { \
-	fprintf(stderr, panicmsg); \
+#define panic(...) do { \
+	fprintf(stderr, __VA_ARGS__); \
 	fflush(stderr); \
 	abort(); \
 } while (0)
@@ -903,6 +904,9 @@ is_embedded() {
 int
 ccow_calc_nhid(const char* cid, const char* tid, const char* bid, const char* oid,
 	uint512_t* nhid);
+
+
+
 #ifdef	__cplusplus
 }
 #endif

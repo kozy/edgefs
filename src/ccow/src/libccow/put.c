@@ -453,7 +453,9 @@ ccow_pack_metadata_common(struct putcommon_client_req *r, rtbuf_t *rl_root)
 	if (!just_created) {
 		/* preserve source segment guid for ISGW and cloud-provider
 		 * delete paths */
-		obj_guid.l = md->uvid_src_guid.l;
+		if (tc->segid_preserve) {
+			obj_guid.l = md->uvid_src_guid.l;
+		}
 	}
 
 	/* (key-value 1.20) */

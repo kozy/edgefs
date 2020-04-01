@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package system;
+
+message GenericRequest {
+}
+
+message VdevInfo {
+	string devName = 1;
+	string state = 2;
+	int64 capacity = 3;
+	int64 used = 4;
+	int64 util = 5;
+	int64 mdutil = 6;
+	int64 s3util = 7;
+}
+
+message SystemInfo {
+	string hostName = 1;
+	string contId = 2;
+	bool gw = 3;
+	string state = 4;
+	int32 vdevCount = 5;
+	int32 vdevOfflineCount = 6;
+	int32 vdevReadOnlyCount = 7;
+	map<string, VdevInfo> vdevs = 8;
+}
+
+message SystemStatusResponse {
+	map<string, SystemInfo> status = 1;
+}
+
+message SystemSummaryResponse {
+	int64 totalCapacity = 1;
+	int64 totalUsed = 2;
+	int64 totalAvailable = 3;
+	float totalUtilization = 4;
+
+	int64 totalMdoffloadCapacity = 5;
+	int64 totalMdoffloadUsed = 6;
+
+	int64 totalS3offloadCapacity = 7;
+	int64 totalS3offloadUsed = 8;
+
+	int64 totalVersions = 9;
+
+	int64 trlogMarker = 10;
+	int64 trlogMarkerDelay = 11;
+
+	string guid = 12;
+	string segid = 13;
+
+	string timezone = 14;
+}
+
+
+service System {
+	rpc SystemStatus(GenericRequest) returns (SystemStatusResponse) {}
+	rpc SystemSummary(GenericRequest) returns (SystemSummaryResponse) {}
+}

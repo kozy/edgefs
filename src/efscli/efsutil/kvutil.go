@@ -230,3 +230,119 @@ func GetKeyValues(cl string, tn string, bk string, obj string, pat string, max_l
 
 	return res, nil
 }
+
+func GetKeyValue(cl string, tn string, bk string, obj string, key string, max_len int) (string, error) {
+	var res string
+	conf, err := GetLibccowConf()
+
+	if err != nil {
+		return res, err
+	}
+
+	c_pat := C.CString(key)
+	defer C.free(unsafe.Pointer(c_pat))
+
+	c_conf := C.CString(string(conf))
+	defer C.free(unsafe.Pointer(c_conf))
+
+	clempty := C.CString("")
+	defer C.free(unsafe.Pointer(clempty))
+
+	var tc C.ccow_t
+
+	ret := C.ccow_admin_init(c_conf, clempty, 1, &tc)
+	if ret != 0 {
+		return res, fmt.Errorf("ccow_admin_init err=%d", ret)
+	}
+	defer C.ccow_tenant_term(tc)
+
+	c_cl := C.CString(cl)
+	defer C.free(unsafe.Pointer(c_cl))
+
+	c_tn := C.CString(tn)
+	defer C.free(unsafe.Pointer(c_tn))
+
+	c_bk := C.CString(bk)
+	defer C.free(unsafe.Pointer(c_bk))
+
+	c_obj := C.CString(obj)
+	defer C.free(unsafe.Pointer(c_obj))
+
+	var comp C.ccow_completion_t
+	ret = C.ccow_create_completion(tc, nil, nil, 1, &comp)
+	if ret != 0 {
+		return res, fmt.Errorf("%s: ccow_create_completion err=%d", GetFUNC(), ret)
+	}
+
+	var iov_name C.struct_iovec
+	iov_name.iov_base = unsafe.Pointer(c_pat)
+	iov_name.iov_len = C.strlen(c_pat) + 1
+
+	var iter C.ccow_lookup_t
+	ret = C.ccow_admin_pseudo_get(c_cl, C.strlen(c_cl)+1, c_tn, C.strlen(c_tn)+1,
+		c_bk, C.strlen(c_bk)+1, c_obj, C.strlen(c_obj)+1, &iov_name, 1, C.ulong(2), C.CCOW_GET_LIST,
+		comp, &iter)
+	if ret != 0 {
+		C.ccow_release(comp)
+		return res, fmt.Errorf("%s: ccow_admin_pseudo_get err=%d", GetFUNC(), ret)
+	}
+
+	ret = C.ccow_wait(comp, 0)
+	if ret == -C.ENOENT {
+		return res, nil
+	}
+	if ret != 0 {
+		return res, fmt.Errorf("%s: ccow_wait err=%d", GetFUNC(), ret)
+	}
+
+	defer C.ccow_lookup_release(iter)
+	var kv *C.struct_ccow_metadata_kv
+
+	for {
+		kv = (*C.struct_ccow_metadata_kv)(C.ccow_lookup_iter(iter,
+			C.CCOW_MDTYPE_NAME_INDEX, -1))
+
+		if kv == nil {
+			break
+		}
+		if kv.key_size == 0 {
+			continue
+		}
+
+		gkey := C.GoString(kv.key)
+
+		if gkey != key {
+			continue
+		}
+
+		var ver C.uint8_t
+		u, _ := C.msgpack_unpack_init(kv.value, C.uint(kv.value_size), 0)
+		if u == nil {
+			return res, fmt.Errorf("%s: unpack init err=%d", GetFUNC(), ret)
+		}
+		defer C.msgpack_unpack_free(u)
+
+		r, _ := C.msgpack_unpack_uint8(u, &ver)
+		if r != 0 {
+			return res, fmt.Errorf("%s: unpack version err=%d", GetFUNC(), ret)
+		}
+		if ver != 2 {
+			continue
+		}
+
+		buf := make([]byte, max_len+1)
+		c_buf := C.CString(string(buf))
+		defer C.free(unsafe.Pointer(c_buf))
+
+		r, _ = C.msgpack_unpack_str(u, c_buf, C.uint(max_len))
+		if r != 0 {
+			return res, fmt.Errorf("%s: unpack object=%d", GetFUNC(), ret)
+		}
+
+		gvalue := C.GoString(c_buf)
+
+		res = gvalue
+	}
+
+	return res, nil
+}

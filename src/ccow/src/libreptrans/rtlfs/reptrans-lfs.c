@@ -89,6 +89,8 @@
 
 #define RT_LFS_HDD_LATENCY_US	200000
 #define RT_LFS_SSD_LATENCY_US	50000
+#define RT_LFS_S3_GET_CACHE_SIZE_EMBEDDED 50
+#define RT_LFS_S3_GET_CACHE_SIZE 400
 
 struct repdev_db;
 
@@ -4250,6 +4252,7 @@ struct lfs_arg {
 	char *payload_s3_bucket_url;
 	char *payload_s3_region;
 	char *payload_s3_key_file;
+	size_t payload_s3_get_cache_size;
 	uint32_t payload_s3_min_kb;
 	int init;
 	int plevel_override;
@@ -4658,7 +4661,8 @@ lfs_dev_init(void *lfs_arg)
 
 	if (lfs->payload_s3_bucket_url) {
 		err = payload_s3_init(lfs->payload_s3_bucket_url,
-		    lfs->payload_s3_region, lfs->payload_s3_key_file, &lfs->s3_ctx);
+		    lfs->payload_s3_region, lfs->payload_s3_key_file,
+		    arg->payload_s3_get_cache_size, &lfs->s3_ctx);
 		if (err)
 			goto _exit;
 		dev->payload_put_min_kb = arg->payload_s3_min_kb;
@@ -4958,6 +4962,8 @@ lfs_parse_opts(json_value *o, struct reptrans *rt)
 		uint32_t keycache_size_max = KEY_CACHE_MAX;
 		int detached = 0;
 		int writemap = 0;
+		size_t payload_s3_get_cache_size = is_embedded() ?
+			RT_LFS_S3_GET_CACHE_SIZE_EMBEDDED : RT_LFS_S3_GET_CACHE_SIZE;
 
 		struct repdev_bg_config* bg_cfg =
 				je_malloc(sizeof(struct repdev_bg_config));
@@ -5058,6 +5064,15 @@ lfs_parse_opts(json_value *o, struct reptrans *rt)
 					continue;
 				}
 				payload_s3_min_kb = v->u.integer;
+			} else if (strcmp(namekey, "payload_s3_get_cache_size") == 0) {
+				if (v->type != json_integer) {
+					log_warn(lg, "Syntax error: "
+					    "dev.%lu.%lu.payload_s3_get_cache_size is not an "
+					    "integer", i, j);
+					err = 1;
+					continue;
+				}
+				payload_s3_get_cache_size = v->u.integer;
 			} else if (strcmp(namekey, "metadata") == 0) {
 				if (v->type != json_string) {
 					log_warn(lg, "Syntax error: "
@@ -5354,6 +5369,7 @@ lfs_parse_opts(json_value *o, struct reptrans *rt)
 			arg[i].payload_s3_key_file = payload_s3_key_file;
 			arg[i].payload_s3_region = payload_s3_region;
 			arg[i].payload_s3_min_kb = payload_s3_min_kb;
+			arg[i].payload_s3_get_cache_size = payload_s3_get_cache_size;
 			arg[i].direct = direct;
 			arg[i].maxsize = maxsize;
 			arg[i].psize = psize;

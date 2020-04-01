@@ -370,8 +370,10 @@ struct repdev_rd {
     char *payload_s3_bucket_url;
     char *payload_s3_region;
     char *payload_s3_key_file;
+    size_t payload_s3_get_cache_size;
     size_t payload_s3_capacity;
     size_t payload_s3_sync_put;
+    size_t payload_s3_sync_get;
     struct payload_s3 *s3_ctx;
 };
 
@@ -407,6 +409,10 @@ struct repdev_db {
     uv_cond_t log_flush_condvar;
     uint16_t flush_error_count[TT_LAST];
     key_cache_t *key_cache;
+    struct avg_ring perf[TT_LAST];
+    size_t perf_throttle_ts;
+    size_t perf_throttle_len;
+    pthread_mutex_t perf_lock;
 };
 
 

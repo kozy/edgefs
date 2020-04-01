@@ -640,6 +640,7 @@ struct ccow {
 	uint32_t ec_data_mode;		/* Erasure coding configuration. Bitfield */
 	uint64_t ec_trg_policy;		/* Erasure coding triggering policy */
 	uint8_t file_object_transparency;	/* file object transparency enabled flag */
+	uint8_t segid_preserve;	/* overwrite segment id on put flag */
 	uint64_t object_delete_after;		/* Expunge object after this time */
 	uint16_t track_statistics;	/* Enable per-object stats collection
 					   on client side. */
@@ -1118,6 +1119,7 @@ struct putcommon_client_req {
 	int rcvd_count;
 	uint64_t rcvd_max_delta;
 	uint64_t rt_delta_timeout;
+	uint64_t payload_received_ts;
 	int rtsend_timer_fd;
 	int start_timer_fd;
 	UV_HPT_TIMER_T *rtsend_timer_req;
@@ -1187,6 +1189,7 @@ struct getcommon_client_req {
 	uv_buf_t payload[REPLICAST_DGRAM_MAX];
 	uv_buf_t one_payload;
 	uint256_t dgram_idx;
+	uint64_t dgrams;
 	int nbufs;
 	rtbuf_t *rb;
 	int rb_cached;
@@ -1226,6 +1229,8 @@ struct getcommon_client_req {
 	struct sockaddr_in6 selected_ngaddr;
 	int rtselected;
 	int rttransferred;
+	int rt_begin_ts;
+	int rt_last_ts;
 	int rt_inprogress;
 	uint64_t content_length;
 	int error;
@@ -1545,6 +1550,8 @@ tc_marshal_call(struct state* tgt_st, ccow_t tgt_tc, int event);
 
 void
 ccow_assign_this_guid(ccow_t tc, char *system_guid, size_t system_guid_size);
+
+
 
 #ifdef	__cplusplus
 }

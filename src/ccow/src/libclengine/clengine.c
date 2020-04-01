@@ -708,8 +708,10 @@ clengine_join_cb(struct cl_node *joined, struct cl_node *members,
 		joined->vdevs = (struct cl_vdev *) opaque;
 		joined->nr_vdevs = opaque_len/sizeof (struct cl_vdev);
 
+		ccowd_fhready_lock(FH_LOCK_WRITE);
 		err = flexhash_add_vdevs(SERVER_FLEXHASH,
 		    joined, fhserver, 0, FH_NOGOOD_HC, FH_NO_REBUILD);
+		ccowd_fhready_unlock(FH_LOCK_WRITE);
 		if (err) {
 			log_error(lg, "Unable to add vdevs to the server ");
 			return;
@@ -1106,7 +1108,8 @@ clengine_notify_cb(struct cl_node *sender, void *msg, size_t msg_len)
 		uint16_t ndevs = 0;
 		err = reptrans_blob_lookup(ttag, hash_type, &chid, &vdevs, &ndevs);
 		if (err) {
-			log_error(lg, "Blob lookup error");
+			if (err != -ENODEV)
+				log_error(lg, "Blob lookup error %d", err);
 			return;
 		}
 

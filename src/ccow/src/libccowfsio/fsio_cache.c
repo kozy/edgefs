@@ -113,7 +113,7 @@ typedef struct __fsio_chunk_buffer__
 #define	FETCH_FLAGS_FIRST_CHUNK_ALIGNED	(1 << 1)
 #define	FETCH_FLAGS_LAST_CHUNK_ALIGNED	(1 << 2)
 
-#define IOV_WRITE_MAX	8	/* How many chunks can be written in parallel */
+#define IOV_WRITE_MAX	32	/* How many chunks can be written in parallel */
 
 static void
 map_chunk_to_file(ccowfs_inode *inode, uint64_t chunk_size,
@@ -1190,8 +1190,12 @@ out:
 		}
 	}
 
-	if (buffer)
-		je_free(buffer);
+	if (buffer) {
+		if (inode->write_free_cb)
+			inode->write_free_cb(buffer);
+		else
+			je_free(buffer);
+	}
 	if (chunk_list)
 		je_free(chunk_list);
 
@@ -1531,20 +1535,17 @@ out:
 	}
 
 	if (locked) {
-		if (INODE_IS_S3OBJ(inode->ino)) {
-			/** Cannot maintain S3 object data in cache.
-			 *	There is no way to detect changes in object data.
-			 *	Free-up the chunk buffers as we have the chunk locks.
-			 *	Let the chunk heads be in the list as we don't have the list lock.
-			 *	Chunk heads will be removed as part of flush.
-			 */
-			for (uint64_t i=0; i<cnt; i++) {
-				je_free(chunk_list[i]->buff);
-				chunk_list[i]->buff = NULL;
-				chunk_list[i]->data_size = 0;
-				chunk_list[i]->chunk_size = 0;
-				chunk_list[i]->dirty = 0;
-			}
+		/*
+		 * Free-up the chunk buffers as we have the chunk locks.
+		 * Let the chunk heads be in the list as we don't have the list lock.
+		 * Chunk heads will be removed as part of flush.
+		 */
+		for (uint64_t i=0; i<cnt; i++) {
+			je_free(chunk_list[i]->buff);
+			chunk_list[i]->buff = NULL;
+			chunk_list[i]->data_size = 0;
+			chunk_list[i]->chunk_size = 0;
+			chunk_list[i]->dirty = 0;
 		}
 		cache_unlock_multiple_chunks(inode, chunk_list, cnt);
 	}

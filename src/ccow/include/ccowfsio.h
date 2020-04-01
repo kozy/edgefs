@@ -39,13 +39,15 @@ extern "C"
 #define S3OBJECTS_DIR_NAME (".objects")
 #define LOST_FOUND_DIR_MODE (S_IFDIR | (00777))
 #define FSIO_DIR_SHARD_COUNT 4
-#define	FLUSHER_STAT_OBJ ".nexenta_nedge_nfs_stat_counter"
+#define FLUSHER_STAT_OBJ ".nexenta_nedge_nfs_stat_counter"
+#define LFLUSHER_STAT (sizeof(FLUSHER_STAT_OBJ) - 1)
 #define RECOVERY_TABLE_STR (".nexenta_nedge_nfs_inode_recovery")
 #define RECOVERY_TABLE_SHARD_COUNT 16
 #define INODE_OBJECT_LOOKUP (".nexenta_inode2oid")
 #define INODE_MASTER_STR (".nexenta_nedge_nfs_inode_master")
 #define SNAPVIEW_OID (".nexenta_nedge_nfs_snapview")
 #define NULL_OID ("(null)")
+#define MAX_SEGMENT_STAT 1024
 
 
 #define	X_FILE_MODE	"X-file-mode"
@@ -106,6 +108,7 @@ typedef enum __ccow_fsio_inode_type
 typedef struct fsio_super ci_t;
 
 typedef uint64_t inode_t;
+typedef void (*ccow_fsio_write_free_cb) (void *ptr);
 
 /* [TODO] We may not need ccow_fsio_file_t. Just map it to inode */
 typedef struct
@@ -113,6 +116,7 @@ typedef struct
 	void *inode;
 	ci_t *ci;
 	inode_t ino;
+	ccow_fsio_write_free_cb write_free_cb;
 } ccow_fsio_file_t;
 
 typedef struct
@@ -157,6 +161,13 @@ int ccow_fsio_term();
 
 typedef int (*fsio_up_callback) (void *cb_args, inode_t inode,
     uint64_t ccow_fsio_up_flags);
+
+/**
+ * Set free() callback for write buffers for the file descriptor.
+ * Can only be called prior to any write I/Os for the descriptor.
+ */
+void ccow_fsio_write_free_set(ccow_fsio_file_t *file,
+    ccow_fsio_write_free_cb free_cb);
 
 /**
  * CLone file on server side.
@@ -382,7 +393,7 @@ int ccow_fsio_delete(ci_t * ci, inode_t parent, char *name);
  * @param mode access mode of new directory.
  * @param uid owner ID of new directory.
  * @param gid group ID of new directory.
- * @param inode pointer to unique file identifier of newly created node.
+ * @param inode pointer to unique file identifier of newly created node or NULL.
  * @returns 0 on success, or standard error code (errno(3)) if fail.
  */
 int ccow_fsio_mkdir(ci_t * ci, inode_t parent, char *name,

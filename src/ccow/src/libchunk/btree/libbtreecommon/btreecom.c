@@ -479,6 +479,7 @@ btc_leaf_put_chunk(btree_t *btree, bt_node_t *node, bt_node_t *parent,
 
 	tmp_re->content_hash_id = *chid;
 	BT_REF_MOD_SET(tmp_re, 1);
+	log_debug(lg, "SET MOD %p", tmp_re);
 
 	RT_REF_COMPRESS_TYPE_SET(tmp_re, chunk_comp_type);
 	RT_REF_HASH_TYPE_SET(tmp_re, comp->hash_type);
@@ -1194,13 +1195,14 @@ btc_update_fetches_done(btc_cm_fetch_ctx_t *ctx, int *done)
 
 	int err = 0;
 
-	log_trace(lg, "cont_op %p", cont_op);
-
 	/*
 	 * update the btree by adding entries from the chunk list
 	 */
 
 	uint64_t off = cont_op->offset;
+
+	log_debug(lg, "ADD cont_op %p off: %lu, chunks: %lu", cont_op, off, chunks->nbufs);
+
 	for (uint16_t i = 0; i < chunks->nbufs; i++) {
 		struct iovec *iov_in = &cont_op->iov_in[i];
 		uv_buf_t *chunk = &rtbuf(chunks, i);
@@ -1486,6 +1488,9 @@ btc_cm_fetch_finish(btc_cm_fetch_ctx_t *ctx, rtbuf_t * rl, int *done)
 		}
 
 		memcpy(new_re, re, sizeof(struct refentry));
+
+		BT_REF_MOD_SET(new_re, 0);
+		log_debug(lg, "LOADED MOD %p", new_re);
 
 		switch (ctx->type) {
 		case BTN:
@@ -2361,4 +2366,3 @@ btc_destroy(chunkmap_handle_t chm_handle)
 
 	BT_FREE(bt_map);
 }
-

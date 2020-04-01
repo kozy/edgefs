@@ -13,7 +13,7 @@ message ServiceListRequest {
 
 message ServiceInfo {
 	string name = 1;
-	
+
 	//iscsi
 	string iqn = 2;
 	ProtocolType type = 3;
@@ -73,14 +73,62 @@ message ServeResponse {
 
 message SetParamRequest {
 	string service = 1;
-	string tenant = 2;
+	string param = 2;
+	string value = 3;
+}
+
+message ServiceCreateRequest {
+	string service = 1;
+	string serviceType = 2;
+	repeated string paths = 3;
+	map<string,string> parameters = 4;
+}
+
+message ServiceDeleteRequest {
+	string service = 1;
+}
+
+message ServiceShowRequest {
+	string service = 1;
+	bool stats = 2;
+}
+
+message ServiceStats {
+	int64 timestamp = 1;
+	string status = 2;
+	string state = 3;
+	int64 mode = 4;
+	int64 delay = 5;
+	int64 version_manifests = 6;
+	int64 requests = 7;
+	int64 chunk_manifests = 8;
+	int64 data_chunks = 9;
+	int64 snapviews = 10;
+	int64 bytes = 11;
+	int64 received_data_chunks = 12;
+	int64 received_bytes = 13;
+	int64 latency = 14;
+	int64 send_throughput = 15;
+	int64 receive_throughput = 16;
+	int64 network_errors = 17;
+	int64 local_io_errors = 18;
+	int64 remote_io_errors = 19;
+}
+
+
+message ServiceShowResponse {
+	repeated string paths = 1;
+	map<string,string> parameters = 2;
+	map<string,ServiceStats> stats = 3;
 }
 
 service Service {
+	rpc ServiceCreate(ServiceCreateRequest) returns (GenericResponse) {}
+	rpc ServiceDelete(ServiceDeleteRequest) returns (GenericResponse) {}
+	rpc ServiceShow(ServiceShowRequest) returns (ServiceShowResponse) {}
 	rpc Serve(ServeRequest) returns (ServeResponse) {}
 	rpc Unserve(ServeRequest) returns (GenericResponse) {}
 	rpc SetParam(SetParamRequest) returns (GenericResponse) {}
 	rpc ServiceList(ServiceListRequest) returns (ServiceListResponse) {}
 	rpc ServiceObjectList(ServiceObjectListRequest) returns (ServiceObjectListResponse) {}
 }
-

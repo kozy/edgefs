@@ -40,7 +40,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func ObjectGet(args []string) error {
+func objectGet(args []string) error {
 	opath := args[0]
 
 	s := strings.SplitN(opath, "/", 4)
@@ -216,7 +216,7 @@ var (
 		Long:  "get a new object from cluster and write to file",
 		Args:  validate.ObjectGet,
 		Run: func(cmd *cobra.Command, args []string) {
-			err := ObjectGet(args)
+			err := objectGet(args)
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)

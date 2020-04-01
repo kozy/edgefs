@@ -250,6 +250,12 @@ out:
 	return err;
 }
 
+void
+ccow_fsio_write_free_set(ccow_fsio_file_t *file, ccow_fsio_write_free_cb free_cb)
+{
+	file->write_free_cb = free_cb;
+}
+
 int
 ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
     void *buffer, size_t *write_amount)
@@ -262,6 +268,9 @@ ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
         buffer_size, buffer, write_amount);
 
 	*write_amount = 0;
+	if (buffer_size == 0 || buffer == NULL) {
+		return 0;
+	}
 
 	err = get_file_inode(file);
 	if (err) {
@@ -275,6 +284,8 @@ ccow_fsio_write(ccow_fsio_file_t *file, size_t offset, size_t buffer_size,
 			file_inode->ino, err);
 		goto out;
 	}
+
+	file_inode->write_free_cb = file->write_free_cb;
 
 	err = fsio_buffer_cache_write(file_inode, offset, buffer_size, buffer);
 	if (err) {

@@ -41,11 +41,12 @@
 #define CONNBROKER_TTL_DEFAULT	64
 
 #define CBR_REMOTE_FAILURE_TIMEOUT	1000	/* MS */
-#define TCP_SERVER_INIT_TIMEOUT 200 /* Server connection timeout in sec */
+#define TCP_SERVER_INIT_TIMEOUT 300 /* Server connection timeout in sec */
+#define TCP_KEEP_ALIVE_TIMEOUT 300 /* Keep alive  timeout in sec */
 
 #define CONNBROKER_NAMESIZE		REPLICAST_NAME_MAXSIZE
 
-#define CBR_UNINIT	0	
+#define CBR_UNINIT	0
 #define CBR_INIT	1
 #define CBR_CONNECTING	2
 #define CBR_CONNECTED	3
@@ -160,7 +161,7 @@ void cbr_destroy_context(struct connbroker_context *brx);
 
 int cbr_connect(struct connbroker_context *brx, rt_connect_cb cb, void *cb_data);
 
-int cbr_request_send(struct connbroker_context *brx, struct state *st, 
+int cbr_request_send(struct connbroker_context *brx, struct state *st,
     enum replicast_opcode opcode, struct repmsg_generic *msg,
     const uv_buf_t *bufs, unsigned int nbufs, replicast_send_cb cb,
     void *data, uint256_t *dgram_idx);
@@ -206,4 +207,3 @@ int replicast_tcp_send2(struct replicast *robj, struct repctx *ctx,
     replicast_send_cb cb, void *cb_data);
 
 #endif
-

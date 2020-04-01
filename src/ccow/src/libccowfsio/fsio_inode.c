@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2018 Nexenta Systems, inc.
+ * Copyright (c) 2015-2020 Nexenta Systems, inc.
  *
  * This file is part of EdgeFS Project
  * (see https://github.com/Nexenta/edgefs).
@@ -71,6 +71,10 @@
 #define MD_REFCOUNT				0x0100
 #define MD_SNAP_COUNT			0x0200
 #define MD_ALL					0x03FF
+
+/* Extern functions */
+extern int ccow_fsio_inode_glm_lock(ccowfs_inode * inode);
+extern int ccow_fsio_inode_glm_unlock(ccowfs_inode * inode);
 
 int __encode_dir_attrs(ccowfs_inode * inode, void **encoded_attrs,
     uint64_t * encoded_attrs_len);
@@ -259,23 +263,19 @@ __inode_free(ccowfs_inode * inode)
 	if (inode == NULL)
 		return;
 	log_trace(fsio_lg, "inode: %lu (%p)", inode->ino, inode);
-
+	log_debug(fsio_lg, "syncing inode %ju, before free", inode->ino);
+	err = ccowfs_inode_sync(inode, 0);
+	if (err) {
+		log_error(fsio_lg, "can't free inode "
+		    "%ju, it's dirty yet. err: %d",
+		    inode->ino, err);
+		return;
+	}
 	if (!QUEUE_EMPTY(&inode->ci->open_files_head)) {
 		QUEUE_FOREACH(q, &inode->ci->open_files_head) {
 			q_inode = QUEUE_DATA(q, ccowfs_inode, dirty_q);
 			if (q_inode->ino != inode->ino)
 				continue;
-			if (q_inode->dirty != 0) {
-				log_debug(fsio_lg, "syncing inode %ju, before "
-				    "free", inode->ino);
-				err = ccowfs_inode_sync(inode, 0);
-				if (err) {
-					log_error(fsio_lg, "can't free inode "
-					    "%ju, it's dirty yet. err: %d",
-					    inode->ino, err);
-					return;
-				}
-			}
 			QUEUE_REMOVE(q);
 			QUEUE_INIT(&q_inode->dirty_q);
 			break;
@@ -2448,8 +2448,14 @@ ccowfs_namespace_inode_unlock(ccowfs_inode * inode)
 int
 ccowfs_inode_lock(ccowfs_inode * inode)
 {
+	int err;
 
 	log_trace(fsio_lg, "inode: %lu", inode->ino);
+	if (inode->ci->glm_enabled) {
+		err = ccow_fsio_inode_glm_lock(inode);
+		if (err)
+			return err;
+	}
 
 	return pthread_rwlock_wrlock(&(inode->rwlock));
 }
@@ -2457,17 +2463,34 @@ ccowfs_inode_lock(ccowfs_inode * inode)
 int
 ccowfs_inode_unlock(ccowfs_inode * inode)
 {
+	int err;
 
 	log_trace(fsio_lg, "inode: %lu", inode->ino);
 
-	return pthread_rwlock_unlock(&(inode->rwlock));
+	err = pthread_rwlock_unlock(&(inode->rwlock));
+	if (err)
+		return err;
+
+	if (inode->ci->glm_enabled) {
+		err = ccow_fsio_inode_glm_unlock(inode);
+		if (err)
+			return err;
+	}
+	return err;
 }
 
 int
 ccowfs_inode_lock_shared(ccowfs_inode * inode)
 {
+	int err;
 
 	log_trace(fsio_lg, "inode: %lu", inode->ino);
+
+	if (inode->ci->glm_enabled) {
+		err = ccow_fsio_inode_glm_lock(inode);
+		if (err)
+			return err;
+	}
 
 	return pthread_rwlock_rdlock(&(inode->rwlock));
 }
@@ -2476,9 +2499,20 @@ int
 ccowfs_inode_unlock_shared(ccowfs_inode * inode)
 {
 
+	int err;
+
 	log_trace(fsio_lg, "inode: %lu", inode->ino);
 
-	return pthread_rwlock_unlock(&(inode->rwlock));
+	err = pthread_rwlock_unlock(&(inode->rwlock));
+	if (err)
+		return err;
+
+	if (inode->ci->glm_enabled) {
+		err = ccow_fsio_inode_glm_unlock(inode);
+		if (err)
+			return err;
+	}
+	return err;
 }
 
 void

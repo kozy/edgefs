@@ -34,6 +34,7 @@
 #include "fsio_system.h"
 #include "fsio_flusher.h"
 #include "fsio_inode.h"
+#include "fsio_cache.h"
 #include "fsio_dir.h"
 #include "tc_pool.h"
 
@@ -58,11 +59,14 @@ flusher_sync_fsstat(ci_t * ci)
 	cd = atomic_get_int64(&ci->used_count_diff);
 
 	if (bd || cd) {
+		char flusher_stat_obj[128];
+		get_flusher_stat_obj(tc, flusher_stat_obj);
+
 
 		/* Submit collected stats. */
 		err = ccow_sharded_attributes_put(tc, ci->bid, ci->bid_size,
-		    ci->stats_list_context, FLUSHER_STAT_OBJ,
-		    strlen(FLUSHER_STAT_OBJ)+1, bd, cd, 0);
+		    ci->stats_list_context, flusher_stat_obj,
+		    strlen(flusher_stat_obj)+1, bd, cd, 0);
 		if (err) {
 			log_error(fsio_lg, "ccow_sharded_attributes_put failed, err %d",
 			    err);
@@ -290,6 +294,10 @@ ccowfs_inode_flusher(ci_t * ci, int mem_pressure, int max_count)
 				}
 				flushed++;
 			}
+
+			/* Free unused buffers. */
+			fsio_buffer_cache_flush(q_inode, 1);
+
 			/*
 			 * Put the dirty queue ref and decriment runcount
 			 */

@@ -24,11 +24,21 @@
 package efsutil
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"runtime"
 	"strings"
 )
+
+func GetServerId() ([]byte, error) {
+	sid, err := ioutil.ReadFile(os.Getenv("NEDGE_HOME") + "/var/run/serverid.cache")
+	if err != nil {
+		fmt.Print(err)
+		return nil, err
+	}
+	return sid, err
+}
 
 func GetLibccowConf() ([]byte, error) {
 	conf, err := ioutil.ReadFile(os.Getenv("NEDGE_HOME") + "/etc/ccow/ccow.json")

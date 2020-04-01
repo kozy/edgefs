@@ -16,7 +16,34 @@
 #define TID_DEFAULT	"test"
 #define BID_DEFAULT	"put-file-bucket-test"
 #define OID_DEFAULT	"file-put"
+#define ROOT_INODE_STR	".nexenta_nedge_nfs_root_2"
+#define STR_MAXLEN	512
 #define	PARALLEL_OPS_N	50
+
+
+static uint64_t vdev_usage_summ = 0;
+static uint32_t vdev_usage_number = 0;
+static uint128_t* known_hosts = NULL;
+static uint32_t n_known_hosts = 0;
+
+struct vminfo {
+	uint512_t vmchid;
+	uint512_t nhid;
+	char name[2048];
+};
+
+typedef int (*nfs_iter_cb) (ccow_t tc, const char* bucket, const char* inode,
+	const char* oid, uint64_t ts, void* arg);
+
+struct ostat_arg {
+	time_t firstTS;
+	int flags;
+	int verbose;
+	opp_status_t ostat;
+	FILE* f;
+	size_t count;
+};
+
 static void
 usage(const char *argv0)
 {
@@ -27,7 +54,7 @@ usage(const char *argv0)
 		"\n"
 		"	-h	Display this message and exit\n"
 		"\n"
-		"	-o	Specify object name\n"
+		"	-o	Specify object name. NFS object has to begin with a '/' symbol\n"
 		"\n"
 		"	-b	Specify bucket name\n"
 		"\n"
@@ -47,8 +74,13 @@ usage(const char *argv0)
 		"\n"
 		"	-p	add Parity chunk info (valid only with -x)\n"
 		"\n"
+		"	-B	Start bucket verification. Object ID ins't required\n"
+		"\n"
+		"	-T	Check only objects newer than specified date. Only for bucket mode.\n"
+		"		Format: MM-DD-YYYY H:M:S\n"
+		"\n"
 		"	-l <str> log requested info to server's log file\n"
-		"		<str> can be made of:"
+		"		<str> can be made of:\n"
 		"		- 'L' log lost CHIDs,\n"
 		"		- 'N' log CHIDs if #VBRs = 0\n"
 		"		- 'O' log CHIDs if #VBRs < #Replicas\n"
@@ -59,11 +91,6 @@ usage(const char *argv0)
 
 	exit(EXIT_SUCCESS);
 }
-
-static uint64_t vdev_usage_summ = 0;
-static uint32_t vdev_usage_number = 0;
-static uint128_t* known_hosts = NULL;
-static uint32_t n_known_hosts = 0;
 
 static int
 vdev_usage_avg_update(const uint128_t* host, uint64_t* vdev_usage,
@@ -108,13 +135,15 @@ static void dump_json(const opp_status_t* ostat) {
 		"\"n_cp_verified\":%lu, \"n_cpar_verified\":%lu, \"n_cm_zl_1vbr\":%lu, "
 		"\"n_cm_tl_1vbr\":%lu, \"n_cp_1vbr\":%lu, \"n_cm_zl_lost\":%lu, "
 		"\"n_cm_tl_lost\":%lu, \"n_cp_lost\":%lu, \"n_cpar_lost\":%lu, "
-		"\"n_cm_zl_erc_err\":%lu, \"n_cm_tl_erc_err\":%lu, ", ostat->n_cpar,
+		"\"n_cm_zl_erc_err\":%lu, \"n_cm_tl_erc_err\":%lu,\"n_cm_zl_1rep\":%lu,"
+		"\"n_cm_tl_1rep\":%lu,\"n_cp_erc_err\":%lu,\"n_cp_1rep\":%lu,", ostat->n_cpar,
 		ostat->n_cp, ostat->n_cm_zl, ostat->n_cm_tl, ostat->n_cm_zl_pp,
 		ostat->n_cm_zl_verified, ostat->n_cm_tl_verified, ostat->n_cp_verified,
 		ostat->n_cpar_verified, ostat->n_cm_zl_1vbr, ostat->n_cm_tl_1vbr,
 		ostat->n_cp_1vbr, ostat->n_cm_zl_lost, ostat->n_cm_tl_lost,
 		ostat->n_cp_lost, ostat->n_cpar_lost, ostat->n_cm_zl_erc_err,
-		ostat->n_cm_tl_erc_err);
+		ostat->n_cm_tl_erc_err, ostat->n_cm_zl_1repl, ostat->n_cm_tl_1repl,
+		ostat->n_cp_erc_err, ostat->n_cp_1rep);
 	char hoststr[UINT128_BYTES*2+1];
 	uint128_dump(&ostat->hostid, hoststr, UINT128_BYTES*2+1);
 	printf("\"hostid\":\"%s\", \"pp_algo\":%d, \"pp_data_number\":%d, "
@@ -165,19 +194,18 @@ ecstat_calc_nhid(const char* cid, const char* tid, const char* bid,
 	return err;
 }
 
-struct vminfo {
-	uint512_t vmchid;
-	uint512_t nhid;
-	char name[2048];
-};
-
+/*
+ * the @ts parameter. On input, it keeps min. timestamp (unless it's 0)
+ *			Upon exit, it contains object timestamp fetched
+ *			from object's metadata
+ */
 static int
 object_stats_get(ccow_t tc, const char* bid, const char* oid, int flags,
-	int verbose, opp_status_t* ostat) {
+	int verbose, uint64_t* ts_in_out, opp_status_t* ostat) {
 	ccow_completion_t c;
 	int multipart = 0;
 	uint512_t vmchid, nhid;
-	uint64_t size = 0, chunk_size = 0, gen = 0;
+	uint64_t size = 0, chunk_size = 0, gen = 0, creation_time = 0;
 	struct vminfo* vms = NULL;
 	int n_vms = 0;
 
@@ -216,9 +244,17 @@ object_stats_get(ccow_t tc, const char* bid, const char* oid, int flags,
 			ccow_iterator_kvcast(CCOW_KVTYPE_UINT32, kv, &chunk_size);
 		} else if (strcmp(kv->key, RT_SYSKEY_TX_GENERATION_ID) == 0) {
 			ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, &gen);
+		} else if (strcmp(kv->key, RT_SYSKEY_CREATION_TIME) == 0) {
+			ccow_iterator_kvcast(CCOW_KVTYPE_UINT64, kv, &creation_time);
 		}
 	}
 	ccow_lookup_release(iter);
+	if (ts_in_out && *ts_in_out && creation_time && *ts_in_out > creation_time) {
+		/* Skip this object. It's too old */
+		return -EBADF;
+	}
+	if (ts_in_out)
+		*ts_in_out = creation_time;
 	if (multipart) {
 		/* The multipart object has a JSON string as a content.
 		 * The JSON provides detailed info on parts.
@@ -429,6 +465,10 @@ object_stats_get(ccow_t tc, const char* bid, const char* oid, int flags,
 					ostat->n_cm_zl_1vbr += req_stat[j].n_cm_zl_1vbr;
 					ostat->n_cm_tl_1vbr += req_stat[j].n_cm_tl_1vbr;
 					ostat->n_cp_1vbr += req_stat[j].n_cp_1vbr;
+					ostat->n_cp_1rep += req_stat[j].n_cp_1rep;
+					ostat->n_cp_erc_err += req_stat[j].n_cp_erc_err;
+					ostat->n_cm_zl_1repl += req_stat[j].n_cm_zl_1repl;
+					ostat->n_cm_tl_1repl += req_stat[j].n_cm_tl_1repl;
 					ostat->n_cm_zl_lost += req_stat[j].n_cm_zl_lost;
 					ostat->n_cm_tl_lost += req_stat[j].n_cm_tl_lost;
 					ostat->n_cp_lost += req_stat[j].n_cp_lost;
@@ -470,6 +510,423 @@ object_stats_get(ccow_t tc, const char* bid, const char* oid, int flags,
 	return 0;
 }
 
+static int
+unpackValue(void *value, size_t value_size, char *buf, size_t buf_size) {
+	if (value_size == 0 || !value) {
+		return 0;
+	}
+	int err = 0;
+	uint8_t ver=0;
+	uint64_t generation = 0;
+	uint64_t size = 0;
+	uint64_t inode = 0;
+	uint64_t ts = 0;
+	uint512_t vmchid;
+	char etag[STR_MAXLEN] = "";
+	char content_type[STR_MAXLEN] = "";
+	char owner[STR_MAXLEN] = "";
+	char srcip[STR_MAXLEN] = "";
+	uint8_t object_deleted = 0;
+	msgpack_u *u = msgpack_unpack_init(value, value_size, 0);
+	err = msgpack_unpack_uint8(u, &ver);
+	if (err) {
+		goto _exit;
+	}
+	if (ver == 1) {
+		err = msgpack_unpack_uint8(u, &object_deleted);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_uint64(u, &ts);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_uint64(u, &generation);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_uint512(u, &vmchid);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_str(u, etag, STR_MAXLEN);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_str(u, content_type, STR_MAXLEN);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_uint64(u, &size);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_uint64(u, &inode);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_str(u, owner, STR_MAXLEN);
+		if (err) {
+			goto _exit;
+		}
+		err = msgpack_unpack_str(u, srcip, STR_MAXLEN);
+		if (err) {
+			goto _exit;
+		}
+		char vmchid_buf[UINT512_BYTES * 2 + 1] = "";
+		uint512_dump(&vmchid, vmchid_buf, UINT512_BYTES * 2 + 1);
+		sprintf(buf,"%lu;%lu;%s;%s;%s;%lu;%u;%lu;%s;%s", ts, generation,
+			vmchid_buf, etag, content_type, size, object_deleted, inode, owner, srcip);
+		goto _exit;
+	}
+	if (ver == 2) {
+		err = msgpack_unpack_str(u, buf, buf_size);
+		goto _exit;
+	}
+	if (ver == 3) {
+		err = msgpack_unpack_uint64(u, &inode);
+		if (err)
+			goto _exit;
+		uint8_t type = (inode >> 60) & 3;
+		sprintf(buf,"%lu;%u", inode, type);
+		goto _exit;
+	}
+	if (ver == 4) {
+		uint32_t st_mode, st_uid, st_gid;
+		uint64_t st_dev, st_rdev, tv_sec;
+		uint64_t st_atim_tv_sec, st_atim_tv_nsec;
+		uint64_t st_mtim_tv_sec, st_mtim_tv_nsec;
+		uint64_t st_ctim_tv_sec, st_ctim_tv_nsec;
+		err = msgpack_unpack_uint32(u, &st_mode);
+		if (err)
+			goto _exit;
+		err = msgpack_unpack_uint32(u, &st_uid);
+		if (err)
+			goto _exit;
+		err = msgpack_unpack_uint32(u, &st_gid);
+		if (err)
+			goto _exit;
+		err = msgpack_unpack_uint64(u, &st_dev);
+		if (err)
+			goto _exit;
+		err = msgpack_unpack_uint64(u, &st_rdev);
+		if (err)
+			goto _exit;
+		err =
+		    msgpack_unpack_uint64(u,
+		    (uint64_t *) &st_atim_tv_sec);
+		if (err)
+			goto _exit;
+		err =
+		    msgpack_unpack_uint64(u,
+		    (uint64_t *) & st_atim_tv_nsec);
+		if (err)
+			goto _exit;
+		err =
+		    msgpack_unpack_uint64(u,
+		    (uint64_t *) & st_mtim_tv_sec);
+		if (err)
+			goto _exit;
+		err =
+		    msgpack_unpack_uint64(u,
+		    (uint64_t *) & st_mtim_tv_nsec);
+		if (err)
+			goto _exit;
+		err =
+		    msgpack_unpack_uint64(u,
+		    (uint64_t *) & st_ctim_tv_sec);
+		if (err)
+			goto _exit;
+		err =
+		    msgpack_unpack_uint64(u,
+		    (uint64_t *) & st_ctim_tv_nsec);
+		if (err)
+			goto _exit;
+		sprintf(buf,"%u;%u;%u;%lu;%lu;%lu;%lu;%lu;%lu",
+				st_mode, st_uid, st_gid,
+				st_atim_tv_sec, st_atim_tv_nsec,
+				st_mtim_tv_sec, st_mtim_tv_nsec,
+				st_ctim_tv_sec, st_ctim_tv_nsec);
+		goto _exit;
+	}
+	if (ver == 5) {
+		const uint8_t *data;
+		uint32_t nout;
+		err = msgpack_unpack_raw(u, &data, &nout);
+		if (!err)
+		    memcpy(buf, data, nout);
+		goto _exit;
+	}
+
+_exit:
+		msgpack_unpack_free(u);
+		return err;
+}
+
+static int
+interate_nfs_bucket(ccow_t tc, const char* bid, size_t bid_size, const char* oid,
+	size_t oid_size, const char* prefix, nfs_iter_cb cb, void* arg) {
+	int err = 0;
+	int res = 0;
+
+	ccow_shard_context_t list_shard_context;
+	ccow_lookup_t iter = NULL;
+	msgpack_u *u = NULL;
+	char marker[256] = "";
+
+	do {
+		err = ccow_shard_context_create((char*)oid, oid_size, 4, &list_shard_context);
+		if (err) {
+			log_error(lg, "ccow_shard_context_create error %d", err);
+			return err;
+		}
+
+		err = ccow_sharded_get_list(tc, bid, bid_size, list_shard_context, marker,
+			strlen(marker)+1, NULL, 10, &iter);
+
+		ccow_shard_context_destroy(&list_shard_context);
+		if (err) {
+			if (iter)
+				ccow_lookup_release(iter);
+			log_error(lg, "ccow_shard_context_destroy error %d", err);
+			return err;
+		}
+
+		struct ccow_metadata_kv *kv;
+		void *t;
+		size_t count = 0;
+		do {
+			t = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, -1);
+			kv = (struct ccow_metadata_kv *)t;
+			if (kv == NULL)
+				break;
+			assert (kv->type == CCOW_KVTYPE_RAW);
+			char buf[PATH_MAX] = "";
+			err = unpackValue(kv->value, kv->value_size, buf, PATH_MAX);
+			if (err) {
+				if (iter)
+					ccow_lookup_release(iter);
+				log_error(lg,"Shard unpack error %d", err);
+				return err;
+			}
+			if (!strcmp(kv->key, ".") || !strcmp(kv->key, "..") || !strlen(kv->key))
+				continue;
+			count++;
+			char* p = strchr(buf, ';');
+			if (p) {
+				*p = 0;
+				if (*(p+1) == '1') {
+					/**
+					 * This is an NFS directory, entering
+					 */
+					char pbuff[PATH_MAX];
+					sprintf(pbuff, "%s/%s", prefix, kv->key);
+					err = interate_nfs_bucket(tc, bid, bid_size, buf, sizeof(buf) + 1,
+						pbuff, cb, arg);
+					if (err)
+						goto _exit;
+				} else {
+					if (cb) {
+						char lbuf[PATH_MAX];
+						sprintf(lbuf, "%s/%s", prefix, kv->key);
+						err = cb(tc, bid, buf, lbuf, 0, arg);
+						if (err)
+							goto _exit;
+					}
+				}
+			}
+			strcpy(marker, kv->key);
+		} while (kv != NULL);
+		if (!count)
+			break;
+	} while (1);
+
+_exit:
+	if (iter)
+		ccow_lookup_release(iter);
+
+	return err;
+}
+
+static int
+interate_bucket(ccow_t cl, const char* bid, size_t bid_size, nfs_iter_cb cb, void* arg) {
+	int err = 0;
+	char last_obj[PATH_MAX] = {0};
+	ccow_lookup_t iter = NULL;
+	struct iovec iov;
+	iov.iov_base = last_obj;
+	iov.iov_len = strlen(last_obj) + 1;
+	ccow_completion_t c1;
+
+	while (1) {
+		err = ccow_create_completion(cl, NULL, NULL, 1, &c1);
+		if (err) {
+			log_error(lg, "Bucket clone: completion create error %d", err);
+			goto _release;
+		}
+		iov.iov_len = strlen(last_obj) + 1;
+		iov.iov_base = last_obj;
+		err = ccow_tenant_get(cl->cid, cl->cid_size, cl->tid,
+			cl->tid_size, bid, strlen(bid) + 1, "", 1, c1, &iov, 1,
+			1000, CCOW_GET_LIST, &iter);
+		if (err) {
+			log_error(lg, "Source bucket list error %s/%s/%s: %d",
+				cl->cid, cl->tid, bid, err);
+			goto _release;
+		}
+
+		err = ccow_wait(c1, 0);
+		if (err) {
+			log_error(lg, "Source bucket list error (wait) %s/%s/%s: %d",
+				cl->cid, cl->tid, bid, err);
+			goto _release;
+		}
+		struct ccow_metadata_kv *kv = NULL;
+		int idx = 0, processed = 0;
+		while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, idx++)) != NULL) {
+			/* Skip the last entry from previous iteration */
+			if (!strcmp(kv->key, last_obj))
+				continue;
+			/* Skip multipart */
+			if (strstr(kv->key, "\xEF\xBF\xBF{") == kv->key)
+				continue;
+			strcpy(last_obj, kv->key);
+
+			msgpack_u u;
+			msgpack_unpack_init_b(&u, kv->value, kv->value_size, 0);
+			uint8_t ver = 0, deleted = 0;
+			uint64_t ts = 0, gen = 0;
+			uint512_t vmchid;
+			err = msgpack_unpack_uint8(&u, &ver);
+			if (err) {
+				log_error(lg, "Bucket entry unpack error %d", err);
+				goto _release;
+			}
+
+			err = msgpack_unpack_uint8(&u, &deleted);
+			if (err) {
+				log_error(lg, "Bucket entry unpack error %d", err);
+				goto _release;
+			}
+
+			err = msgpack_unpack_uint64(&u, &ts);
+			if (err) {
+				log_error(lg, "Bucket entry unpack error %d", err);
+				goto _release;
+			}
+
+			err = msgpack_unpack_uint64(&u, &gen);
+			if (err) {
+				log_error(lg, "Bucket entry unpack error %d", err);
+				goto _release;
+			}
+
+			err = replicast_unpack_uint512(&u, &vmchid);
+			if (err) {
+				log_error(lg, "Bucket entry unpack error %d", err);
+				goto _release;
+			}
+			processed++;
+			if (cb) {
+				err = cb(cl, bid, last_obj, last_obj, ts, arg);
+				if (err) {
+					err = 0;
+					goto _release;
+				}
+			}
+		}
+		ccow_lookup_release(iter);
+		iter = NULL;
+		if (!processed)
+			break;
+	}
+
+_release:
+	ccow_release(c1);
+	if (iter)
+		ccow_lookup_release(iter);
+
+	return err;
+}
+
+static int oid_to_inode_cb (ccow_t cl, const char* bucket, const char* oid,
+	const char* path, uint64_t ts, void* arg) {
+	char* buff = arg;
+	if (!strcmp(path, buff)) {
+		strcpy(buff, oid);
+		return 100;
+	}
+	return 0;
+}
+
+static int object_stat_cb (ccow_t cl, const char* bucket, const char* oid,
+	const char* path, uint64_t ts, void* arg) {
+	struct ostat_arg* p = arg;
+
+	if (ts && p->firstTS && p->firstTS < (time_t)ts) {
+		/*
+		 * If object creation time is provided, then compare
+		 * filter out old objects
+		 * If creation time is unknown, then postpone this task
+		 */
+		return 0;
+	}
+	ts = p->firstTS;
+	int err = object_stats_get(cl, bucket, oid, p->flags, p->verbose, &ts, &p->ostat);
+	if (err) {
+		if (err == -EBADF) {
+			/* Object is too old */
+			return 0;
+		}
+		if (err == -ENOENT) {
+			char buf[1024];
+			if (ts) {
+				time_t t = ts/1000000;
+				struct tm tm;
+				gmtime_r(&t, &tm);
+				size_t n = strftime(buf, sizeof(buf), "%m-%d-%Y %H:%M:%S", &tm);
+			} else
+				strcpy(buf, "- -");
+			if (p->f) {
+				fprintf(p->f, "%s/%s/%s/%s;%s;;;;LOST;\n", cl->cid,
+					cl->tid, bucket, path, buf);
+			}
+			printf("ERROR: object not found %s/%s/%s/%s, date %s\n",
+				cl->cid, cl->tid, bucket, path, buf);
+		} else {
+			fprintf(stderr, "%s/%s/%s/%s object stat error %d\n",
+				cl->cid, cl->tid, bucket, path, err);
+		}
+	}
+
+	size_t total_chunks = p->ostat.n_cp + p->ostat.n_cm_zl + p->ostat.n_cm_tl;
+	size_t total_1vbr = p->ostat.n_cp_1vbr + p->ostat.n_cm_zl_1vbr + p->ostat.n_cm_tl_1vbr;
+	size_t lost = p->ostat.n_cp_lost + p->ostat.n_cm_tl_lost + p->ostat.n_cm_zl_lost;
+	if (lost) {
+		time_t t = ts/1000000;
+		struct tm tm;
+		gmtime_r(&t, &tm);
+		char buf[1024];
+		size_t n = strftime(buf, sizeof(buf), "%m-%d-%Y %H:%M:%S", &tm);
+		if (p->f) {
+			fprintf(p->f, "%s/%s/%s/%s;%s;%lu;%lu;%lu;DATALOSS;\n", cl->cid,
+				cl->tid, bucket, oid, buf, lost, total_chunks, total_1vbr);
+		}
+		printf("ERROR: object %s, date %s, #chunks %lu, #lost %lu, #1vbr %lu\n",
+				path, buf, total_chunks, lost, total_1vbr);
+	} else if (total_chunks != total_1vbr) {
+		printf("WARN: object %s is a data loss candidate: %lu chunks/manifest without VBR",
+			path, total_chunks - total_1vbr);
+	} else if (p->ostat.n_cm_tl_erc_err || p->ostat.n_cm_zl_erc_err || p->ostat.n_cp_erc_err) {
+		printf("INFO: %s under-replication of %lu manifests and %lu payloads\n",
+			path, p->ostat.n_cm_tl_erc_err + p->ostat.n_cm_zl_erc_err,
+			p->ostat.n_cp_erc_err);
+	} else {
+		printf("%lu\r", ++p->count);
+	}
+	return 0;
+}
+
 int
 main(int argc, char** argv) {
 
@@ -491,10 +948,9 @@ main(int argc, char** argv) {
 	uint64_t size = 0;
 	uint32_t chunk_size = 0;
 	uint64_t gen = 0;
-	int verbose = 0;
 	int batch = 0;
 	char* log_file = NULL;
-	time_t firstTS = 0;
+	struct ostat_arg oarg;
 
 	while ((opt = getopt(argc, argv, "ho:b:c:t:sVxpl:jvBL:T:")) != -1) {
 		switch(opt) {
@@ -532,7 +988,7 @@ main(int argc, char** argv) {
 				break;
 
 			case 'l':
-				lerr = strdup(optarg);;
+				lerr = strdup(optarg);
 				break;
 
 			case 'j':
@@ -540,7 +996,7 @@ main(int argc, char** argv) {
 				break;
 
 			case 'v':
-				verbose = 1;
+				oarg.verbose = 1;
 				break;
 
 			case 'B':
@@ -556,11 +1012,11 @@ main(int argc, char** argv) {
 				struct tm ltm;
 				char* p = strptime(optarg, "%m-%d-%Y %H:%M:%S", &ltm);
 				if (!p) {
-					fprintf(stderr, "The time stamp format is MM-DD-YYYY H:M:S");
+					fprintf(stderr, "The time stamp format is MM-DD-YYYY H:M:S\n");
 					return -1;
 
 				}
-				firstTS = mktime(&ltm);
+				oarg.firstTS = mktime(&ltm)*1000000UL;
 				break;
 			}
 
@@ -606,182 +1062,66 @@ main(int argc, char** argv) {
 		fprintf(stderr, "\nccow init error: cluster or tenant ID is wrong\n");
 		return -EINVAL;
 	}
-	opp_status_t ostat = {.n_cp = 0};
-	int flags = 0; /* EC-information only */
+
+	oarg.flags = 0; /* EC-information only */
+	oarg.ostat.n_cp = 0;
 	if (verify)
-		flags |= OPP_STATUS_FLAG_VERIFY;
+		oarg.flags |= OPP_STATUS_FLAG_VERIFY;
 	if (ext)
-		flags |= OPP_STATUS_FLAG_ERC;
+		oarg.flags |= OPP_STATUS_FLAG_ERC;
 	if (p_info)
-		flags |= OPP_STATUS_FLAG_CPAR;
+		oarg.flags |= OPP_STATUS_FLAG_CPAR;
 	if (lerr) {
 		if (strchr(lerr, 'L'))
-			flags |= OPP_STATUS_FLAG_LERR;
+			oarg.flags |= OPP_STATUS_FLAG_LERR;
 		if (strchr(lerr, 'N'))
-			flags |= OPP_STATUS_FLAG_LACKVBR;
+			oarg.flags |= OPP_STATUS_FLAG_LACKVBR;
 		if (strchr(lerr, 'O'))
-			flags |= OPP_STATUS_FLAG_MISSVBR;
+			oarg.flags |= OPP_STATUS_FLAG_MISSVBR;
 	}
 
 	if (batch) {
 		/* Iterate bucket and check each object */
 		char last_obj[PATH_MAX] = {0};
 		ccow_lookup_t iter = NULL;
-		struct iovec iov;
-		iov.iov_base = last_obj;
-		iov.iov_len = strlen(last_obj) + 1;
 		ccow_completion_t c1;
 		int ci = 0, total = 0;
-		FILE* f = NULL;
 		if (log_file) {
-			f = fopen(log_file, "w");
-			if (!f) {
+			oarg.f = fopen(log_file, "w");
+			if (!oarg.f) {
 				fprintf(stderr, "ERROR: Couldn't open log file %s for writing\n", log_file);
 				return -1;
 			}
 		}
 
-		while (1) {
-			err = ccow_create_completion(cl, NULL, NULL, 1, &c1);
-			if (err) {
-				log_error(lg, "Bucket clone: completion create error %d", err);
-				goto _release;
-			}
-			iov.iov_len = strlen(last_obj) + 1;
-			iov.iov_base = last_obj;
-			err = ccow_tenant_get(cl->cid, cl->cid_size, cl->tid,
-				cl->tid_size, bid, strlen(bid) + 1, "", 1, c1, &iov, 1,
-				1000, CCOW_GET_LIST, &iter);
-			if (err) {
-				log_error(lg, "Source bucket list error %s/%s/%s: %d",
-					cl->cid, cl->tid, bid, err);
-				goto _release;
-			}
+		interate_nfs_bucket(cl, bid, strlen(bid) + 1, ROOT_INODE_STR,
+			strlen(ROOT_INODE_STR) + 1, "", object_stat_cb, &oarg);
 
-			err = ccow_wait(c1, 0);
-			if (err) {
-				log_error(lg, "Source bucket list error (wait) %s/%s/%s: %d",
-					cl->cid, cl->tid, bid, err);
-				goto _release;
-			}
-			total  += ccow_lookup_length(iter, CCOW_MDTYPE_NAME_INDEX);
-			struct ccow_metadata_kv *kv = NULL;
-			int idx = 0, processed = 0;
-			while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, idx++)) != NULL) {
-				/* Skip the last entry from previous iteration */
-				if (!strcmp(kv->key, last_obj)) {
-					total--;
-					continue;
-				}
-				/* Skip multipart */
-				if (strstr(kv->key, "\xEF\xBF\xBF{") == kv->key) {
-					total--;
-					continue;
-				}
-				strcpy(last_obj, kv->key);
+		interate_bucket(cl, bid, strlen(bid) + 1, object_stat_cb, &oarg);
 
-				msgpack_u u;
-				msgpack_unpack_init_b(&u, kv->value, kv->value_size, 0);
-				uint8_t ver = 0, deleted = 0;
-				uint64_t ts = 0, gen = 0;
-				uint512_t vmchid;
-				err = msgpack_unpack_uint8(&u, &ver);
-				if (err) {
-					log_error(lg, "Bucket entry unpack error %d", err);
-					goto _release;
-				}
-
-				err = msgpack_unpack_uint8(&u, &deleted);
-				if (err) {
-					log_error(lg, "Bucket entry unpack error %d", err);
-					goto _release;
-				}
-
-				err = msgpack_unpack_uint64(&u, &ts);
-				if (err) {
-					log_error(lg, "Bucket entry unpack error %d", err);
-					goto _release;
-				}
-
-				err = msgpack_unpack_uint64(&u, &gen);
-				if (err) {
-					log_error(lg, "Bucket entry unpack error %d", err);
-					goto _release;
-				}
-
-				err = replicast_unpack_uint512(&u, &vmchid);
-				if (err) {
-					log_error(lg, "Bucket entry unpack error %d", err);
-					goto _release;
-				}
-
-				if (firstTS && ((uint64_t)firstTS > ts/1000000)) {
-					total--;
-					continue;
-				}
-				processed++;
-				err = object_stats_get(cl, bid, last_obj, flags, verbose, &ostat);
-				if (err) {
-					if (err == -ENOENT) {
-						time_t t = ts/1000000;
-						struct tm tm;
-						gmtime_r(&t, &tm);
-						char buf[1024];
-						size_t n = strftime(buf, sizeof(buf), "%m-%d-%Y %H:%M:%S", &tm);
-						if (f) {
-							fprintf(f, "%s/%s/%s/%s;%s;;;;LOST;\n", cl->cid,
-								cl->tid, bid, last_obj, buf);
-						}
-						printf("ERROR: object not found %s/%s/%s/%s, date %s\n",
-							cl->cid, cl->tid, bid, last_obj, buf);
-					} else {
-						fprintf(stderr, "%s/%s/%s/%s object stat error %d\n",
-							cl->cid, cl->tid, bid, last_obj, err);
-					}
-					continue;
-				}
-
-				size_t total_chunks = ostat.n_cp + ostat.n_cm_zl + ostat.n_cm_tl;
-				size_t total_1vbr = ostat.n_cp_1vbr + ostat.n_cm_zl_1vbr + ostat.n_cm_tl_1vbr;
-				size_t lost = ostat.n_cp_lost + ostat.n_cm_tl_lost + ostat.n_cm_zl_lost;
-				if (lost) {
-					time_t t = ts/1000000;
-					struct tm tm;
-					gmtime_r(&t, &tm);
-					char buf[1024];
-					size_t n = strftime(buf, sizeof(buf), "%m-%d-%Y %H:%M:%S", &tm);
-					if (f) {
-						fprintf(f, "%s/%s/%s/%s;%s;%lu;%lu;%lu;DATALOSS;\n", cl->cid,
-							cl->tid, bid, last_obj, buf, lost, total_chunks, total_1vbr);
-					}
-					printf("ERROR: object %s, date %s, #chunks %lu, #lost %lu, #1vbr %lu\n",
-						last_obj, buf, total_chunks, lost, total_1vbr);
-				} else if (total_chunks != total_1vbr) {
-					printf("ostat.n_cp_1vbr %lu, ostat.n_cm_zl_1vbr %lu, ostat.n_cm_tl_1vbr %lu\n", ostat.n_cp_1vbr, ostat.n_cm_zl_1vbr, ostat.n_cm_tl_1vbr);
-					printf("WARN: Can be lost object %s, #chunks %lu, #lost %lu, #1vbr %lu\n",
-						last_obj, total_chunks, lost, total_1vbr);
-				} else {
-					printf("%d/%d\r", ++ci, total);
-				}
-			}
-			ccow_lookup_release(iter);
-			iter = NULL;
-			if (!processed)
-				break;
-		}
-_release:
-		ccow_release(c1);
-		if (iter)
-			ccow_lookup_release(iter);
-		if (f)
-			fclose(f);
+		if (oarg.f)
+			fclose(oarg.f);
 		printf("\n");
 		return 0;
 	}
 
-
-
-	err = object_stats_get(cl, bid, oid, flags, verbose, &ostat);
+	err = object_stats_get(cl, bid, oid, oarg.flags, oarg.verbose, NULL,
+		&oarg.ostat);
+	if (err == -ENOENT) {
+		/* Possibly an NFS object. Trying to find inode*/
+		char ibuf[PATH_MAX];
+		strcpy(ibuf, oid);
+		printf("Regular object not found, looking for NFS inode...\n");
+		err = interate_nfs_bucket(cl, bid, strlen(bid) + 1, ROOT_INODE_STR,
+			strlen(ROOT_INODE_STR) + 1, "", oid_to_inode_cb, ibuf);
+		if (err == 100) {
+			/* The inode found, doing stat */
+			printf("%s found inode %s\n", oid, ibuf);
+			err = object_stats_get(cl, bid, ibuf, oarg.flags, oarg.verbose, NULL,
+				&oarg.ostat);
+		} else
+			err = -ENOENT;
+	}
 	if (err) {
 		if (err == -ENOENT)
 			fprintf(stderr, "Object not found\n");
@@ -790,25 +1130,25 @@ _release:
 		return err;
 	}
 
-	double ep = ostat.n_cm_zl ? (ostat.n_cm_zl_pp*100.0f/ostat.n_cm_zl) : 0.0f;
-	size_t total_chunks = ostat.n_cp + ostat.n_cm_zl + ostat.n_cm_tl;
-	size_t total_verified = ostat.n_cp_verified + ostat.n_cm_zl_verified + ostat.n_cm_tl_verified;
-	size_t total_1vbr = ostat.n_cp_1vbr + ostat.n_cm_zl_1vbr + ostat.n_cm_tl_1vbr;
+	double ep = oarg.ostat.n_cm_zl ? (oarg.ostat.n_cm_zl_pp*100.0f/oarg.ostat.n_cm_zl) : 0.0f;
+	size_t total_chunks = oarg.ostat.n_cp + oarg.ostat.n_cm_zl + oarg.ostat.n_cm_tl;
+	size_t total_verified = oarg.ostat.n_cp_verified + oarg.ostat.n_cm_zl_verified + oarg.ostat.n_cm_tl_verified;
+	size_t total_1vbr = oarg.ostat.n_cp_1vbr + oarg.ostat.n_cm_zl_1vbr + oarg.ostat.n_cm_tl_1vbr;
 	double vp = total_chunks ? (total_verified*100.0f/total_chunks) : 0.0f;
 	double vp1vbr = total_chunks ? (total_1vbr*100.0f/total_chunks) : 0.0f;
 
 	if (o_short) {
-		printf("%.2f %.2f %d:%d:%d:%d\n", vp, ep, ostat.pp_data_number,
-			ostat.pp_parity_number, ostat.pp_algo, ostat.pp_domain);
+		printf("%.2f %.2f %d:%d:%d:%d\n", vp, ep, oarg.ostat.pp_data_number,
+			oarg.ostat.pp_parity_number, oarg.ostat.pp_algo, oarg.ostat.pp_domain);
 	} else if (json) {
-		dump_json(&ostat);
+		dump_json(&oarg.ostat);
 	} else {
 		printf("EC encoding progress:\t\t%.2f%% (%lu/%lu)\n",
-			ep, ostat.n_cm_zl_pp, ostat.n_cm_zl);
-		if (ostat.n_cm_zl_pp) {
+			ep, oarg.ostat.n_cm_zl_pp, oarg.ostat.n_cm_zl);
+		if (oarg.ostat.n_cm_zl_pp) {
 			printf("EC format:\t\t\t%d(D):%d(P):%d(A):%d(FD)\n",
-				ostat.pp_data_number, ostat.pp_parity_number,
-				ostat.pp_algo, ostat.pp_domain);
+				oarg.ostat.pp_data_number, oarg.ostat.pp_parity_number,
+				oarg.ostat.pp_algo, oarg.ostat.pp_domain);
 		}
 		if (verify) {
 			printf("Verification progress:\t\t%.2f%% (%lu/%lu)\n",
@@ -820,17 +1160,18 @@ _release:
 				printf("VDEVs usage (%u):\t\t%.5f%%\t\n",
 					n_known_hosts, ((double)usage)/10000.0);
 				printf("    \tTotal\t\tVerified\tLost\tERC err\n");
-				printf("CM TL\t%lu\t\t%lu\t\t%lu\t\t%lu\n", ostat.n_cm_tl,
-					ostat.n_cm_tl_verified, ostat.n_cm_tl_lost,
-					ostat.n_cm_tl_erc_err);
-				printf("CM ZL\t%lu\t\t%lu\t\t%lu\t\t%lu\n", ostat.n_cm_zl,
-					ostat.n_cm_zl_verified, ostat.n_cm_zl_lost,
-					ostat.n_cm_zl_erc_err);
-				printf("CP  \t%lu\t\t%lu\t\t%lu\n", ostat.n_cp,
-					ostat.n_cp_verified, ostat.n_cp_lost);
+				printf("CM TL\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cm_tl,
+					oarg.ostat.n_cm_tl_verified, oarg.ostat.n_cm_tl_lost,
+					oarg.ostat.n_cm_tl_erc_err);
+				printf("CM ZL\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cm_zl,
+					oarg.ostat.n_cm_zl_verified, oarg.ostat.n_cm_zl_lost,
+					oarg.ostat.n_cm_zl_erc_err);
+				printf("CP  \t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cp,
+					oarg.ostat.n_cp_verified, oarg.ostat.n_cp_lost,
+					oarg.ostat.n_cp_erc_err);
 				if (p_info) {
-					printf("PARITY \t%lu\t\t%lu\t\t%lu\n", ostat.n_cpar,
-						ostat.n_cpar_verified, ostat.n_cpar_lost);
+					printf("PARITY \t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cpar,
+						oarg.ostat.n_cpar_verified, oarg.ostat.n_cpar_lost);
 				}
 			}
 		}

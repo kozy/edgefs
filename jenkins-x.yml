@@ -12,10 +12,21 @@ pipelineConfig:
     value: edgefs-bot
   pipelines:
     pullRequest:
+      build:
+        replace: true
+        steps:
+          - sh: skaffold version
+            name: skaffold-version
+          - sh: export VERSION=$PREVIEW_VERSION && skaffold  build -f skaffold.yaml
+            name: container-build
+          - dir: charts/edgefs
+            steps:
+              - sh: jx step helm build
+                name: helm-build
       postBuild:
         replace: true
         steps:
-        - sh: jx step post build --image $DOCKER_REGISTRY/nexenta/$APP_NAME:$PREVIEW_VERSION
+        - sh: jx step post build --image $DOCKER_REGISTRY/cloudserver-250320/$APP_NAME:$PREVIEW_VERSION
           name: post-build
       promote:
         replace: true
@@ -26,3 +37,18 @@ pipelineConfig:
             name: make-preview
           - sh: jx preview --app $APP_NAME --dir ../..
             name: jx-preview
+    release:
+      setVersion:
+        replace: true
+        steps:
+          - sh: jx step next-version --use-git-tag-only --tag
+            name: tag-with-new-version
+      build:
+        replace: true
+        steps:
+          - sh: export VERSION=`cat VERSION` && skaffold  build -f skaffold.yaml
+            name: container-build
+          - dir: charts/edgefs
+            steps:
+              - sh: jx step helm build --verbose
+                name: helm-build

@@ -280,10 +280,11 @@ func ConfigNode() {
 	
 			// adjust log file location
 			output := regexp.MustCompile(`/opt/nedge`).ReplaceAllString(string(input), os.Getenv("NEDGE_HOME"))
-	
+
 			// adjust netmtu to the current value of selected server interface name
 			ifname0 := strings.Split(nodeConfig.Ccowd.Network.ServerInterfaces, ";")[0]
 			netmtu := DetectMTU(ifname0)
+
 			output = regexp.MustCompile(`netmtu:.*`).ReplaceAllString(output, "netmtu: "+strconv.Itoa(netmtu))
 	
 			if err = ioutil.WriteFile(nedgeHome+CorosyncConfFile, []byte(output), 0666); err != nil {
@@ -499,18 +500,8 @@ func CreateDirIfNotExist(dir string) {
 }
 
 func DetectMTU(ifname string) int {
-	cmd := "ip link show " + ifname + " | grep ' mtu ' | sed -e 's/.* mtu \\([0-9]\\+\\).*/\\1/'"
-	mtu, err := exec.Command("sh", "-c", cmd).Output()
-	if err != nil || string(mtu) == "" {
-		mtu = []byte("1500")
-	}
-
-	netmtu, err := strconv.Atoi(strings.TrimSpace(string(mtu)))
-	if err != nil {
-		netmtu = 1500
-	}
-
-	return netmtu - 50
+	// Use minimal possible MTU for now
+	return 1400
 }
 
 func detectEther(ifname string) string {

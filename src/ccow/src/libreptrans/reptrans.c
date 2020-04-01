@@ -1306,6 +1306,11 @@ push_stats(struct repdev *dev)
 	auditc_low_objid(gauge, "reptrans.incoming_batches_queued", &dev->vdevid,
 			stat->ttag_entries[TT_BATCH_INCOMING_QUEUE]);
 
+	auditc_low_objid(gauge, "reptrans.s3_offload_size", &dev->vdevid,
+			stat->s3_offload_capacity);
+	auditc_low_objid(gauge, "reptrans.s3_offload_used", &dev->vdevid,
+			stat->s3_offload_used);
+
 	ccowd_fhready_lock(FH_LOCK_READ);
 	auditc_low_rowusage(gauge, "reptrans.rowusagecounters", &dev->vdevid,
 		ccow_daemon->flexhash->numrows, ccow_daemon->flexhash);
@@ -5585,7 +5590,7 @@ int
 reptrans_blob_lookup(type_tag_t ttag, crypto_hash_t hash_type,
 	const uint512_t* chid, uint128_t** vdevs, uint16_t* ndevs) {
 	struct reptrans *rt = NULL;
-	int count = 0, err = 0;
+	int count = 0, err = 0, total_devs = 0;
 	uint128_t *devlist = je_calloc(REPTRANS_MAX_VDEVS, sizeof(uint128_t));
 	assert(ndevs);
 	QUEUE* q;
@@ -5596,6 +5601,7 @@ reptrans_blob_lookup(type_tag_t ttag, crypto_hash_t hash_type,
 		QUEUE_FOREACH(d, &rt->devices) {
 			struct repdev *dev;
 			dev = QUEUE_DATA(d, struct repdev, item);
+			total_devs++;
 			uv_rwlock_rdunlock(&rt->devlock);
 			char chidstr[UINT512_STR_BYTES];
 			uint512_dump(chid, chidstr, UINT512_STR_BYTES);
@@ -5634,6 +5640,8 @@ reptrans_blob_lookup(type_tag_t ttag, crypto_hash_t hash_type,
 		}
 		uv_rwlock_rdunlock(&rt->devlock);
 	}
+	if (!total_devs)
+		return -ENODEV;
 	*ndevs = count;
 	if (count)
 		*vdevs = devlist;

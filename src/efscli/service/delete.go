@@ -52,9 +52,6 @@ func ServiceDelete(name string) error {
 	cl := C.CString("")
 	defer C.free(unsafe.Pointer(cl))
 
-	svcs := C.CString("svcs")
-	defer C.free(unsafe.Pointer(svcs))
-
 	var tc C.ccow_t
 
 	ret := C.ccow_admin_init(c_conf, cl, 1, &tc)

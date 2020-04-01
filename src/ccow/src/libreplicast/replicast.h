@@ -100,6 +100,7 @@ extern "C" {
 #define RT_SYSVAL_EC_DATA_MODE			0x20602 /* 6:2:rs */
 #define RT_SYSVAL_EC_TRG_POLICY			((4*3600) << 4);
 #define RT_SYSVAL_FILE_OBJECT_TRANSPARANCY			0
+#define RT_SYSVAL_SEGID_PRESERVE			0
 #define RT_SYSVAL_OBJECT_DELETE_AFTER			0
 #define RT_SYSVAL_FOT_INODE2OID			".nexenta_inode2oid"
 #define RT_SYSVAL_USER_SHARD_COUNT			8
@@ -590,12 +591,16 @@ struct repmsg_opps_result {
 	size_t  n_cm_zl_1vbr; /* number of ZL manifests that have at least 1 vbr */
 	size_t  n_cm_tl_1vbr; /* number of TL verified that have at least 1 vbr */
 	size_t  n_cp_1vbr; /* Number of payload chunks that have at least 1 vbr*/
+	uint64_t  n_cp_erc_err; /* number of verified CP with wrong ERC */
+	uint64_t  n_cp_1rep;  /* Number of CP with ERC=1 (critical value) */
 	uint64_t  n_cp_verified; /* Number of verified payload chunks */
 	uint64_t  n_cpar_verified; /* Number of verified parity chunks */
 	uint64_t  n_cm_zl_lost; /* Number of lost zero-level parity manifests */
 	uint64_t  n_cm_tl_lost; /* Number of lost parity manifests */
 	uint64_t  n_cm_zl_erc_err; /* Number of ZL CM with wrong ERC */
+	uint64_t  n_cm_zl_1repl; /* number of verified ZL with ERC=1 */
 	uint64_t  n_cm_tl_erc_err; /* Number of TL CM with wrong ERC */
+	uint64_t  n_cm_tl_1repl; /* number of verified TL with ERC=1 */
 	uint64_t  n_cp_lost; /* Number of lost chunk payloads */
 	uint64_t  n_cpar_lost; /* Number of lost chunk parity */
 	uint128_t hostid; /* Information collected on this host */

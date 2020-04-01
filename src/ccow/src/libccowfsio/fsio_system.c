@@ -44,6 +44,11 @@
 #include <fsio_recovery.h>
 #include <tc_pool.h>
 
+/* Extern functions */
+extern int ccow_fsio_glm_init(char *service_name, char *ccow_config_file,
+		ci_t *ci);
+extern void ccow_fsio_glm_term(ci_t *ci);
+
 /* [TBD] At presetn adding and removing to the export list is not guarded by
  * any lock.
  * The addExport and removeExport happen in Ganesha dBus thread.
@@ -1128,9 +1133,9 @@ ccow_fsio_get_export_quota(ci_t * ci)
 	pos = 0;
 	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_METADATA |
 	    CCOW_MDTYPE_CUSTOM, pos++))) {
-		if (strcmp(kv->key, "x-container-meta-quota-bytes") == 0) {
+		if (strcmp(kv->key, "X-container-meta-quota-bytes") == 0) {
 			ci->quota_bytes = (uint64_t) ccow_kvconvert_to_int64(kv);
-		} else if (strcmp(kv->key, "x-container-meta-quota-count") == 0) {
+		} else if (strcmp(kv->key, "X-container-meta-quota-count") == 0) {
 			ci->quota_count = (uint64_t) ccow_kvconvert_to_int64(kv);
 		}
 	}
@@ -1148,12 +1153,39 @@ ccow_fsio_get_export_quota(ci_t * ci)
 
 }
 
+char *
+get_flusher_stat_obj(ccow_t tc, char *buf) {
+	uint64_t segid = ccow_get_segment_guid(tc);
+	sprintf(buf,"%s%lX", FLUSHER_STAT_OBJ, segid);
+	return buf;
+}
+
+int
+get_old_stat_object(ccow_t tc, ci_t * ci) {
+	int64_t dummy;
+	int err = ccow_shard_context_create(FLUSHER_STAT_OBJ,
+	    strlen(FLUSHER_STAT_OBJ)+1, 1, &ci->stats_list_context);
+	if (err) {
+		return err;
+	}
+	err = ccow_sharded_attributes_get(tc, ci->bid, ci->bid_size,
+	    ci->stats_list_context, &ci->used_bytes, &ci->used_count, &dummy);
+	if (!err) {
+		err = ccow_sharded_list_destroy(tc, ci->bid, ci->bid_size, ci->stats_list_context);
+	}
+
+    ccow_shard_context_destroy(&ci->stats_list_context);
+	return err;
+}
+
+
 int
 ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
     int chunk_size, fsio_up_callback up_cb, void *up_cb_args)
 {
 	int64_t dummy;
 	ccow_t tc;
+	char *glm_service;
 	int err = 0, nonfatal_err = 0, locked = 0;
 
 	log_trace(fsio_lg, "ci: %p, uri: \"%s\", "
@@ -1184,6 +1216,13 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	ci->bid_size = strlen(ci->bid) + 1;
 	ci->up_cb = up_cb;
 	ci->up_cb_args = up_cb_args;
+
+	glm_service = getenv("CCOW_GEOLOCK_SERVICE");
+	if (glm_service != NULL) {
+		err = ccow_fsio_glm_init(glm_service, ccow_config, ci);
+		if (err)
+			goto out;
+	}
 
 	tc_pool_find_handle(ci->cid, ci->tid, &ci->tc_pool_handle);
 	if (! ci->tc_pool_handle){
@@ -1217,17 +1256,24 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 		ci->ccow_err = err;
 		goto out;
 	}
-	err = ccow_shard_context_create(FLUSHER_STAT_OBJ,
-	    strlen(FLUSHER_STAT_OBJ)+1, 1, &ci->stats_list_context);
-	if (err) {
-		log_error(fsio_lg, "ccow_shard_context_create failed, err %d",
-		    err);
-		goto out;
-	}
 
 	err = tc_pool_get_tc(ci->tc_pool_handle, 0, &tc);
 	if (err) {
 		log_error(fsio_lg, "Failed to get TC. err: %d", err);
+		goto out;
+	}
+
+	int old_stat_loaded = (get_old_stat_object(tc, ci) == 0);
+
+	char flusher_stat_obj[128];
+	get_flusher_stat_obj(tc, flusher_stat_obj);
+	log_info(fsio_lg, "Flusher stat object: %s", flusher_stat_obj);
+
+	err = ccow_shard_context_create(flusher_stat_obj,
+	    strlen(flusher_stat_obj)+1, 1, &ci->stats_list_context);
+	if (err) {
+		log_error(fsio_lg, "ccow_shard_context_create failed, err %d",
+		    err);
 		goto out;
 	}
 
@@ -1240,8 +1286,22 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 
 	atomic_set_uint64((uint64_t *)&ci->used_bytes_diff, 0ULL);
 	atomic_set_uint64((uint64_t *)&ci->used_count_diff, 0ULL);
-	err = ccow_sharded_attributes_get(tc, ci->bid, ci->bid_size,
-	    ci->stats_list_context, &ci->used_bytes, &ci->used_count, &dummy);
+
+	if (old_stat_loaded) {
+		err = ccow_sharded_attributes_put(tc, ci->bid, ci->bid_size,
+		    ci->stats_list_context, flusher_stat_obj,
+		    strlen(flusher_stat_obj)+1, ci->used_bytes, ci->used_count, 0);
+		if (err) {
+			log_error(fsio_lg, "Failed to save bucket \"%s/%s/%s\" "
+				"FS stats attributes. err %d", ci->cid,
+				ci->tid, ci->bid, err);
+			ci->ccow_err = err;
+			goto out;
+		}
+	}  else {
+		err = ccow_sharded_attributes_get(tc, ci->bid, ci->bid_size,
+			ci->stats_list_context, &ci->used_bytes, &ci->used_count, &dummy);
+	}
 	if (err == ENOENT || err == -ENOENT) {
 		err = ccow_sharded_list_create(tc, ci->bid, ci->bid_size,
 		    ci->stats_list_context);
@@ -1251,8 +1311,8 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 			goto out;
 		}
 		err = ccow_sharded_attributes_put(tc, ci->bid, ci->bid_size,
-		    ci->stats_list_context, FLUSHER_STAT_OBJ,
-		    strlen(FLUSHER_STAT_OBJ)+1, 0, 0, 0);
+		    ci->stats_list_context, flusher_stat_obj,
+		    strlen(flusher_stat_obj)+1, 0, 0, 0);
 		if (err) {
 			log_error(fsio_lg, "ccow_sharded_attributes_put "
 			    "failed, err %d", err);
@@ -1341,6 +1401,10 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	}
 out:
 	assert(err || ci->inode_cache.inode_table);
+
+	if (ci->glm_enabled) {
+		ccow_fsio_glm_term(ci);
+	}
 
 	if (locked) {
 		err = ccow_range_lock(tc, ci->bid, ci->bid_size, "", 1, 0, 1, CCOW_LOCK_UNLOCK);
@@ -1487,14 +1551,18 @@ ccow_fsio_create_bucket(ccow_t tc, const char *bucket_uri, Logger lgarg)
 
 	}
 
-	/* FLUSHER_STAT_OBJ */
-	err = ccow_shard_context_create(FLUSHER_STAT_OBJ,
-	    strlen(FLUSHER_STAT_OBJ) + 1, 1, &ci->stats_list_context);
+	/* FLUSHER STAT OBJ */
+	char flusher_stat_obj[128];
+	get_flusher_stat_obj(tc, flusher_stat_obj);
+
+	err = ccow_shard_context_create(flusher_stat_obj,
+	    strlen(flusher_stat_obj) + 1, 1, &ci->stats_list_context);
 	if (err) {
 		log_error(lg, "ccow_shard_context_create failed, err %d",
 		    err);
 		goto out;
 	}
+
 	ccow_shard_context_set_inline_flag(ci->stats_list_context,
 		RT_INLINE_DATA_TYPE_NFS_AUX);
 
@@ -1556,9 +1624,12 @@ ccow_fsio_delete_bucket(ccow_t tc, const char *bucket_uri, Logger lgarg)
 #ifdef NOT_YET
 	/* SNAPVIEW_OID */
 #endif
-	/* FLUSHER_STAT_OBJ */
-	err = ccow_shard_context_create(FLUSHER_STAT_OBJ,
-	    strlen(FLUSHER_STAT_OBJ) + 1, 1, &ci->stats_list_context);
+	/* FLUSHER STAT OBJ */
+	char flusher_stat_obj[128];
+	get_flusher_stat_obj(tc, flusher_stat_obj);
+
+	err = ccow_shard_context_create(flusher_stat_obj,
+	    strlen(flusher_stat_obj) + 1, 1, &ci->stats_list_context);
 	if (err) {
 		log_error(lg, "ccow_shard_context_create failed, err %d",
 		    err);
@@ -1832,7 +1903,7 @@ out:
 int
 ccow_fsio_fsinfo(ci_t *ci, fsio_fsinfo_t *fsinfo)
 {
-	int64_t quota_bytes, quota_count, b, c;
+	int64_t quota_bytes, quota_count;
 
 	log_trace(fsio_lg, "ci: %p, fsinfo: %p", ci, fsinfo);
 	assert(ci != NULL);
@@ -1843,18 +1914,120 @@ ccow_fsio_fsinfo(ci_t *ci, fsio_fsinfo_t *fsinfo)
 	quota_count = (ci->quota_count != 0)?(ci->quota_count):
 		(1 * 1024 * 1024 * 1024ULL);
 
+	int64_t used_bytes = ci->used_bytes;
+	int64_t used_count = ci->used_count;
+
+	// Read additional stats from the other clusters
+	int err = 0;
+	uint32_t max_count = MAX_SEGMENT_STAT;
+	ccow_t tc;
+	ccow_completion_t c = NULL;
+	ccow_lookup_t iter = NULL;
+
+	err = tc_pool_get_tc(ci->tc_pool_handle, 0, &tc);
+	if (err) {
+		log_error(fsio_lg, "Failed to get TC. err: %d", err);
+		goto _exit;
+	}
+
+	char flusher_stat_obj[128];
+	get_flusher_stat_obj(tc, flusher_stat_obj);
+	log_info(fsio_lg, "Flusher stat object: %s", flusher_stat_obj);
+
+	err = ccow_create_completion(tc, NULL, NULL, 1, &c);
+	if (err) {
+		log_error(fsio_lg, "Failed on create compleatin: %d", err);
+		goto _exit;
+	}
+
+	char pattern[128];
+	strcpy(pattern, FLUSHER_STAT_OBJ);
+	int plength = strlen(pattern);
+	struct iovec iovkey = { .iov_base = pattern, .iov_len = plength };
+
+	err = ccow_get_list(ci->bid, ci->bid_size, "", 1, c, &iovkey, 1, max_count, &iter);
+	if (err) {
+		log_error(fsio_lg, "Stats list error on get list: %d", err);
+		goto _exit;
+	}
+
+	err = ccow_wait(c, 0);
+	if (err) {
+		if (err != -ENOENT)
+			log_error(fsio_lg, "Stats list error on CCOW wait: %d", err);
+		goto _exit;
+	} else {
+		c = NULL;
+	}
+
+	struct ccow_metadata_kv *kv;
+	void *t;
+	do {
+		t = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, -1);
+		kv = (struct ccow_metadata_kv *) t;
+		if (kv == NULL) {
+			break;
+		}
+		char stats[128];
+		strncpy(stats, kv->key, kv->key_size);
+		stats[kv->key_size] = 0;
+		int l = (plength < kv->key_size ? plength : kv->key_size);
+		if (strncmp(kv->key, pattern, l) < 0) {
+			continue;
+		}
+		if (kv->key_size < plength)
+			break;
+		if (strncmp(kv->key, pattern, plength) != 0) {
+			break;
+		}
+		stats[strlen(stats) - 2] = 0;
+		log_info(fsio_lg, "Stats object: %s", stats);
+		if (strcmp(flusher_stat_obj, stats) == 0) {
+			continue;
+		}
+		log_info(fsio_lg, "Process stats object: %s", stats);
+		ccow_shard_context_t stats_list_context;
+		int64_t ubytes, ucount, dummy;
+		err = ccow_shard_context_create(stats,
+			strlen(stats)+1, 1, &stats_list_context);
+		if (err) {
+			log_error(fsio_lg, "ccow_shard_context_create failed, err %d",
+				err);
+			ccow_shard_context_destroy(&stats_list_context);
+			goto _exit;
+		}
+
+		err = ccow_sharded_attributes_get(tc, ci->bid, ci->bid_size,
+			stats_list_context, &ubytes, &ucount, &dummy);
+		if (err) {
+			log_error(fsio_lg, "ccow_sharded_attributes_get failed, err %d",
+				err);
+		}
+
+		used_bytes += ubytes;
+		used_count += ucount;
+
+		ccow_shard_context_destroy(&stats_list_context);
+	} while (kv != NULL);
+
+_exit: if (iter)
+		ccow_lookup_release(iter);
+	if (c)
+		ccow_release(c);
+
+
 	/*
 	 * Since fsinfo fields uint64_t, we can't show overquota usage. only 0.
 	 */
 	fsinfo->total_bytes = quota_bytes;
-	b = quota_bytes - ci->used_bytes -
+	int64_t bytes = quota_bytes - used_bytes -
 	    atomic_get_int64(&ci->used_bytes_diff);
-	fsinfo->free_bytes = MAX(b, 0);
+	fsinfo->free_bytes = MAX(bytes, 0);
 	fsinfo->avail_bytes = fsinfo->free_bytes;
 	fsinfo->total_files = quota_count;
-	c = quota_count - ci->used_count -
+	int64_t count = quota_count - used_count -
 	    atomic_get_int64(&ci->used_count_diff);
-	fsinfo->free_files = MAX(c, 0);
+	fsinfo->free_files = MAX(count, 0);
 	fsinfo->avail_files = fsinfo->free_files;
 
 	return 0;

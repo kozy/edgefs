@@ -131,6 +131,10 @@ opps_done(void *arg, int status) {
 		reply_msg.n_cm_zl_pp = req->res.n_cm_zl_pp;
 		reply_msg.n_cm_zl_erc_err = req->res.n_cm_zl_erc_err;
 		reply_msg.n_cm_tl_erc_err = req->res.n_cm_tl_erc_err;
+		reply_msg.n_cm_tl_1repl = req->res.n_cm_tl_1repl;
+		reply_msg.n_cm_zl_1repl = req->res.n_cm_zl_1repl;
+		reply_msg.n_cp_1rep = req->res.n_cp_1rep;
+		reply_msg.n_cp_erc_err = req->res.n_cp_erc_err;
 		reply_msg.pp_algo = req->res.pp_algo;
 		reply_msg.pp_data_number = req->res.pp_data_number;
 		reply_msg.pp_parity_number = req->res.pp_parity_number;
@@ -523,13 +527,11 @@ opps_exec(void *arg) {
 	struct obj_chids oc = { .zl = NULL, .tl = NULL,
 				.cp = NULL , .cpar = NULL};
 	msgpack_u* u = NULL;
-	struct ec_pset* psets = NULL;
-	int n_sets = 0;
 	int32_t domain = 0;
 	uint32_t algo = 0;
 	uint32_t fmt = 0;
-	uv_buf_t pm_ub = { .len = 16384, .base = NULL };
 	crypto_hash_t cp_ht = HASH_TYPE_DEFAULT;
+	int ppo = 0;
 
 	struct chunk_info vminfo = {
 			.chid = msg->vmchid,
@@ -664,6 +666,7 @@ opps_exec(void *arg) {
 				goto _exit_unlock;
 			}
 			req->res.n_cm_zl_pp++;
+			ppo = 1;
 		}
 		req->res.n_cm_zl = 1;
 		if (vminfo.n_vbrs_min) {
@@ -694,6 +697,7 @@ opps_exec(void *arg) {
 		uint512_t* pm_chid = NULL;
 		for (int i = 0; i < n_infos; i++) {
 			if (infos[i].n_vdevs > 0) {
+				ppo = 1;
 				req->res.n_cm_zl_pp++;
 				err = opps_append_parity_chids(dev, cl,
 					&infos[i].chid, NULL, oc.cpar, &domain, &algo,
@@ -768,6 +772,8 @@ opps_exec(void *arg) {
 							chidstr);
 					}
 				}
+				if (erc == 1)
+					req->res.n_cm_zl_1repl++;
 			}
 		}
 		if (infos) {
@@ -822,6 +828,8 @@ opps_exec(void *arg) {
 					}
 					req->res.n_cm_tl_erc_err++;
 				}
+				if (erc == 1)
+					req->res.n_cm_tl_1repl++;
 			}
 		}
 		if (infos) {
@@ -859,6 +867,25 @@ opps_exec(void *arg) {
 				uint512_dump(&infos[i].chid, chidstr,
 					UINT512_BYTES*2+1);
 				log_notice(lg, "LACKVBR CP %s", chidstr);
+			}
+
+			if (!ppo && (msg->flags & OPP_STATUS_FLAG_ERC)) {
+				int erc;
+				SERVER_FLEXHASH_SAFE_CALL(erc =
+					reptrans_get_effective_rep_count(
+					infos[i].vdevs, infos[i].n_vdevs,
+					cl->failure_domain), FH_LOCK_READ);
+				if (erc < md.replication_count) {
+					if (msg->flags & OPP_STATUS_FLAG_LERR) {
+						uint512_dump(&infos[i].chid, chidstr,
+							UINT512_BYTES*2+1);
+						log_error(lg, "CP ERC ERR %s",
+							chidstr);
+					}
+					req->res.n_cp_erc_err++;
+				}
+				if (erc == 1)
+					req->res.n_cp_1rep++;
 			}
 		}
 
@@ -907,12 +934,8 @@ _exit:
 	if (u)
 		msgpack_unpack_free(u);
 
-	if (pm_ub.base)
-		je_free(pm_ub.base);
 	if (infos)
 		ec_clean_chunk_infos(infos, n_infos);
-	if (psets)
-		ec_clean_parity_sets(psets, n_sets);
 	if (cl)
 		reptrans_put_tenant_context(dev->rt, cl);
 }

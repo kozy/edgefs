@@ -94,6 +94,7 @@ client_getcommon_init(struct state *st)
 	}
 	r->delayed_start_timer_req->data = NULL;
 	r->delayed_start_fd = uv_hpt_timer_init(tc->loop, r->delayed_start_timer_req);
+	r->dgrams = 0;
 }
 
 static void
@@ -370,7 +371,13 @@ client_getcommon_sendaccept_timeout(uv_timer_t *treq, int status)
 		r->timer_req->data = NULL;
 	}
 
-	tc->get_retry_cnt++;
+	int n_frames = uint256_hweight(&r->dgram_idx);
+	uint64_t dur_avg = r->rt_last_ts - r->rt_begin_ts;
+	if (n_frames)
+		dur_avg /= n_frames;
+	log_warn(lg, "RT timeout: received %d out of %lu frames, "
+		"frame_delta_avg %lu uS, get_retry_cnt %lu",
+		n_frames, r->dgrams, dur_avg, tc->get_retry_cnt);
 
 	state_event(st, EV_TIMEOUT);
 }
@@ -1117,6 +1124,9 @@ client_getcommon_reset(struct getcommon_client_req *r)
 	}
 	if (!uint256_cmp(&r->dgram_idx, &uint256_null))
 		repctx_wqe_reset(ctx);
+	r->dgrams = 0;
+	r->rt_begin_ts = 0;
+	r->rt_last_ts = 0;
 	return 0;
 }
 
@@ -1146,6 +1156,13 @@ client_getcommon_rttransfer(struct state *st)
 		log_debug(lg, "RT is all transfered. Retransmit case drop");
 		return;
 	}
+	if (!req->rt_begin_ts)
+		req->rt_begin_ts = get_timestamp_us();
+	req->rt_last_ts = get_timestamp_us();
+	if (req->timer_req->data) {
+		uv_timer_stop(req->timer_req);
+		req->timer_req->data = NULL;
+	}
 
 	int idx = wqe->msg->hdr.datagram_num - 1;
 	if (idx >= wqe->msg->num_datagrams) {
@@ -1160,6 +1177,7 @@ client_getcommon_rttransfer(struct state *st)
 
 	// now update the mask for the ones we have received
 	uint256_bset(&req->dgram_idx, idx);
+	req->dgrams = wqe->msg->num_datagrams;
 
 	if (unlikely(lg->level <= LOG_LEVEL_DUMP)) {
 		/* place this datagram into receiving buffer */
@@ -1186,6 +1204,9 @@ client_getcommon_rttransfer(struct state *st)
 
 	if (uint256_hweight(&req->dgram_idx) < msg->num_datagrams) {
 		/* wait for more datagrams */
+		req->timer_req->data = st;
+		uv_timer_start(req->timer_req, client_getcommon_sendaccept_timeout,
+			10, 0);
 		return;
 	}
 
@@ -1194,10 +1215,6 @@ client_getcommon_rttransfer(struct state *st)
 	    msg->num_datagrams, ctx->sequence_cnt, ctx->sub_sequence_cnt);
 	req->nbufs = msg->num_datagrams;
 
-	if (req->timer_req->data) {
-		uv_timer_stop(req->timer_req);
-		req->timer_req->data = NULL;
-	}
 
 	req->rttransferred = 1;
 	if (req->reqtype == GET_REQ_TYPE_NAMED_RT) {
