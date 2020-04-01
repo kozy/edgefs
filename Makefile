@@ -46,7 +46,7 @@ define install_lib_deps
 		cgroup-bin systemtap-sdt-dev libcurl4-openssl-dev libkrb5-dev \
 		libblkid-dev libnss3-dev groff libssl-dev libcgroup-dev \
 		bison flex curl unzip udev zlib1g-dev libtirpc-dev rpcbind \
-		libnl-route-3-dev pkg-config tcl; \
+		libnl-route-3-dev pkg-config tcl gnutls-dev libldap2-dev; \
 fi
 @if test $(distributorid) = centos -o $(distributorid) = rhel; then \
 	yum -y --skip-broken install openssl-devel libtool automake cmake \

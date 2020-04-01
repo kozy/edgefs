@@ -1,3 +1,4 @@
+system/*.pb.go
 tenant/*.pb.go
 service/*.pb.go
 cluster/*.pb.go

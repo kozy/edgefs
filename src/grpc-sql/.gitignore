@@ -3,4 +3,4 @@ export/*.pb.go
 .proto
 src/
 bin/
-grpc-nfs
+grpc-sql
