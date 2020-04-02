@@ -79,7 +79,7 @@ func BucketDelete(bpath string) error {
 
 	empty := C.ccow_fsio_is_not_empty(tc, c_bpath, nil)
 	if empty == 1 {
-		return fmt.Errorf("NFS: Bucket not empty")
+		return fmt.Errorf("FSIO: Bucket not empty")
 	}
 
 	ret = C.ccow_bucket_delete(tc, c_bucket, C.strlen(c_bucket)+1)

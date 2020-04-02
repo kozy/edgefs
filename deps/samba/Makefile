@@ -42,8 +42,11 @@ all: install
 	touch $@
 
 install: .build
-	mkdir -p $(SRCDIR)/etc/samba
 	cp -a $(NAME)/bin/default/source3/smbd/smbd $(SRCDIR)/sbin/
+	mkdir -p $(DESTDIR)$(SRCDIR)/etc/samba/exports
+	mkdir -p $(DESTDIR)$(SRCDIR)/var/run/samba
+	touch $(DESTDIR)$(SRCDIR)/etc/samba/exportslist
+	cp smb.conf $(DESTDIR)$(SRCDIR)/etc/samba/smb.conf
 
 clean:
 	rm -rf .configure .build

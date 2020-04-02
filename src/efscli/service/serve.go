@@ -440,6 +440,98 @@ func ServiceServeNFS(sname string, bpath string) error {
 	return nil
 }
 
+func ServiceServeSMB(sname string, bpath string) error {
+	c_service := C.CString(sname)
+	defer C.free(unsafe.Pointer(c_service))
+
+	c_bpath := C.CString(bpath)
+	defer C.free(unsafe.Pointer(c_bpath))
+
+	s := strings.Split(bpath, "/")
+	if len(s) != 3 {
+		return errors.New("Requires <service> <cluster>/<tenant>/<bucket>")
+	}
+	var tenant string = s[1]
+	var bucket string = s[2]
+
+	var maxExportId int = 1
+
+	keys, err := efsutil.GetKeys("", "svcs", sname, "", 1000)
+	if err != nil {
+		return err
+	}
+
+	suffix := fmt.Sprintf("%s/%s@%s", tenant, bucket, bpath)
+	for _, key := range keys {
+		p := strings.Split(key, ",")
+		id, e := strconv.Atoi(p[0])
+		if e != nil || len(p) < 2 {
+			continue
+		}
+		if id > maxExportId {
+			maxExportId = id
+		}
+
+		if strings.Compare(p[1], suffix) == 0 {
+			return fmt.Errorf("Export already exists: %s", suffix)
+		}
+	}
+
+	conf, err := efsutil.GetLibccowConf()
+	if err != nil {
+		return err
+	}
+
+	c_conf := C.CString(string(conf))
+	defer C.free(unsafe.Pointer(c_conf))
+
+	cl := C.CString("")
+	defer C.free(unsafe.Pointer(cl))
+
+	svcs := C.CString("svcs")
+	defer C.free(unsafe.Pointer(svcs))
+
+	var tc C.ccow_t
+
+	ret := C.ccow_admin_init(c_conf, cl, 1, &tc)
+	if ret != 0 {
+		return fmt.Errorf("ccow_admin_init err=%d", ret)
+	}
+	defer C.ccow_tenant_term(tc)
+
+	newExport := fmt.Sprintf("%d,%s/%s@%s", (maxExportId + 1), tenant, bucket, bpath)
+	fmt.Printf("Serving new export %s\n", newExport)
+
+	c_export := C.CString(newExport)
+	defer C.free(unsafe.Pointer(c_export))
+
+	var comp C.ccow_completion_t
+
+	ret = C.ccow_create_completion(tc, nil, nil, 1, &comp)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_create_completion err=%d", efsutil.GetFUNC(), ret)
+	}
+
+	var iov_name C.struct_iovec
+	iov_name.iov_base = unsafe.Pointer(c_export)
+	iov_name.iov_len = C.strlen(c_export) + 1
+	ret = C.ccow_insert_list(c_service, C.strlen(c_service) + 1,
+				 cl, 1, comp, &iov_name, 1)
+	if ret != 0 {
+		C.ccow_release(comp)
+		return fmt.Errorf("%s: ccow_insert_list err=%d",
+					efsutil.GetFUNC(), ret)
+	}
+
+	ret = C.ccow_wait(comp, 0)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_wait err=%d",
+					efsutil.GetFUNC(), ret)
+	}
+
+	return nil
+}
+
 func ServiceServeS3(sname string, tpath string) error {
 	c_service := C.CString(sname)
 	defer C.free(unsafe.Pointer(c_service))
@@ -646,6 +738,9 @@ func ServiceServe(args []string) error {
 	c_nfs := C.CString("nfs")
 	defer C.free(unsafe.Pointer(c_nfs))
 
+	c_smb := C.CString("smb")
+	defer C.free(unsafe.Pointer(c_smb))
+
 	c_s3 := C.CString("s3")
 	defer C.free(unsafe.Pointer(c_s3))
 
@@ -671,6 +766,10 @@ func ServiceServe(args []string) error {
 
 	if C.strcmp(c_stype, c_nfs) == 0 {
 		return ServiceServeNFS(sname, bpath)
+	}
+
+	if C.strcmp(c_stype, c_smb) == 0 {
+		return ServiceServeSMB(sname, bpath)
 	}
 
 	if C.strcmp(c_stype, c_s3) == 0 {

@@ -31,8 +31,8 @@ var (
 	ServiceCmd = &cobra.Command{
 		Use:     "service",
 		Aliases: []string{"s"},
-		Short:   "Service operations such as S3, NFS, iSCSI, etc",
-		Long:    "Service operations such as S3, NFS, iSCSI, e.g. create, delete, list",
+		Short:   "Service operations such as S3, NFS, SMB, iSCSI, etc",
+		Long:    "Service operations such as S3, NFS, SMB, iSCSI, e.g. create, delete, list",
 	}
 )
 

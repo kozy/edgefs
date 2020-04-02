@@ -76,7 +76,7 @@ func ServiceCreate(cmd *cobra.Command, args []string) error {
 	stype := args[0]
 	name := args[1]
 
-	t, _ := regexp.Compile("^nfs$|^s3$|^s3x$|^iscsi$|^isgw|^swift$|^dsql$")
+	t, _ := regexp.Compile("^nfs$|^s3$|^s3x$|^iscsi$|^isgw|^swift$|^dsql|^smb$")
 	if !t.MatchString(stype) {
 		return fmt.Errorf("Invalid service type specified: %s", stype)
 	}

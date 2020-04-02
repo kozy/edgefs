@@ -130,7 +130,7 @@ var flagMap = map[string]FlagValue{
 	"replication-count":        {"replication-count", "", "r", "", "Replication count (1-4). E.g. 2", "[1-4]", "uint8", C.CCOW_ATTR_REPLICATION_COUNT},
 	"sync-put":                 {"sync-put", "", "R", "", "Sync put (1-4). E.g. 1", "[1-4]", "uint8", C.CCOW_ATTR_SYNC_PUT},
 	"select-policy":            {"select-policy", "", "S", "", "Data placement policy (latency or capacity). E.g. capacity", "latency|capacity", "uint8", C.CCOW_ATTR_SELECT_POLICY},
-	"file-object-transparency": {"file-object-transparency", "", "t", "", "NFS - S3 transparency (set value to 1 to enable)", "[0-1]", "uint8", C.CCOW_ATTR_FILE_OBJECT_TRANSPARANCY},
+	"file-object-transparency": {"file-object-transparency", "", "t", "", "NFS/SMB - S3 transparency (set value to 1 to enable)", "[0-1]", "uint8", C.CCOW_ATTR_FILE_OBJECT_TRANSPARANCY},
 	"ec-data-mode": {"ec-data-mode", "", "c", "", "Erasure coding data mode. E.g 4:2:rs, 3:1:xor, 4:2:rs, 6:2:rs, 9:3:rs",
 		"2:1:xor|2:2:rs|3:1:xor|3:2:rs|4:1:xor|4:2:rs|6:2:rs|9:3:rs", "uint32", C.CCOW_ATTR_EC_ALGORITHM},
 	"ec-trigger-policy-timeout": {"ec-trigger-policy-timeout", "", "C", "", "Erasure coding trigger policy timeout in seconds (4 hours - default). E.g 2h, 50m, 3600",
