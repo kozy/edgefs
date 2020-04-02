@@ -1,7 +1,7 @@
 #ifndef __DQCLIENT_H__
 #define __DQCLIENT_H__
 
-#include "client.h"
+#include "dqlite/client.h"
 
 /* Wrapper around a real dq client */
 struct cdq_client

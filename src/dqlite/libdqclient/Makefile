@@ -23,10 +23,10 @@ CFLAGS += -fPIC -pthread -std=gnu99 -Wall -Wstrict-aliasing=0 -Wendif-labels \
  -Wno-missing-field-initializers -Wno-unused-variable -Wno-unused-parameter \
  -Wno-cast-align -Wno-unused-function -D_GNU_SOURCE \
  -O2 -g -I. -I../../ccow/include -I../../ccow/src/include \
- -I/opt/nedge/include/dqlite -I/opt/nedge/include/json-c \
+ -I$(NEDGE_HOME)/include/dqlite -I$(NEDGE_HOME)/include/json-c \
  -I./include -I. -L. $(ASAN_CPPFLAGS)
 
-LDFLAGS += $(ASAN_LDFLAGS) -L /opt/nedge/lib -lccowutil -lccowfsio -ldqlite
+LDFLAGS += $(ASAN_LDFLAGS) -L $(NEDGE_HOME)/lib -lccowutil -lccowfsio -ldqlite
 
 STRESS_TEST_LDFLAGS = -lpthread
 
@@ -41,7 +41,7 @@ $(TARGET_LIB).a: $(TARGET_OBJS)
 	ar rcs $@ $^
 
 $(TARGET_LIB).so: $(TARGET_OBJS)
-	gcc -shared -o $@ $^ -L /opt/nedge/lib -ldqlite
+	gcc -shared -o $@ $^ -L $(NEDGE_HOME)/lib -ldqlite
 
 $(TEST_DQCLIENT): $(TEST_DQCLIENT_OBJS) $(TARGET_OBJS) $(TARGET_LIB).a
 	gcc -o $@ $^  $(LDFLAGS)
