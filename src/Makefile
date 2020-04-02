@@ -4,7 +4,7 @@
 #
 
 SRCDIR=$(NEDGE_HOME)
-PROJECTS_DIRS_PROXY_DEPS=grpc-iscsi grpc-nfs s3gw grpc-s3x grpc-s3 grpc-sql
+PROJECTS_DIRS_PROXY_DEPS=grpc-iscsi grpc-nfs s3gw grpc-s3x grpc-s3 grpc-sql grpc-smb
 PROJECTS_DIRS=efscli ccownbd ccowhttpd grpc-efsproxy corosync-pod-watcher
 PROJECTS_DIRS_POST_DEPS=dqlite
 GOPATH=`pwd`

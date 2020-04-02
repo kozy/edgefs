@@ -215,10 +215,12 @@ usage() {
 	Services:
 	mgmt	   - start gRPC management service
 	isgw	   - start ISGW multi-site synchronization service
+	smb        - start SMB service
 	nfs        - start NFS service
 	s3         - start AWS S3 compatbile service
 	s3x        - start S3X service
 	iscsi      - start ISCSI service
+	sql        - start Embedded SQL service
 
 	Options:
 
@@ -370,6 +372,13 @@ case $1 in
 		export CCOW_SVCTYPE="nfs"
 		exec grpc-nfs -s $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
                 ;;
+        "smb")
+                shift
+		start_msg "smbd"
+		debug_wait "smbd"
+		export CCOW_SVCTYPE="smb"
+		exec grpc-smb -s $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
+                ;;
         "s3x")
                 shift
 		start_msg "ccowhttpd"
@@ -390,6 +399,13 @@ case $1 in
 		debug_wait "tgtd-0"
 		export CCOW_SVCTYPE="iscsi"
 		exec grpc-iscsi -s $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
+                ;;
+        "sql")
+                shift
+		start_msg "sql"
+		debug_wait "sql"
+		export CCOW_SVCTYPE="sql"
+		exec grpc-sql -s $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
                 ;;
         "isgw")
                 shift

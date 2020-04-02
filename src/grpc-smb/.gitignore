@@ -1,0 +1,4 @@
+.get
+.proto
+grpc-smb
+export/*.pb.go
