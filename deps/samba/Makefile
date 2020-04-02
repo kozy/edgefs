@@ -20,7 +20,7 @@ all: install
 
 .configure:
 	cd ../.. && flock -e .gitmodules git submodule update --depth 1 --recursive --init deps/samba/$(NAME)
-	cd $(NAME) && ./configure --disable-python --without-ad-dc --disable-cups --disable-iprint \
+	cd $(NAME) && ./configure --without-ad-dc --disable-cups --disable-iprint \
 		--without-systemd --without-json --without-libarchive --without-acl-support \
 		--with-system-mitkrb5 --with-ads --with-ldap --without-pam --bundled-libraries=ALL \
 		--with-static-modules=ALL --nonshared-binary=smbd/smbd --enable-fhs \
