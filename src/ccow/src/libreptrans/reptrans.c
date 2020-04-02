@@ -3965,7 +3965,7 @@ dev_rep_count_verify_one(space_reclaim_work_t *work, type_tag_t ttag,
 			ccow_daemon->maintenance_ts < get_timestamp_monotonic_us()) {
 			if (eRC > 1) {
 				int nfd = reptrans_get_row_fd_number(dev, ttag == TT_VERSION_MANIFEST ? nhid : chid);
-				if (nfd < 0 && nfd >= rep_count) {
+				if (nfd >= rep_count) {
 					return enqueue_replication(dev, ttag, hash_type, chid,
 						nhid, rep_count);
 				} else {
