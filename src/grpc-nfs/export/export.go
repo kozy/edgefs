@@ -90,9 +90,6 @@ func (s *ExportImpl) ExportAdd(ctx context.Context, msg *ExportRequest) (*Generi
 func getServiceValue(Service string, Key string) (string) {
 	str, err := efsutil.GetMDKey("", "svcs", Service, "", Key)
 	if err != nil {
-		if err.Error() == "Key not found" {
-			return ""
-		}
 		return ""
 	}
 	return str
