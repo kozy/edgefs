@@ -87,15 +87,15 @@ func (s *ExportImpl) ExportAdd(ctx context.Context, msg *ExportRequest) (*Generi
 	}
 }
 
-func getServiceValue(Service string, Key string) (string, error) {
+func getServiceValue(Service string, Key string) (string) {
 	str, err := efsutil.GetMDKey("", "svcs", Service, "", Key)
-	if err.Error() == "Key not found" {
-		return "", nil
-	}
 	if err != nil {
-		return "", err
+		if err.Error() == "Key not found" {
+			return ""
+		}
+		return ""
 	}
-	return str, nil
+	return str
 }
 
 func getAclBlock(Service string, Cluster string, Tenant string, Bucket string, export_config *string) error {
@@ -103,27 +103,18 @@ func getAclBlock(Service string, Cluster string, Tenant string, Bucket string, e
 	var exportOpts = "" // "RW=10.9.8.7 RO=*"
 
 	// Check not standard value for compat
-	acl, err := getServiceValue(Service, "X-NFS-ACL-"+Tenant+"/"+Bucket)
-	if err != nil {
-		return err
-	}
+	acl := getServiceValue(Service, "X-NFS-ACL-"+Tenant+"/"+Bucket)
 
 	exportOpts = acl
 
 	// default, high priority
-	acl, err = getServiceValue(Service, "X-NFS-ACL-"+Tenant+"-"+Bucket)
-	if err != nil {
-		return err
-	}
+	acl = getServiceValue(Service, "X-NFS-ACL-"+Tenant+"-"+Bucket)
 	if acl != "" {
 		exportOpts = acl
 	}
 
 	// Service value, override per export, highest priority
-	acl, err = getServiceValue(Service, "X-NFS-ACL")
-	if err != nil {
-		return err
-	}
+	acl = getServiceValue(Service, "X-NFS-ACL")
 	if acl != "" {
 		exportOpts = acl
 	}

@@ -55,15 +55,15 @@ func (s *ExportImpl) ExportAdd(ctx context.Context, msg *ExportRequest) (*Generi
 	}
 }
 
-func getServiceValue(Service string, Key string) (string, error) {
+func getServiceValue(Service string, Key string) (string) {
 	str, err := efsutil.GetMDKey("", "svcs", Service, "", Key)
-	if err.Error() == "Key not found" {
-		return "", nil
-	}
 	if err != nil {
-		return "", err
+		if err.Error() == "Key not found" {
+			return ""
+		}
+		return ""
 	}
-	return str, nil
+	return str
 }
 
 func getOptsBlock(Service string, Cluster string, Tenant string, Bucket string, export_config *string) error {
@@ -71,27 +71,18 @@ func getOptsBlock(Service string, Cluster string, Tenant string, Bucket string, 
 	var exportOpts = "" // "hosts allow = 192.168.3.;hosts deny = 10.244."
 
 	// Check not standard value for compat
-	opts, err := getServiceValue(Service, "X-SMB-OPTS-"+Tenant+"/"+Bucket)
-	if err != nil {
-		return err
-	}
+	opts := getServiceValue(Service, "X-SMB-OPTS-"+Tenant+"/"+Bucket)
 
 	exportOpts = opts
 
 	// default, high priority
-	opts, err = getServiceValue(Service, "X-SMB-OPTS-"+Tenant+"-"+Bucket)
-	if err != nil {
-		return err
-	}
+	opts = getServiceValue(Service, "X-SMB-OPTS-"+Tenant+"-"+Bucket)
 	if opts != "" {
 		exportOpts = opts
 	}
 
 	// Service value, override per export, highest priority
-	opts, err = getServiceValue(Service, "X-SMB-OPTS")
-	if err != nil {
-		return err
-	}
+	opts = getServiceValue(Service, "X-SMB-OPTS")
 	if opts != "" {
 		exportOpts = opts
 	}
@@ -100,7 +91,7 @@ func getOptsBlock(Service string, Cluster string, Tenant string, Bucket string, 
 		spcRe := regexp.MustCompile(`;`)
 		oList := spcRe.Split(exportOpts, -1)
 		for _, line := range oList {
-			conf += "\t" + line
+			conf += "\t" + line + "\n"
 		}
 	}
 
