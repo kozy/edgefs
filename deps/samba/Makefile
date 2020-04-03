@@ -44,7 +44,7 @@ all: install
 install: .build
 	cp -a $(NAME)/bin/default/source3/smbd/smbd $(SRCDIR)/sbin/
 	mkdir -p $(DESTDIR)$(SRCDIR)/etc/samba/exports
-	mkdir -p $(DESTDIR)$(SRCDIR)/var/run/samba
+	mkdir -p $(DESTDIR)$(SRCDIR)/var/run/samba/ncalrpc
 	touch $(DESTDIR)$(SRCDIR)/etc/samba/exportslist
 	cp smb.conf $(DESTDIR)$(SRCDIR)/etc/samba/smb.conf
 

@@ -376,6 +376,7 @@ case $1 in
                 shift
 		start_msg "smbd"
 		debug_wait "smbd"
+		mkdir -p $NEDGE_HOME/var/run/samba/ncalrpc
 		export CCOW_SVCTYPE="smb"
 		exec grpc-smb -s $CCOW_SVCNAME $1 $2 $3 $4 $5 $6 $7 $8 $9
                 ;;
