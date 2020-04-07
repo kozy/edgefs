@@ -943,6 +943,20 @@ ccow_fsio_ci_alloc()
 	return (ci);
 }
 
+void *
+ccow_fsio_mem_alloc(size_t size)
+{
+
+	return (je_malloc(size));
+}
+
+void
+ccow_fsio_mem_free(void *ptr)
+{
+
+	return (je_free(ptr));
+}
+
 void
 ccow_fsio_ci_free(ci_t * ci)
 {
