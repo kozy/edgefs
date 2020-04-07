@@ -147,6 +147,14 @@ ci_t *ccow_fsio_ci_alloc(void);
 /* Free ci structure. */
 void ccow_fsio_ci_free(ci_t *);
 
+/*
+ * Generic memory management interface.
+ * Used for clients that run with different allocator. So it can allocate memory
+ * that will be freed by ccowfsio and free that allocated by ccowfsio.
+ */
+void *ccow_fsio_mem_alloc(size_t size);
+void ccow_fsio_mem_free(void *ptr);
+
 /**
  * FSIO init
  * Must be called just after the lib is loaded
