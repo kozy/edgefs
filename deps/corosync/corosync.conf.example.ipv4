@@ -125,7 +125,7 @@ totem {
 	max_messages: 15
 
 	# Unicast discovery, ring0 node table required!
-	transport: knet
+	transport: udpu
 }
  
 # This directive controls how Corosync logs it's messages. All variables here
