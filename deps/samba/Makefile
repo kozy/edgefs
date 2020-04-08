@@ -47,6 +47,7 @@ install: .build
 	mkdir -p $(DESTDIR)$(SRCDIR)/var/run/samba/ncalrpc
 	touch $(DESTDIR)$(SRCDIR)/etc/samba/exportslist
 	cp smb.conf $(DESTDIR)$(SRCDIR)/etc/samba/smb.conf
+	$(shell echo /bin/echo -ne \"root\\nroot\\n\" \| ${NAME}/bin/default/source3/utils/smbpasswd -c ${DESTDIR}${SRCDIR}/etc/samba/smb.conf -s -a root)
 
 clean:
 	rm -rf .configure .build
