@@ -96,7 +96,7 @@
 [submodule "deps/knet/kronosnet"]
 	path = deps/knet/kronosnet
 	url = https://github.com/Nexenta/kronosnet.git
-	branch = v1.8-nexenta
+	branch = v1.15-nexenta
 	ignore = all
 [submodule "deps/kvssd/KVSSD"]
 	path = deps/kvssd/KVSSD

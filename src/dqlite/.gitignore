@@ -2,3 +2,4 @@ ccow-sql
 libdqclient/stress_test
 libdqclient/test_client
 libdqclient/test_geolock
+libdqclient/list_geolock
