@@ -62,8 +62,6 @@ usage(const char *argv0)
 		"\n"
 		"	-t	Specify tenant name\n"
 		"\n"
-		"	-V	Get verification progress\n"
-		"\n"
 		"	-s	Short output\n"
 		"\n"
 		"	-v	Verbose object(s) VM/NHID\n"
@@ -71,8 +69,6 @@ usage(const char *argv0)
 		"	-T	Server wait timeout, sec (0- disabled, default)\n"
 		"\n"
 		"	-x	eXtended info (valid only with -V)\n"
-		"\n"
-		"	-p	add Parity chunk info (valid only with -x)\n"
 		"\n"
 		"	-B	Start bucket verification. Object ID ins't required\n"
 		"\n"
@@ -423,6 +419,9 @@ object_stats_get(ccow_t tc, const char* bid, const char* oid, int flags,
 		je_free(vms);
 		return err;
 	}
+	// Single-part object could be large enough
+	// it can take a while to process it
+	int waitDelay = n_vms == 1 ? 90000 : 20000;
 	for (int i = 0; i < n_vms; i++) {
 		err = ccow_opp_satus_request(tc, &vms[i].vmchid, &vms[i].nhid, c,
 			flags, req_stat + cnt);
@@ -435,7 +434,7 @@ object_stats_get(ccow_t tc, const char* bid, const char* oid, int flags,
 		}
 		cnt++;
 		if ((cnt == PARALLEL_OPS_N) || (i == n_vms - 1)) {
-			err = ccow_timed_wait(c, -1, 10000);
+			err = ccow_timed_wait(c, -1, waitDelay);
 			ccow_drop(c);
 			if (err) {
 				if (verbose) {
@@ -936,9 +935,7 @@ main(int argc, char** argv) {
 	char* tid = NULL;
 	char* bid = NULL;
 	char* oid = NULL;
-	int verify = 0;
 	int ext = 0;
-	int p_info = 0;
 	char* lerr = 0;
 	int json = 0;
 	struct vminfo* vms = NULL;
@@ -948,15 +945,19 @@ main(int argc, char** argv) {
 	uint64_t size = 0;
 	uint32_t chunk_size = 0;
 	uint64_t gen = 0;
-	int batch = 0;
+	int batch = 0, devel = 0;
 	char* log_file = NULL;
 	struct ostat_arg oarg;
 
-	while ((opt = getopt(argc, argv, "ho:b:c:t:sVxpl:jvBL:T:")) != -1) {
+	while ((opt = getopt(argc, argv, "ho:b:c:t:xpl:jvBL:T:d")) != -1) {
 		switch(opt) {
 
 			case 'o':
 				oid = strdup(optarg);
+				break;
+
+			case 'd':
+				devel = 1;
 				break;
 
 			case 'b':
@@ -971,20 +972,12 @@ main(int argc, char** argv) {
 				tid = strdup(optarg);
 				break;
 
-			case 'V':
-				verify = 1;
-				break;
-
 			case 's':
 				o_short = 1;
 				break;
 
 			case 'x':
 				ext = 1;
-				break;
-
-			case 'p':
-				p_info = 1;
 				break;
 
 			case 'l':
@@ -1063,14 +1056,8 @@ main(int argc, char** argv) {
 		return -EINVAL;
 	}
 
-	oarg.flags = 0; /* EC-information only */
+	oarg.flags = OPP_STATUS_FLAG_ERC | OPP_STATUS_FLAG_VERIFY | OPP_STATUS_FLAG_CPAR;
 	oarg.ostat.n_cp = 0;
-	if (verify)
-		oarg.flags |= OPP_STATUS_FLAG_VERIFY;
-	if (ext)
-		oarg.flags |= OPP_STATUS_FLAG_ERC;
-	if (p_info)
-		oarg.flags |= OPP_STATUS_FLAG_CPAR;
 	if (lerr) {
 		if (strchr(lerr, 'L'))
 			oarg.flags |= OPP_STATUS_FLAG_LERR;
@@ -1078,6 +1065,8 @@ main(int argc, char** argv) {
 			oarg.flags |= OPP_STATUS_FLAG_LACKVBR;
 		if (strchr(lerr, 'O'))
 			oarg.flags |= OPP_STATUS_FLAG_MISSVBR;
+		if (strchr(lerr, 'E'))
+			oarg.flags |= OPP_STATUS_FLAG_EC;
 	}
 
 	if (batch) {
@@ -1134,6 +1123,9 @@ main(int argc, char** argv) {
 	size_t total_chunks = oarg.ostat.n_cp + oarg.ostat.n_cm_zl + oarg.ostat.n_cm_tl;
 	size_t total_verified = oarg.ostat.n_cp_verified + oarg.ostat.n_cm_zl_verified + oarg.ostat.n_cm_tl_verified;
 	size_t total_1vbr = oarg.ostat.n_cp_1vbr + oarg.ostat.n_cm_zl_1vbr + oarg.ostat.n_cm_tl_1vbr;
+	size_t total_erc = oarg.ostat.n_cm_tl_erc_err + oarg.ostat.n_cm_zl_erc_err + oarg.ostat.n_cp_erc_err;
+	size_t total_chunks_pp = total_chunks + oarg.ostat.n_cpar;
+	size_t total_lost_chunks = oarg.ostat.n_cm_tl_lost + oarg.ostat.n_cm_zl_lost + oarg.ostat.n_cp_lost + oarg.ostat.n_cpar_lost;
 	double vp = total_chunks ? (total_verified*100.0f/total_chunks) : 0.0f;
 	double vp1vbr = total_chunks ? (total_1vbr*100.0f/total_chunks) : 0.0f;
 
@@ -1149,32 +1141,41 @@ main(int argc, char** argv) {
 			printf("EC format:\t\t\t%d(D):%d(P):%d(A):%d(FD)\n",
 				oarg.ostat.pp_data_number, oarg.ostat.pp_parity_number,
 				oarg.ostat.pp_algo, oarg.ostat.pp_domain);
-		}
-		if (verify) {
-			printf("Verification progress:\t\t%.2f%% (%lu/%lu)\n",
-				vp, total_verified, total_chunks);
-			if (ext) {
-				printf("1VBR verify progress:\t\t%.2f%% (%lu/%lu)\n",
-					vp1vbr, total_1vbr, total_chunks);
-				uint64_t usage = vdev_usage_avg_get();
-				printf("VDEVs usage (%u):\t\t%.5f%%\t\n",
-					n_known_hosts, ((double)usage)/10000.0);
-				printf("    \tTotal\t\tVerified\tLost\tERC err\n");
-				printf("CM TL\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cm_tl,
-					oarg.ostat.n_cm_tl_verified, oarg.ostat.n_cm_tl_lost,
-					oarg.ostat.n_cm_tl_erc_err);
-				printf("CM ZL\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cm_zl,
-					oarg.ostat.n_cm_zl_verified, oarg.ostat.n_cm_zl_lost,
-					oarg.ostat.n_cm_zl_erc_err);
-				printf("CP  \t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cp,
-					oarg.ostat.n_cp_verified, oarg.ostat.n_cp_lost,
-					oarg.ostat.n_cp_erc_err);
-				if (p_info) {
-					printf("PARITY \t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cpar,
-						oarg.ostat.n_cpar_verified, oarg.ostat.n_cpar_lost);
-				}
+			if (oarg.ostat.n_cm_zl_pp == oarg.ostat.n_cm_zl) {
+				printf("EC space reclaim progress:\t%.2f%% (%lu/%lu)\n", 100.0*oarg.ostat.n_cp_1rep/oarg.ostat.n_cp, oarg.ostat.n_cp_1rep, oarg.ostat.n_cp);
+			} else {
+				printf("EC space reclaim progress:\t-\n");
 			}
 		}
+		printf("Tree verification progress:\t%.2f%% (%lu/%lu)\n",
+			vp1vbr, total_1vbr, total_chunks);
+		printf("Replication status:\t\t%.2f%% (%lu/%lu)\n", 100.0*(total_chunks - total_erc)/total_chunks,
+			total_chunks - total_erc, total_chunks);
+		printf("Integrity:\t\t\t%.2f%% (%lu/%lu)\n", 100.0*(total_chunks_pp - total_lost_chunks)/total_chunks_pp,
+			total_chunks_pp - total_lost_chunks, total_chunks_pp);
+		if (ext) {
+			printf("    \t\t\tTotal\t\tVerified\tConsistent\tLost\t\tERC err\n");
+			printf("Non-leaf manifests \t%lu\t\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cm_tl,
+				oarg.ostat.n_cm_tl_1vbr, oarg.ostat.n_cm_tl_verified, oarg.ostat.n_cm_tl_lost,
+				oarg.ostat.n_cm_tl_erc_err);
+			printf("Leaf manifests \t\t%lu\t\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cm_zl,
+				oarg.ostat.n_cm_zl_1vbr, oarg.ostat.n_cm_zl_verified, oarg.ostat.n_cm_zl_lost,
+				oarg.ostat.n_cm_zl_erc_err);
+			printf("Payloads  \t\t%lu\t\t%lu\t\t%lu\t\t%lu\t\t%lu\n", oarg.ostat.n_cp,
+				oarg.ostat.n_cp_1vbr, oarg.ostat.n_cp_verified, oarg.ostat.n_cp_lost,
+				oarg.ostat.n_cp_erc_err);
+			printf("Parity \t\t\t%lu\t\t%lu\t\t\t\t%lu\n", oarg.ostat.n_cpar,
+				oarg.ostat.n_cpar_verified, oarg.ostat.n_cpar_lost);
+		}
+		if (devel) {
+			printf("VBR vs REPL:\t\t%.2f%% (%lu/%lu)\n",
+				vp, total_verified, total_chunks);
+
+			uint64_t usage = vdev_usage_avg_get();
+			printf("VDEVs usage (%u):\t\t%.5f%%\t\n",
+				n_known_hosts, ((double)usage)/10000.0);
+		}
+
 	}
 	if (known_hosts)
 		je_free(known_hosts);
