@@ -886,6 +886,15 @@ opps_exec(void *arg) {
 				}
 				if (erc == 1)
 					req->res.n_cp_1rep++;
+			} else if (ppo) {
+				if (infos[i].n_vdevs == 1)
+					req->res.n_cp_1rep++;
+				else if (msg->flags & OPP_STATUS_FLAG_EC) {
+					uint512_dump(&infos[i].chid, chidstr,
+						UINT512_BYTES*2+1);
+					log_notice(lg, "ECREPL CP %s REPCOUNT %u",
+						chidstr, infos[i].n_vdevs);
+				}
 			}
 		}
 

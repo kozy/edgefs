@@ -41,6 +41,7 @@ extern "C" {
 #define OPP_STATUS_FLAG_LACKVBR			(1<<4) /* Log CHID if at least one replica doen't have a VBR*/
 #define OPP_STATUS_FLAG_MISSVBR			(1<<5) /* Log CHID if neither of replicas have a VBR*/
 #define OPP_STATUS_FLAG_NOPM			(1<<6) /* Log CHID of leaf manifest without PM*/
+#define OPP_STATUS_FLAG_EC			(1<<7) /* Log CHID of chunks that break EC consistency*/
 
 typedef struct opp_status {
 	int	status; /* Operation status. 0 - done, an error otherwise */
