@@ -87,7 +87,8 @@ func main() {
 	}
 
 	InitGrpc(ipnport, *serviceName)
-	InitGanesha(*serviceName)
+	InitADS()
+	InitSMBD(*serviceName)
 }
 
 // Server wraps the gRPC server
@@ -221,7 +222,21 @@ func InitGrpc(ipnport, svc string) {
 	}()
 }
 
-func InitGanesha(svc string) {
+func InitADS() {
+	if os.Getenv("EFSSMB_DOMAIN_NAME") == "" ||
+	   os.Getenv("EFSSMB_AD_USERNAME") == "" ||
+	   os.Getenv("EFSSMB_AD_PASSWORD") == "" ||
+	   os.Getenv("EFSSMB_WORKGROUP") == "" ||
+	   os.Getenv("EFSSMB_NETBIOS_NAME") == "" ||
+	   os.Getenv("EFSSMB_DC1") == "" {
+		log.Printf("Starting in WORKGROUP mode\n")
+		return
+	}
+	log.Printf("Starting in ADS mode\n")
+	InitCmd("ads-join.sh", []string{})
+}
+
+func InitSMBD(svc string) {
 	go func() {
 		efsutil.K8sServiceUp(svc)
 	}()

@@ -23,7 +23,7 @@ all: install
 	cd $(NAME) && ./configure --without-ad-dc --disable-cups --disable-iprint \
 		--without-systemd --without-json --without-libarchive --without-acl-support \
 		--with-system-mitkrb5 --with-ads --with-ldap --without-pam --bundled-libraries=ALL \
-		--with-static-modules=ALL --nonshared-binary=smbd/smbd --enable-fhs \
+		--with-static-modules=ALL --nonshared-binary=client/smbclient,smbd/smbd,smbtorture,net --enable-fhs \
 		--sysconfdir=$(SRCDIR)/etc \
 		--localstatedir=$(SRCDIR)/var \
 		--with-logfilebase=$(SRCDIR)/var/log \
@@ -42,7 +42,10 @@ all: install
 	touch $@
 
 install: .build
+	cp -a $(NAME)/bin/default/source3/client/smbclient $(SRCDIR)/sbin/
+	cp -a $(NAME)/bin/default/source3/utils/net $(SRCDIR)/sbin/
 	cp -a $(NAME)/bin/default/source3/smbd/smbd $(SRCDIR)/sbin/
+	cp -a ads-join.sh $(SRCDIR)/sbin/
 	mkdir -p $(DESTDIR)$(SRCDIR)/etc/samba/exports
 	mkdir -p $(DESTDIR)$(SRCDIR)/var/run/samba/ncalrpc
 	touch $(DESTDIR)$(SRCDIR)/etc/samba/exportslist
