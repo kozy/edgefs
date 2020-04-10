@@ -37,6 +37,7 @@ clean:
 
 install: $(TARGET)
 	mkdir -p $(DESTDIR)$(SRCDIR)/sbin 2> /dev/null || true
+	strip $(TARGET)
 	cp -a $(TARGET) $(DESTDIR)$(SRCDIR)/sbin
 
 all: install

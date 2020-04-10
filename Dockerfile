@@ -23,7 +23,7 @@ WORKDIR /opt/edgefs
 
 RUN /bin/bash -c "cd /opt/edgefs ; ls -la ; export NEDGE_HOME=/opt/nedge ; source /opt/edgefs/env.sh ; make clean ; make NEDGE_NDEBUG=1 NEDGE_VERSION=${NEDGE_VERSION} world"
 
-RUN rm -f /opt/nedge/lib/libh2o-evloop.a /opt/nedge/lib/libbacktrace.a
+RUN rm -f /opt/nedge/lib/*.a /opt/nedge/lib/*.la
 RUN cp -ar /opt/nedge/etc /opt/nedge/etc.default
 
 

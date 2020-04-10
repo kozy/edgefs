@@ -42,7 +42,9 @@ all: install
 	touch $@
 
 install: .build
+	strip $(NAME)/bin/default/source3/client/smbclient
 	cp -a $(NAME)/bin/default/source3/client/smbclient $(SRCDIR)/sbin/
+	strip $(NAME)/bin/default/source3/utils/net
 	cp -a $(NAME)/bin/default/source3/utils/net $(SRCDIR)/sbin/
 	cp -a $(NAME)/bin/default/source3/smbd/smbd $(SRCDIR)/sbin/
 	cp -a ads-join.sh $(SRCDIR)/sbin/
