@@ -34,7 +34,7 @@ LABEL description="EdgeFS Multi-Cloud Distributed Storage System"
 RUN apt-get update -y && \
     apt-get install libssl1.0.0 iputils-ping iproute2 libnss3 libsnmp30 udev \
         bsdmainutils libcgroup1 libcurl4 nvi curl gdisk bcache-tools parted \
-	openssl netbase rpcbind gdb libaio1 libnuma1 nvme-cli \
+	openssl netbase rpcbind gdb libaio1 libnuma1 nvme-cli krb5-user \
         -y --no-install-recommends && \
     \
     apt-get purge -y --auto-remove && \
