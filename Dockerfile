@@ -31,6 +31,8 @@ FROM ubuntu:18.04
 MAINTAINER EdgeFS
 LABEL description="EdgeFS Multi-Cloud Distributed Storage System"
 
+ENV DEBIAN_FRONTEND noninteractive
+
 RUN apt-get update -y && \
     apt-get install libssl1.0.0 iputils-ping iproute2 libnss3 libsnmp30 udev \
         bsdmainutils libcgroup1 libcurl4 nvi curl gdisk bcache-tools parted \
