@@ -23,7 +23,7 @@ all: install
 	cd $(NAME) && ./configure --without-ad-dc --disable-cups --disable-iprint \
 		--without-systemd --without-json --without-libarchive --without-acl-support \
 		--with-system-mitkrb5 --with-ads --with-ldap --without-pam --bundled-libraries=ALL \
-		--with-static-modules=ALL --nonshared-binary=client/smbclient,smbd/smbd,smbtorture,net --enable-fhs \
+		--with-static-modules=ALL --nonshared-binary=!smbstatus,ALL --enable-fhs \
 		--sysconfdir=$(SRCDIR)/etc \
 		--localstatedir=$(SRCDIR)/var \
 		--with-logfilebase=$(SRCDIR)/var/log \
@@ -38,10 +38,16 @@ all: install
 	touch $@
 
 .build: .configure
-	make -C $(NAME) -j
+	make -C $(NAME) -j smbd/smbd winbindd client/smbclient net smbpasswd ntlm_auth
 	touch $@
 
 install: .build
+	strip $(NAME)/bin/default/source3/utils/ntlm_auth
+	cp -a $(NAME)/bin/default/source3/utils/ntlm_auth $(SRCDIR)/sbin/
+	strip $(NAME)/bin/default/source3/utils/smbpasswd
+	cp -a $(NAME)/bin/default/source3/utils/smbpasswd $(SRCDIR)/sbin/
+	strip $(NAME)/bin/default/source3/winbindd/winbindd
+	cp -a $(NAME)/bin/default/source3/winbindd/winbindd $(SRCDIR)/sbin/
 	strip $(NAME)/bin/default/source3/client/smbclient
 	cp -a $(NAME)/bin/default/source3/client/smbclient $(SRCDIR)/sbin/
 	strip $(NAME)/bin/default/source3/utils/net

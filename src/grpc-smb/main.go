@@ -232,8 +232,13 @@ func InitADS() {
 		log.Printf("Starting in WORKGROUP mode\n")
 		return
 	}
+	dbg := "0"
+	if envDbg := os.Getenv("EFSSMB_DEBUG"); envDbg != "" {
+		dbg = envDbg
+	}
 	log.Printf("Starting in ADS mode\n")
 	InitCmd("ads-join.sh", []string{})
+	InitCmd("winbindd", []string{"-D", "-d " + dbg})
 }
 
 func InitSMBD(svc string) {
