@@ -1577,6 +1577,12 @@ int
 ccow_shard_context_set_inline_flag(ccow_shard_context_t shard_context, uint16_t flag);
 
 /**
+ * Get shard index by the key.
+ */
+int
+ccow_get_shard_index(ccow_shard_context_t shard_context, char *key, size_t key_size);
+
+/**
  * Create sharded list
  *
  * @param tctx the tenant cluster context
@@ -2505,6 +2511,14 @@ ccow_get_default_attribute(ccow_completion_t c, ccow_default_attr_t attr, void* 
  * @returns segment GUID
  */
 uint64_t ccow_get_segment_guid(ccow_t tc);
+
+/**
+ * Returns this server GUID
+ *
+ * @param tc - tenant context
+ * @returns server GUID
+ */
+uint64_t ccow_get_server_guid(ccow_t tc);
 
 /**
  * Set isgw bid

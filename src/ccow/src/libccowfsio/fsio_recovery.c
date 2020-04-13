@@ -395,7 +395,7 @@ __add_to_lost_and_found(ccowfs_inode *inode, char *name)
 		goto out_nolock;
 	}
 
-	ccowfs_inode_lock_shared(lf_inode);
+	ccowfs_inode_lock_shared(lf_inode, NULL, NULL);
 
 	if (INODE_IS_DISK_DIR(inode->ino))  {
 		/* check ".." */
@@ -431,7 +431,7 @@ __add_to_lost_and_found(ccowfs_inode *inode, char *name)
 	}
 
 out:
-	ccowfs_inode_unlock_shared(lf_inode);
+	ccowfs_inode_unlock_shared(lf_inode, NULL, NULL);
 
 	ccowfs_inode_put(lf_inode);
 
@@ -650,10 +650,10 @@ __recover_move(ccowfs_inode *inode, recovery_table_entry *entry)
 	}
 
 	if (dest_exists)
-		ccowfs_inode_lock_shared(dest_inode);
+		ccowfs_inode_lock_shared(dest_inode, NULL, NULL);
 
 	if (source_exists) {
-		ccowfs_inode_lock_shared(parent_inode);
+		ccowfs_inode_lock_shared(parent_inode, NULL, NULL);
 
 		err = ccow_fsio_dir_lookup(inode->ci, parent_inode,
 		    entry->name, &lookup);
@@ -687,7 +687,7 @@ __recover_move(ccowfs_inode *inode, recovery_table_entry *entry)
 
 		parent_link_update = 1;
 
-		ccowfs_inode_lock_shared(inode);
+		ccowfs_inode_lock_shared(inode, NULL, NULL);
 		child_locked = 1;
 
 		/* what is the status of the ".." */
@@ -773,11 +773,11 @@ cleanup:
 
 out:
 	if (child_locked)
-		ccowfs_inode_unlock_shared(inode);
+		ccowfs_inode_unlock_shared(inode, NULL, NULL);
 	if (parent_inode)
-		ccowfs_inode_unlock_shared(parent_inode);
+		ccowfs_inode_unlock_shared(parent_inode, NULL, NULL);
 	if (dest_inode)
-		ccowfs_inode_unlock_shared(dest_inode);
+		ccowfs_inode_unlock_shared(dest_inode, NULL, NULL);
 
 out_nolock:
 	if (parent_inode)
@@ -907,7 +907,7 @@ ccowfs_recovery_handler(ci_t *ci)
 					    "__decode_recovery_entry failed. "
 					    "key: %s, err: %d", kv->key, err);
 				} else {
-					/* 
+					/*
 					 * We only attempt recovery of orphan
 					 * after RECOVERY_HANDLER_THRESHHOLD
 					 * amount of time has elapsed

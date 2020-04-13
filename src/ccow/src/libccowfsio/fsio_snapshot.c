@@ -461,9 +461,9 @@ fsio_snapshot_list(ci_t * ci, char *path, uint64_t * snap_count,
 		goto out;
 	}
 
-	ccowfs_inode_lock_shared(inode);
+	ccowfs_inode_lock_shared(inode, NULL, NULL);
 	lookup_count = inode->snap_count;
-	ccowfs_inode_unlock_shared(inode);
+	ccowfs_inode_unlock_shared(inode, NULL, NULL);
 
 	ccow_t tc;
 	err = tc_pool_get_tc(ci->tc_pool_handle, ino, &tc);
@@ -666,4 +666,3 @@ out:
 
 	return err;
 }
-

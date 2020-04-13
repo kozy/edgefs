@@ -33,6 +33,9 @@
 #define MAX_PATH_LEN 1024
 /* Read MAX_READIR_ENTRIES_AT_A_TIME and call readdir callback. */
 #define MAX_READIR_ENTRIES_AT_A_TIME 64
+#define DQLITE_MAX_POOL_SIZE 1
+#define DQLITE_START_POOL_SIZE 1
+
 
 #include "fsio_debug.h"
 #include "fsio_inode.h"
@@ -76,9 +79,17 @@ struct fsio_super {
 	uint64_t objects_genid;
 
 	/* Geolock service references */
-	void	*glm_client;
+	void *glm_client[DQLITE_MAX_POOL_SIZE];
+	volatile int glm_use[DQLITE_MAX_POOL_SIZE];
 	void	*glm_ops;
 	unsigned int glm_enabled;
+	pthread_mutex_t glm_mutex;
+	volatile int glm_use_counter;
+	volatile int glm_pool_size;
+	volatile uint64_t glm_connect_time[DQLITE_MAX_POOL_SIZE];
+	char json_buf[4096];
+	uint64_t segid;
+	uint64_t serverid;
 
 	api_stats api_debug_stats[MAX_FSIO_API];
 

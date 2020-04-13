@@ -391,6 +391,11 @@ ccow_fsio_dir_fetch_attr(ccowfs_inode * inode)
 		goto out;
 	}
 
+	err = ccowfs_inode_global_dir_read(inode);
+	if (err) {
+		log_error(fsio_lg, "Failed to get global dir ino: %lu, err: %d", inode->ino, err);
+	}
+
 	ccow_t tc;
 	err = tc_pool_get_tc(inode->ci->tc_pool_handle, inode->ino, &tc);
 	if (err) {
@@ -416,8 +421,8 @@ ccow_fsio_dir_fetch_attr(ccowfs_inode * inode)
 	err = ccow_sharded_attributes_get(tc, inode->ci->bid,
 	    inode->ci->bid_size, inode->dir_list_context, &s, &n, &b);
 
-	log_debug(fsio_lg, "FETCH inode: %lu dir_size: %lu st_nlink: %lu",
-		inode->ino, inode->stat.st_size, inode->stat.st_nlink);
+	log_debug(fsio_lg, "FETCH inode: %lu dir_size: %lu st_nlink: %lu err: %d",
+		inode->ino, inode->stat.st_size, inode->stat.st_nlink, err);
 
 	if (!err) {
 		inode->stat.st_blksize = inode->ci->bk_attrs.chunk_size;
@@ -427,7 +432,7 @@ ccow_fsio_dir_fetch_attr(ccowfs_inode * inode)
 	}
 
 out:
-	log_debug(fsio_lg, "completed inode: %lu", inode->ino);
+	log_debug(fsio_lg, "completed inode: %lu, err: %d", inode->ino, err);
 	return err;
 }
 
@@ -467,6 +472,13 @@ ccow_fsio_dir_set_attr(ccowfs_inode * inode)
 	iov[1].iov_base = encoded_attrs;
 	iov[1].iov_len = encoded_attrs_len;
 
+	int err_global = ccowfs_inode_lock_global_shared(inode, inode->dir_list_context,
+		FSIO_DIR_ENCODED_ATTR);
+	if (err) {
+		log_error(fsio_lg, "Could not take global attribute lock ino: %lu err: %d",
+		    inode->ino, err_global);
+	}
+
 	/*
 	 * We insert the FSIO_DIR_ENCODED_ATTR key evertime we set attrs.
 	 * * Allow overwrite for this key
@@ -478,6 +490,11 @@ ccow_fsio_dir_set_attr(ccowfs_inode * inode)
 		log_error(fsio_lg, "%s ccow_sharded_list_put_v2 gave err: %d",
 		    __func__, err);
 		goto out;
+	}
+
+	if (!err_global) {
+		ccowfs_inode_unlock_global_shared(inode, inode->dir_list_context,
+			FSIO_DIR_ENCODED_ATTR);
 	}
 
 	/*
@@ -717,7 +734,7 @@ ccow_fsio_dir_add_entry(ci_t * ci, ccowfs_inode * parent_inode,
 		goto out_nolock;
 	}
 
-	ccowfs_inode_lock_shared(parent_inode);
+	ccowfs_inode_lock_shared(parent_inode, parent_inode->dir_list_context, name);
 	if (parent_inode->deleted) {
 		log_debug(fsio_lg, "Already deleted inode: %lu", parent_inode->ino);
 		err = ENOENT;
@@ -775,7 +792,7 @@ ccow_fsio_dir_add_entry(ci_t * ci, ccowfs_inode * parent_inode,
 	    FSIO_DIR_CTIME_FLAG, 0);
 
 out:
-	ccowfs_inode_unlock_shared(parent_inode);
+	ccowfs_inode_unlock_shared(parent_inode, parent_inode->dir_list_context, name);
 
 out_nolock:
 	if (encoded_attrs)
@@ -819,7 +836,7 @@ ccow_fsio_dir_remove_entry(ci_t * ci, ccowfs_inode * parent_inode,
 		goto out_nolock;
 	}
 
-	ccowfs_inode_lock_shared(parent_inode);
+	ccowfs_inode_lock_shared(parent_inode, parent_inode->dir_list_context, name);
 	if (parent_inode->deleted) {
 		log_debug(fsio_lg, "Already deleted inode: %lu", parent_inode->ino);
 		err = ENOENT;
@@ -852,7 +869,7 @@ ccow_fsio_dir_remove_entry(ci_t * ci, ccowfs_inode * parent_inode,
 		FSIO_DIR_MTIME_FLAG | FSIO_DIR_CTIME_FLAG, 0);
 
 out:
-	ccowfs_inode_unlock_shared(parent_inode);
+	ccowfs_inode_unlock_shared(parent_inode, parent_inode->dir_list_context, name);
 
 out_nolock:
 	if (err) {
@@ -891,7 +908,8 @@ ccow_fsio_dir_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 		goto out;
 	}
 
-	ccowfs_inode_lock_shared(parent_inode);
+	ccowfs_inode_lock_shared(parent_inode, NULL, NULL);
+	ccowfs_inode_global_dir_read_share(parent_inode, parent_inode->dir_list_context, name);
 	if (parent_inode->deleted) {
 		log_debug(fsio_lg, "Already deleted inode: %lu", parent_inode->ino);
 		err = ENOENT;
@@ -940,7 +958,7 @@ ccow_fsio_dir_lookup(ci_t * ci, ccowfs_inode * parent_inode, char *name,
 		err = ENOENT;
 
 out:
-	ccowfs_inode_unlock_shared(parent_inode);
+	ccowfs_inode_unlock_shared(parent_inode, NULL, NULL);
 	if (iov->iov_base)
 		je_free(iov->iov_base);
 
@@ -957,7 +975,7 @@ out:
 
 	log_debug(fsio_lg,
 	    "completed bucket: %s, parent_inode: %lu, name: %s, "
-	    "out_ino: %lu", ci->bid, parent_inode->ino, name, *out_ino);
+	    "out_ino: %lu, err: %d", ci->bid, parent_inode->ino, name, *out_ino, err);
 	return err;
 }
 
@@ -971,7 +989,7 @@ __update_parent(ccowfs_inode * child_inode, ccowfs_inode * oldparent_inode,
 	    "newparent_inode %lu", child_inode->ino, oldparent_inode->ino,
 	    newparent_inode->ino);
 
-	ccowfs_inode_lock_shared(child_inode);
+	ccowfs_inode_lock_shared(child_inode, NULL, NULL);
 
 	err = ccow_fsio_dir_remove_entry(child_inode->ci, child_inode, "..", 0);
 	if (err) {
@@ -988,7 +1006,7 @@ __update_parent(ccowfs_inode * child_inode, ccowfs_inode * oldparent_inode,
 		goto out;
 	}
 out:
-	ccowfs_inode_unlock_shared(child_inode);
+	ccowfs_inode_unlock_shared(child_inode, NULL, NULL);
 	if (err) {
 		/*
 		 * Possible FS inconsistency
@@ -1019,8 +1037,8 @@ ccow_fsio_dir_move(ci_t * ci, ccowfs_inode * oldparent_inode, char *oldname,
 	    "Move: Bucket: %s dir: %lu name: %s to dir: %lu name: %s", ci->bid,
 	    oldparent_inode->ino, oldname, newparent_inode->ino, newname);
 
-	ccowfs_inode_lock_shared(oldparent_inode);
-	ccowfs_inode_lock_shared(newparent_inode);
+	ccowfs_inode_lock_shared(oldparent_inode, NULL, NULL);
+	ccowfs_inode_lock_shared(newparent_inode, NULL, NULL);
 
 	err = ccow_fsio_dir_lookup(ci, oldparent_inode, oldname, &child_ino);
 	if (err) {
@@ -1182,8 +1200,8 @@ out:
 	if (child_inode)
 		ccowfs_inode_put(child_inode);
 
-	ccowfs_inode_unlock_shared(oldparent_inode);
-	ccowfs_inode_unlock_shared(newparent_inode);
+	ccowfs_inode_unlock_shared(oldparent_inode, NULL, NULL);
+	ccowfs_inode_unlock_shared(newparent_inode, NULL, NULL);
 
 	log_debug(fsio_lg,
 	    "Completed Move: Bucket: %s dir: %lu name: %s to dir: %lu name: %s done "
@@ -1246,7 +1264,7 @@ ccow_fsio_dir_readdir_cb4(ci_t * ci, inode_t parent_ino, char *start,
 		goto out;
 	}
 
-	ccowfs_inode_lock_shared(parent_inode);
+	ccowfs_inode_global_dir_read(parent_inode);
 
 	while (err == 0 && !eof) {
 		int read_count = 0;
@@ -1362,16 +1380,17 @@ ccow_fsio_dir_readdir_cb4(ci_t * ci, inode_t parent_ino, char *start,
 		}
 	}
 
+	log_debug(fsio_lg, "List exit err: %d, eof: %d", err, eof);
 	if (!err)
 		*eofptr = (bool)eof;
 
 out:
+	log_debug(fsio_lg, "List out err: %d, eof: %d", err, eof);
 	if (dir_entry)
 		je_free(dir_entry);
 
 	if (parent_inode) {
 		__set_times(parent_inode, FSIO_DIR_ATIME_FLAG, 0);
-		ccowfs_inode_unlock_shared(parent_inode);
 		ccowfs_inode_put(parent_inode);
 	}
 
@@ -1425,8 +1444,8 @@ ccow_fsio_dir_find(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int re
 	inode_t child_ino;
 	struct iovec iov[1] = { 0 };
 
-	log_trace(fsio_lg, "dir_find look in cluster bucket: %s, parent_inode: %lu",
-	    ci->bid, parent_ino);
+	log_trace(fsio_lg, "dir_find ino: %lu look in cluster bucket: %s, parent_inode: %lu",
+	    ino, ci->bid, parent_ino);
 
 	err = ccowfs_inode_get_by_ino(ci, parent_ino, &parent_inode);
 	if (err) {
@@ -1450,7 +1469,7 @@ ccow_fsio_dir_find(ci_t * ci, inode_t parent_ino, inode_t ino, char *res, int re
 		goto out;
 	}
 
-	ccowfs_inode_lock_shared(parent_inode);
+	ccowfs_inode_lock_dir_read(parent_inode);
 
 	while (err == 0 && !eof) {
 		int read_count = 0;
@@ -1543,7 +1562,7 @@ out:
 
 	if (parent_inode) {
 		__set_times(parent_inode, FSIO_DIR_ATIME_FLAG, 0);
-		ccowfs_inode_unlock_shared(parent_inode);
+		ccowfs_inode_unlock_dir_read(parent_inode);
 		ccowfs_inode_put(parent_inode);
 	}
 

@@ -3,13 +3,16 @@
 
 #include "dqlite/client.h"
 
+#define ADDRESS_MAX_LEN 32
+#define CONNECTION_TIMEOUT 600
+
 /* Wrapper around a real dq client */
 struct cdq_client
 {
 	struct	client cl;	/* dqclient */
 	int	net_fd;		/* fd for connection to server */
 				/* server IPv4Addr:port */
-	char	srv_ipaddr[INET_ADDRSTRLEN + 6 + 1];
+	char	srv_ipaddr[ADDRESS_MAX_LEN];
 	int	srv_id;		/* ID of the server */
 };
 
@@ -22,6 +25,7 @@ int cdq_exec_stmt(struct cdq_client *client, unsigned stmt_id,
 		unsigned *last_insert_id, unsigned *rows_affected);
 int cdq_query_stmt(struct cdq_client *client, unsigned stmt_id,
 		struct rows *rows);
+int cdq_query_stmt_more(struct cdq_client *client, struct rows *rows);
 void cdq_rows_close(struct rows *rows);
 int cdq_get_cluster_nodes(uint64_t id, char *addr);
 int cdq_is_leader(uint64_t id, char *addr);

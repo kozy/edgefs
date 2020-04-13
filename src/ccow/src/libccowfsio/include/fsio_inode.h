@@ -369,14 +369,43 @@ int ccowfs_inode_unlock(ccowfs_inode * inode);
 
 /** ccowfs_inode_lock_shared:
  *        Take read lock on the inode.
+ *  Ignore global lock if shard_context is NULL
  */
-int ccowfs_inode_lock_shared(ccowfs_inode * inode);
+int ccowfs_inode_lock_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name);
+int ccowfs_inode_lock_global_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name);
 
+/**
+ *        Read global dir shares defined by inode.
+ */
+int ccowfs_inode_global_dir_read(ccowfs_inode * inode);
+
+/**
+ *        Read and lock global dir shares defined by inode.
+ */
+int ccowfs_inode_lock_dir_read(ccowfs_inode * inode);
+
+/**
+ *        Release read lock on the directory.
+ */
+int ccowfs_inode_unlock_dir_read(ccowfs_inode * inode);
+
+/**
+ *        Read global dir share defined by inode and name.
+ */
+int ccowfs_inode_global_dir_read_share(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name);
 
 /** ccowfs_inode_unlock_shared:
  *        Release the read lock.
+ * Ignore global lock if shard_context is NULL
  */
-int ccowfs_inode_unlock_shared(ccowfs_inode * inode);
+int ccowfs_inode_unlock_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name);
+int ccowfs_inode_unlock_global_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name);
+
 
 /** ccowfs_inode_get_attr_locked
  *    Get stats from the inode.

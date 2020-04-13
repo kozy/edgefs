@@ -47,7 +47,11 @@
 /* Extern functions */
 extern int ccow_fsio_glm_init(char *service_name, char *ccow_config_file,
 		ci_t *ci);
+extern int ccow_fsio_glm_nodes_init(char *nodes, ci_t *ci);
+extern void ccow_fsio_glm_clean(ci_t *ci);
 extern void ccow_fsio_glm_term(ci_t *ci);
+
+#define GEOLOCK_WAIT 300
 
 /* [TBD] At presetn adding and removing to the export list is not guarded by
  * any lock.
@@ -647,7 +651,7 @@ __create_root_obj(ci_t * ci)
 	inode_t lookup = 0;
 	int err, create = 0;
 
-	log_trace(fsio_lg, "ci: %p", ci);
+	log_trace(fsio_lg, "ci: %p glm: %d", ci, ci->glm_enabled);
 	/*
 	 * Check if object with name ROOT_INODE_STR is present.
 	 * Create it if not present.
@@ -1200,12 +1204,18 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	int64_t dummy;
 	ccow_t tc;
 	char *glm_service;
+	char *glm_nodes;
 	int err = 0, nonfatal_err = 0, locked = 0;
 
 	log_trace(fsio_lg, "ci: %p, uri: \"%s\", "
 	    "ccow_config: \"%s\", chunk_size: %d, up_cb: %p, up_cb_args: %p",
 	    ci, uri, ccow_config, chunk_size, up_cb, up_cb_args);
 	assert(ci != NULL);
+
+	char *pglobal = strstr(uri, ",global");
+	if (pglobal != NULL) {
+		*pglobal = 0;
+	}
 
 	/*
 	 * Logger_init (called from Logger_create) fetch
@@ -1232,10 +1242,28 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	ci->up_cb_args = up_cb_args;
 
 	glm_service = getenv("CCOW_GEOLOCK_SERVICE");
-	if (glm_service != NULL) {
+	if (glm_service != NULL && strlen(glm_service) > 0) {
 		err = ccow_fsio_glm_init(glm_service, ccow_config, ci);
 		if (err)
 			goto out;
+	}
+
+	glm_nodes = getenv("CCOW_GEOLOCK_NODES");
+	if (glm_nodes != NULL && strlen(glm_nodes) > 0 && pglobal) {
+		log_info(fsio_lg, "Geolock init nodes: %s", glm_nodes);
+		int wait = 0;
+		while (wait < GEOLOCK_WAIT) {
+			err = ccow_fsio_glm_nodes_init(glm_nodes, ci);
+			if (!err)
+				break;
+			log_error(fsio_lg, "Geolock init error: %d, retry", err);
+			sleep(10);
+			wait += 10;
+		}
+		if (err) {
+			log_error(fsio_lg, "Geolock init failed error: %d", err);
+			goto out;
+		}
 	}
 
 	tc_pool_find_handle(ci->cid, ci->tid, &ci->tc_pool_handle);
@@ -1275,6 +1303,14 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	if (err) {
 		log_error(fsio_lg, "Failed to get TC. err: %d", err);
 		goto out;
+	}
+	ci->segid =	ccow_get_segment_guid(tc);
+	ci->serverid =	ccow_get_server_guid(tc);
+	log_info(fsio_lg, "Segment id: %lX", ci->segid);
+	log_info(fsio_lg, "Server id: %lX", ci->serverid);
+	if (ci->glm_enabled) {
+		log_info(fsio_lg, "Clean stale glm locks");
+		ccow_fsio_glm_clean(ci);
 	}
 
 	int old_stat_loaded = (get_old_stat_object(tc, ci) == 0);
@@ -1354,7 +1390,12 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 	}
 	assert(ci->inode_cache.init_done == 1);
 
-	err = fsio_list_cache_create(&ci->fsio_list_cache);
+	// disable list cache for glm
+	if (ci->glm_enabled) {
+		err = fsio_list_cache_create(&ci->fsio_list_cache, FSIO_LIST_CACHE_GLOBAL_TTL);
+	} else {
+		err = fsio_list_cache_create(&ci->fsio_list_cache, FSIO_LIST_CACHE_TTL);
+	}
 	if (err) {
 		log_error(fsio_lg, "Cannot initialize fsio_list_cache");
 		goto out;
@@ -1416,10 +1457,6 @@ ccow_fsio_create_export(ci_t * ci, char *uri, char *ccow_config,
 out:
 	assert(err || ci->inode_cache.inode_table);
 
-	if (ci->glm_enabled) {
-		ccow_fsio_glm_term(ci);
-	}
-
 	if (locked) {
 		err = ccow_range_lock(tc, ci->bid, ci->bid_size, "", 1, 0, 1, CCOW_LOCK_UNLOCK);
 		if (err) {
@@ -1427,9 +1464,9 @@ out:
 		}
 	}
 
-	log_debug(fsio_lg, "completed ci: %p, uri: \"%s\", "
+	log_debug(fsio_lg, "completed ci: %p, glm: %d, uri: \"%s\", "
 	    "ccow_config: \"%s\", chunk_size: %d, up_cb: %p, up_cb_args: %p",
-	    ci, uri, ccow_config, chunk_size, up_cb, up_cb_args);
+	    ci, ci->glm_enabled, uri, ccow_config, chunk_size, up_cb, up_cb_args);
 	return err;
 }
 
@@ -1456,6 +1493,10 @@ ccow_fsio_delete_export(ci_t * ci)
 	fsio_namespace_term(ci);
 	ccow_shard_context_destroy(&ci->stats_list_context);
 	ccow_shard_context_destroy(&ci->recovery_context);
+
+	if (ci->glm_enabled) {
+		ccow_fsio_glm_term(ci);
+	}
 
 	/*
 	 * Remove the ci from the export list.

@@ -23,7 +23,22 @@
  */
 
 #ifndef __GLMOPS_H_
-#define __GLMOPs_H_
+#define __GLMOPS_H_
+
+/* Global locking structure */
+typedef struct geo_lock {
+	char		path[2048];
+	uint64_t	genid;
+	uint64_t	uvid;
+	uint32_t	deleted;
+	char		nhid[512];
+	char		vmchid[512];
+	uint64_t	segid;
+	uint64_t	serverid;
+	uint64_t	size;
+	int64_t		lock_time;
+	int		lock_state;
+} geo_lock_t;
 
 struct dqlite_glm_ops {
 	int (*connect) (char *json_cluster, void **client);
@@ -33,6 +48,10 @@ struct dqlite_glm_ops {
 			uint64_t genid, uint32_t deleted, unsigned int *cached);
 	int (*unlock) (void *client, pthread_mutex_t *mutex, char *ino_str,
 			uint64_t genid, unsigned int *cached);
+	int (*acquire) (void *cl, geo_lock_t *lock_rec);
+	int (*release) (void *cl, geo_lock_t *lock_rec);
+	int (*clean) (void *cl, geo_lock_t *lock_rec);
+	int (*get) (void *cl, const char *path_key, geo_lock_t *lock_rec);
 };
 
-#endif /* __GLMOPs_H_ */
+#endif /* __GLMOPS_H_ */

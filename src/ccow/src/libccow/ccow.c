@@ -4850,6 +4850,11 @@ ccow_get_segment_guid(ccow_t tc)
 	return tc->this_guid.l;
 }
 
+uint64_t
+ccow_get_server_guid(ccow_t tc)
+{
+	return tc->this_guid.u;
+}
 
 
 void
