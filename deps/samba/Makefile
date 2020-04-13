@@ -42,14 +42,16 @@ all: install
 	touch $@
 
 install: .build
-	strip $(NAME)/bin/default/source3/utils/ntlm_auth
-	cp -a $(NAME)/bin/default/source3/utils/ntlm_auth $(SRCDIR)/sbin/
+	strip $(NAME)/bin/default/nsswitch/libnss_winbind.so
+	cp -a $(NAME)/bin/default/nsswitch/libnss_winbind.so* $(SRCDIR)/lib/
+	strip $(NAME)/bin/default/nsswitch/libwinbind-client-samba4.so
+	cp -a $(NAME)/bin/default/nsswitch/libwinbind-client-samba4.so $(SRCDIR)/lib/
+	strip $(NAME)/bin/default/lib/replace/libreplace-samba4.so
+	cp -a $(NAME)/bin/default/lib/replace/libreplace-samba4.so $(SRCDIR)/lib/
 	strip $(NAME)/bin/default/source3/utils/smbpasswd
 	cp -a $(NAME)/bin/default/source3/utils/smbpasswd $(SRCDIR)/sbin/
 	strip $(NAME)/bin/default/source3/winbindd/winbindd
 	cp -a $(NAME)/bin/default/source3/winbindd/winbindd $(SRCDIR)/sbin/
-	strip $(NAME)/bin/default/source3/client/smbclient
-	cp -a $(NAME)/bin/default/source3/client/smbclient $(SRCDIR)/sbin/
 	strip $(NAME)/bin/default/source3/utils/net
 	cp -a $(NAME)/bin/default/source3/utils/net $(SRCDIR)/sbin/
 	cp -a $(NAME)/bin/default/source3/smbd/smbd $(SRCDIR)/sbin/
