@@ -63,6 +63,36 @@ ini_val $SMBCONF "global.workgroup" "$WORKGROUP"
 ini_val $SMBCONF "global.netbios name" "$NETBIOS_NAME"
 ini_val $SMBCONF "global.realm" "$REALM"
 ini_val $SMBCONF "global.password server" "$PASSWORD_SERVER"
+ini_val $SMBCONF "global.winbind nss info" "rfc2307"
+ini_val $SMBCONF "global.winbind refresh tickets" "yes"
+ini_val $SMBCONF "global.winbind enum users" "yes"
+ini_val $SMBCONF "global.winbind enum groups" "yes"
+ini_val $SMBCONF "global.winbind use default domain" "yes"
+ini_val $SMBCONF "global.idmap config $WORKGROUP : schema mode" "rfc2307"
+ini_val $SMBCONF "global.idmap config $WORKGROUP : range" "3000000-3999999"
+ini_val $SMBCONF "global.idmap config $WORKGROUP : backend" "ad"
+ini_val $SMBCONF "global.idmap config $WORKGROUP : unix_primary_group" "yes"
+ini_val $SMBCONF "global.idmap config $WORKGROUP : unix_nss_info" "yes"
+ini_val $SMBCONF "global.idmap config * : range" "1000000-1999999"
+ini_val $SMBCONF "global.idmap config * : backend" "tdb"
+ini_val $SMBCONF "global.dedicated keytab file" "/etc/krb5.keytab"
+ini_val $SMBCONF "global.kerberos method" "secrets and keytab"
+ini_val $SMBCONF "global.username map" "${NEDGE_HOME}/etc/samba/user.map"
+
+cat << EOF > ${NEDGE_HOME}/etc/samba/user.map
+!root = SAMBADOM\Administrator SAMBADOM\administrator
+EOF
+
+rm -f ${NEDGE_HOME}/etc/samba/*.tdb
+
+echo "Setting up /etc/nsswitch.conf"
+
+if [[ ! `grep "winbind" /etc/nsswitch.conf` ]]; then
+	sed -i "s#^\(passwd\:\s*compat\)\$#\1 winbind#" /etc/nsswitch.conf
+	sed -i "s#^\(group\:\s*compat\)\$#\1 winbind#" /etc/nsswitch.conf
+	sed -i "s#^\(shadow\:\s*compat\)\$#\1 winbind#" /etc/nsswitch.conf
+fi
+pam-auth-update
 
 echo "Setting up Kerberos realm: \"${DOMAIN_NAME^^}\""
 
@@ -79,6 +109,8 @@ cat > /etc/krb5.conf << EOL
     default_realm = ${DOMAIN_NAME^^}
     dns_lookup_realm = false
     dns_lookup_kdc = false
+    forwardable = true
+    proxiable = true
 [realms]
     ${DOMAIN_NAME^^} = {
         kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
