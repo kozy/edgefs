@@ -38,7 +38,7 @@ all: install
 	touch $@
 
 .build: .configure
-	make -C $(NAME) -j smbd/smbd winbindd client/smbclient net smbpasswd ntlm_auth
+	make -C $(NAME) -j smbd/smbd winbindd client/smbclient net smbpasswd ntlm_auth nss_winbind
 	touch $@
 
 install: .build
