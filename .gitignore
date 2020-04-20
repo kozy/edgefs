@@ -64,6 +64,7 @@ dkms.conf
 
 # In case if home build dir is set to the source tree
 .local
+.lock
 bin/
 include/
 lib/

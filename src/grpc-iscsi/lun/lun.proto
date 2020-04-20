@@ -1,5 +1,7 @@
 syntax = "proto3";
 
+option go_package = ".;lun";
+
 package lun;
 
 message GenericResponse {

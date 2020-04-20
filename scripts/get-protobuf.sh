@@ -11,7 +11,7 @@ get_latest_release() {
 
 LATEST_VERSION=$(get_latest_release ${PROTOC_REPO})
 echo "Latest version is:  ${LATEST_VERSION}"
-_VERSION=3.6.1
+_VERSION=3.11.4
 
 # grab the latest version
 curl -OL https://github.com/${PROTOC_REPO}/releases/download/v${_VERSION}/protoc-${_VERSION}-linux-x86_64.zip
