@@ -7,9 +7,10 @@ DOMAIN_NAME=${EFSSMB_DOMAIN_NAME:-corp.example.com}
 WORKGROUP=${EFSSMB_WORKGROUP:-CORP}
 NETBIOS_NAME=${EFSSMB_NETBIOS_NAME:-EDGEFS}
 DC1=${EFSSMB_DC1:-LOCALDC.${DOMAIN_NAME}}
+DEBUG=${EFSSMB_DEBUG:-0}
 
 # calculated vars
-ADMIN_SERVER=${ADMIN_SERVER:-${DOMAIN_NAME,,}}
+ADMIN_SERVER=${ADMIN_SERVER:-${DC1,,}}
 REALM=${REALM:-${DOMAIN_NAME^^}}
 PASSWORD_SERVER=${PASSWORD_SERVER:-${ADMIN_SERVER,,}}
 SMBCONF=${SMBCONF:-${NEDGE_HOME}/etc/samba/smb.conf}
@@ -80,7 +81,7 @@ ini_val $SMBCONF "global.kerberos method" "secrets and keytab"
 ini_val $SMBCONF "global.username map" "${NEDGE_HOME}/etc/samba/user.map"
 
 cat << EOF > ${NEDGE_HOME}/etc/samba/user.map
-!root = SAMBADOM\Administrator SAMBADOM\administrator
+!root = $WORKGROUP\Administrator $WORKGROUP\administrator
 EOF
 
 rm -f ${NEDGE_HOME}/etc/samba/*.tdb
@@ -108,7 +109,7 @@ cat > /etc/krb5.conf << EOL
 [libdefaults]
     default_realm = ${DOMAIN_NAME^^}
     dns_lookup_realm = false
-    dns_lookup_kdc = false
+    dns_lookup_kdc = true
     forwardable = true
     proxiable = true
 [realms]
@@ -139,4 +140,4 @@ echo $AD_PASSWORD | kinit -V $AD_USERNAME@$REALM
 
 echo "Registering $NETBIOS_NAME to Active Directory: User $AD_USERNAME, DC1 $DC1"
 
-net ads join -U"$AD_USERNAME"%"$AD_PASSWORD" -S $DC1
+net ads join -U"$AD_USERNAME"%"$AD_PASSWORD" -S $DC1 -d $DEBUG
