@@ -60,76 +60,53 @@ _is_service_valid(ccow_t tc, char *service_name)
 	return found;
 }
 
-static int
-_fillup_json_buf(char *json_buf, int ips, char *initial_ip)
+static void
+_add_node_to_json_buf(char *json_buf, char *id, char *ip_port)
 {
-	char ipaddr[INET_ADDRSTRLEN + 6 + 1], *ptr;
-	int port, i;
-
-	if (json_buf == NULL || initial_ip == NULL)
-		return -EINVAL;
-
-	strncpy(ipaddr, initial_ip, INET_ADDRSTRLEN + 6);
-	ptr = strchr(ipaddr, ':');
-	if (ptr == NULL)
-		return -EINVAL;
-
-	port = atoi(ptr + 1);
-	*ptr = '\0';
-
-	sprintf(json_buf, "{\n\t\"nodes\": [\n");
-	for (i = 0; i < ips; i++) {
-		sprintf(json_buf, "%s\t\t{\n\t\t\t\"id\": "
-				"%d,\n", json_buf, i + 1);
-		sprintf(json_buf, "%s\t\t\t\"ipaddr_port\": \"%s:%d\"\n",
-				json_buf, ipaddr, port + i);
-		if (i == ips - 1)
-			sprintf(json_buf, "%s\t\t}\n", json_buf);
-		else
-			sprintf(json_buf, "%s\t\t},\n", json_buf);
-	}
-	sprintf(json_buf, "%s\t]\n}", json_buf);
-	return 0;
+	sprintf(json_buf, "%s\t\t{\n\t\t\t\"id\": "
+			"%s,\n", json_buf, id);
+	sprintf(json_buf, "%s\t\t\t\"ipaddr_port\": \"%s\"\n",
+			json_buf, ip_port);
+	sprintf(json_buf, "%s\t\t},\n", json_buf);
 }
 
 static int
 _get_glm_cluster_ips(ccow_lookup_t iter, char *json_buf)
 {
-	int err, pos = 0;
+	int err = 0, pos = 0;
 	struct ccow_metadata_kv *kv = NULL;
-	char *attr = NULL;
+	char attr[512] = "", *tmp;
 
 	if (json_buf == NULL)
 		return -EINVAL;
 
+	sprintf(json_buf, "{\n\t\"nodes\": [\n");
 	while ((kv = ccow_lookup_iter(iter, CCOW_MDTYPE_NAME_INDEX, pos++))) {
 		if (kv->type == CCOW_KVTYPE_RAW && kv->key) {
-			attr = strndup(kv->key, kv->key_size + 1);
-		}
-	}
-	if (attr) {
-		char *inst, *addr;
-		int instances = 0;
+			strncpy(attr, kv->key, kv->key_size);
+			if (attr[0] != 0) {
+				char *id, *addr, *bpath;
 
-		inst = strchr(attr, ',');
-		if (inst) {
-			addr = inst + 1;
-			*inst = '\0';
+				id = &attr[0];
+				tmp = strchr(attr, ',');
+				bpath = tmp + 1;
+				*tmp = '\0';
 
-			addr = strchr(addr, '@');
-			if (addr == NULL) {
-				return -EINVAL;
+				tmp = strchr(bpath, '@');
+				addr = tmp + 1;
+				*tmp = '\0';
+
+				_add_node_to_json_buf(json_buf, id, addr);
+			} else {
+				err = -EINVAL;
 			}
-			addr++;
-			instances = atoi(attr);
-
-			err = _fillup_json_buf(json_buf, instances, addr);
-
 		}
-		free(attr);
-	} else {
-		return -EINVAL;
+		attr[0] = '\0';
 	}
+	sprintf(json_buf, "%s\t]\n}", json_buf);
+	/* Remove ',' after the last item */
+	tmp = strrchr(json_buf, ',');
+	*tmp = ' ';
 	return err;
 }
 

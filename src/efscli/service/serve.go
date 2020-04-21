@@ -58,14 +58,25 @@ func ServiceServeDSQL(sname string, bpath string, opts string) error {
 	var tenant string = s[1]
 	var bucket string = s[2]
 
-	keys, err := efsutil.GetKeys("", "svcs", sname, "", 1000)
+	keys, err := efsutil.GetKeys("", "svcs", sname, "", 100)
 	if err != nil {
 		return err
 	}
 
 	for _, key := range keys {
-		if strings.Compare(key, bpath) == 0 {
-			return fmt.Errorf("Already serving: %s", key)
+		node := strings.Split(key, ",")
+		path := strings.Split(node[1], "@")
+		o := strings.Split(opts, ",")
+
+		serve_path := fmt.Sprintf("%s,%s@%s", o[0], bpath, o[1])
+		if strings.Compare(key, serve_path) == 0 {
+			return fmt.Errorf("This service is alerady serving : %s", serve_path)
+		}
+		if strings.Compare(path[0], bpath) != 0 {
+			return fmt.Errorf("This service is serving other path: %s", path[0])
+		}
+		if strings.Compare(node[0], o[0]) == 0 {
+			return fmt.Errorf("This node id (%s) is used by another node", o[0])
 		}
 	}
 
@@ -110,7 +121,6 @@ func ServiceServeDSQL(sname string, bpath string, opts string) error {
 	}
 
 	o := strings.Split(opts, ",")
-	fmt.Println(o)
 	dataDir := fmt.Sprintf("%s,%s@%s", o[0], bpath, o[1])
 	fmt.Printf("Serving new databases %s\n", dataDir)
 
@@ -122,11 +132,12 @@ func ServiceServeDSQL(sname string, bpath string, opts string) error {
 		return fmt.Errorf("%s: ccow_create_completion err=%d", efsutil.GetFUNC(), ret)
 	}
 
-	var iov_name C.struct_iovec
-	iov_name.iov_base = unsafe.Pointer(c_datadir)
-	iov_name.iov_len = C.strlen(c_datadir) + 1
+	var iov_key C.struct_iovec
+	iov_key.iov_base = unsafe.Pointer(c_datadir)
+	iov_key.iov_len = C.strlen(c_datadir) + 1
+
 	ret = C.ccow_insert_list(c_service, C.strlen(c_service)+1, cl, 1,
-				comp, &iov_name, 1)
+				comp, &iov_key, 1)
 	if ret != 0 {
 		C.ccow_release(comp)
 		return fmt.Errorf("%s: ccow_insert_list err=%d",
