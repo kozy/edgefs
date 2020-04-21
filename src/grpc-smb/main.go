@@ -237,7 +237,12 @@ func InitADS() {
 		dbg = envDbg
 	}
 	log.Printf("Starting in ADS mode\n")
-	InitCmd("ads-join.sh", []string{})
+	var PREFIX = os.Getenv("NEDGE_HOME")
+	if _, err := os.Stat(PREFIX + "/var/run/ads-join.sh"); os.IsNotExist(err) {
+		InitCmd("ads-join.sh", []string{})
+	} else {
+		InitCmd(PREFIX + "/var/run/ads-join.sh", []string{})
+	}
 	InitCmd("winbindd", []string{"-D", "-d " + dbg})
 }
 
