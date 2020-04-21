@@ -30,9 +30,9 @@ import (
 	"log"
 	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"time"
+	"net"
 
 	"../efscli/efsutil"
 
@@ -53,23 +53,26 @@ func (writer logWriter) Write(bytes []byte) (int, error) {
 	return fmt.Print(time.Now().UTC().Format("2006-01-02T15:04:05.999Z") + " " + string(bytes))
 }
 
-func InitGrpc(svc string) (string, string, int){
+func InitGrpc(svc string) ([]string, []string, string) {
+
+	var ids []string
+	var addrs []string
+	var bpath string
 
 	keys, err := efsutil.GetKeys("", "svcs", svc, "", 1000)
 	if err != nil {
 		log.Fatalf(err.Error())
-		return "", "", -1
+		return ids, addrs, bpath
 	}
-
-	var x []string
-	var s []string
 
 	for _, v := range keys {
-		s = strings.Split(v, ",")
-		x = strings.Split(s[1], "@")
+		s := strings.Split(v, ",")
+		x := strings.Split(s[1], "@")
+		ids = append(ids, s[0])
+		addrs = append(addrs, x[1])
+		bpath = x[0]
 	}
-	instances, _ := strconv.Atoi(s[0])
-	return x[0], x[1], instances
+	return ids, addrs, bpath
 }
 
 func main() {
@@ -77,7 +80,6 @@ func main() {
 	log.SetOutput(new(logWriter))
 
 	serviceName := getopt.StringLong("service", 's', "", "Name of service")
-	srvId := getopt.Int64Long("id", 'i', 1, "Id for server")
 	optHelp := getopt.BoolLong("help", 0, "Help")
 	getopt.Parse()
 
@@ -96,43 +98,55 @@ func main() {
 		return
 	}
 
-	bpath, addr, instances := InitGrpc(*serviceName)
+	ids, addrs, bpath := InitGrpc(*serviceName)
 
-	if bpath == "" || addr == "" {
-		log.Fatalf("Could not find bucket name or IP address for service")
+	nodeips, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Fatalf("Unable to obtain network interfaces")
 		return
 	}
 
-	fmt.Println("Service configured to start ", instances, " instances...")
-	var idx int
-	parts := strings.Split(addr, ":");
-	port, _ := strconv.Atoi(parts[1])
+	var idx, max int
+	var start_daemon bool
 
 	var clusterNodes strings.Builder;
-
 	/* Create list of all nodes in the cluster */
-	for idx = 0; idx < instances; idx++ {
-		if idx == instances -1 {
-			fmt.Fprintf(&clusterNodes, "%d,%s:%s",
-				int(*srvId) + idx, parts[0],
-				strconv.FormatInt(int64(port + idx), 10))
+	max = len(ids)
+	for idx = 0; idx < max; idx++ {
+		if idx == max -1 {
+			fmt.Fprintf(&clusterNodes, "%s,%s",
+			ids[idx], addrs[idx])
 		} else {
-			fmt.Fprintf(&clusterNodes, "%d,%s:%s;",
-				int(*srvId) + idx, parts[0],
-				strconv.FormatInt(int64(port + idx), 10))
+			fmt.Fprintf(&clusterNodes, "%s,%s;",
+			ids[idx], addrs[idx])
 		}
 	}
 
-	for idx = 0; idx < instances; idx++ {
-		dbdir := fmt.Sprintf("%s/%s", bpath,
-			strconv.FormatInt(int64(*srvId) + int64(idx), 10))
-		newaddr := fmt.Sprintf("%s:%s", parts[0],
-				strconv.FormatInt(int64(port + idx), 10))
-		fmt.Println("Starting service dqlite ...", *srvId + int64(idx),
-				"at", dbdir, newaddr)
-		InitCmd("ccow-sql", []string{"-i",
-			strconv.FormatInt(int64(*srvId) + int64(idx), 10),
-			"-a", newaddr, "-d", dbdir, "-o", clusterNodes.String()})
+	for idx = 0; idx < len(ids); idx++ {
+		/* Check if daemon can be started on this node
+		 * Check if any of the IP addresses for the cluster IPs
+		 * match th IP address of the node.
+		 */
+		start_daemon = false
+		if strings.Contains(addrs[idx], "127.") {
+			start_daemon = true
+		} else {
+			var i int
+			for i = 0; i < len(nodeips); i++ {
+				ip_str := strings.Split(nodeips[i].String(),
+							"/")
+				if strings.Contains(addrs[idx], ip_str[0]) {
+					start_daemon = true
+				}
+			}
+		}
+		if (start_daemon) {
+			fmt.Println("Starting service dqlite ...",
+			ids[idx], "at", bpath, addrs[idx])
+			InitCmd("ccow-sql", []string{"-i", ids[idx],
+				"-a", addrs[idx], "-d", bpath,
+				"-o", clusterNodes.String()})
+		}
 	}
 
 	os.Exit(0)

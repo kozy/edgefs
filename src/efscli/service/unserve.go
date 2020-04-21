@@ -497,6 +497,86 @@ func ServiceUnserveISGW(sname string, bpath string) error {
 	return nil
 }
 
+func ServiceUnserveDSQL(sname string, bpath string) error {
+	c_service := C.CString(sname)
+	defer C.free(unsafe.Pointer(c_service))
+
+	c_bpath := C.CString(bpath)
+	defer C.free(unsafe.Pointer(c_bpath))
+
+	s := strings.Split(bpath, "/")
+	if len(s) != 3 && len(s) != 2 {
+		return errors.New("Requires <service> <id,cluster/tenant/bucket@ipv4:port>")
+	}
+
+	keys, err := efsutil.GetKeys("", "svcs", sname, "", 100)
+	if err != nil {
+		return err
+	}
+
+	var found = false
+	for _, key := range keys {
+		if key == bpath {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("Cluster node not found: %s", bpath)
+	}
+
+	conf, err := efsutil.GetLibccowConf()
+	if err != nil {
+		return err
+	}
+
+	c_conf := C.CString(string(conf))
+	defer C.free(unsafe.Pointer(c_conf))
+
+	cl := C.CString("")
+	defer C.free(unsafe.Pointer(cl))
+
+	svcs := C.CString("svcs")
+	defer C.free(unsafe.Pointer(svcs))
+
+	var tc C.ccow_t
+
+	ret := C.ccow_admin_init(c_conf, cl, 1, &tc)
+	if ret != 0 {
+		return fmt.Errorf("ccow_admin_init err=%d", ret)
+	}
+	defer C.ccow_tenant_term(tc)
+
+	fmt.Printf("Removing %s\n", bpath)
+
+	c_export := C.CString(bpath)
+	defer C.free(unsafe.Pointer(c_export))
+
+	var comp C.ccow_completion_t
+
+	ret = C.ccow_create_completion(tc, nil, nil, 1, &comp)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_create_completion err=%d", efsutil.GetFUNC(), ret)
+	}
+
+	var iov_name C.struct_iovec
+	iov_name.iov_base = unsafe.Pointer(c_export)
+	iov_name.iov_len = C.strlen(c_export) + 1
+	ret = C.ccow_delete_list(c_service, C.strlen(c_service)+1, cl, 1, comp, &iov_name, 1)
+	if ret != 0 {
+		C.ccow_release(comp)
+		return fmt.Errorf("%s: ccow_delete_list err=%d", efsutil.GetFUNC(), ret)
+	}
+
+	ret = C.ccow_wait(comp, 0)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_wait err=%d", efsutil.GetFUNC(), ret)
+	}
+
+	return nil
+}
+
 func ServiceUnserve(sname string, bpath string) error {
 	stype, err := efsutil.GetMDKey("", "svcs", sname, "", "X-Service-Type")
 
@@ -525,6 +605,9 @@ func ServiceUnserve(sname string, bpath string) error {
 	c_isgw := C.CString("isgw")
 	defer C.free(unsafe.Pointer(c_isgw))
 
+	c_dsql := C.CString("dsql")
+	defer C.free(unsafe.Pointer(c_dsql))
+
 	if C.strcmp(c_stype, c_iscsi) == 0 {
 		return ServiceUnserveISCSI(sname, bpath)
 	}
@@ -547,6 +630,10 @@ func ServiceUnserve(sname string, bpath string) error {
 
 	if C.strcmp(c_stype, c_isgw) == 0 {
 		return ServiceUnserveISGW(sname, bpath)
+	}
+
+	if C.strcmp(c_stype, c_dsql) == 0 {
+		return ServiceUnserveDSQL(sname, bpath)
 	}
 
 	return fmt.Errorf("Unknown service type |%s|", stype)

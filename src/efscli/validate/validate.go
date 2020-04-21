@@ -282,29 +282,26 @@ func ServiceIscsiOpts(opath, opts string) error {
 func ServiceDsqlOpts(opath, opts string) error {
 	s := strings.Split(opath, "/")
 	if len(s) < 3 {
-		return errors.New("Requires <service> <cluster>/<tenant>/<bucket>")
+		return errors.New("Requires <service> <id,cluster/tenant/bucket@ipv4:port>")
 	}
 
 	if opts == "" {
-		return errors.New("Requires instances,ipv4-addr:port")
+		return errors.New("Requires node-id,ipv4-addr:port")
 	}
 
-	s = strings.Split(opts, ",")
-
-	if len(s) !=2 {
-		return errors.New("Requires instances,ipv4-addr:port")
+	node := strings.Split(opts, ",")
+	if len(node) != 2 {
+		return errors.New("Requires node-id,ipv4-addr:port")
 	}
-
-	instances, err := strconv.Atoi(s[0])
+	id, err := strconv.Atoi(node[0])
 	if err != nil {
-		return errors.New("Instances is not an integer")
+		return errors.New("Node id is not an integer")
 	}
 
-	if instances <= 0 {
-		return errors.New("Invalid value of instances")
+	if id <= 0 {
+		return errors.New("Invalid value of node id")
 	}
-
-	addr := strings.Split(s[1], ":")
+	addr := strings.Split(node[1], ":")
 	if len(addr) != 2 {
 		return errors.New("Expecting IPv4 address and port, addr:port")
 	}
