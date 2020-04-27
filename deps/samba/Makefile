@@ -22,7 +22,7 @@ all: install
 	cd ../.. && flock -e .gitmodules git submodule update --depth 1 --recursive --init deps/samba/$(NAME)
 	cd $(NAME) && ./configure --without-ad-dc --disable-cups --disable-iprint \
 		--without-systemd --without-json --without-libarchive --without-acl-support \
-		--with-system-mitkrb5 --with-ads --with-ldap --without-pam --bundled-libraries=ALL \
+		--with-ads --with-ldap --without-pam --bundled-libraries=ALL \
 		--with-static-modules=ALL --nonshared-binary=!smbstatus,ALL --enable-fhs \
 		--sysconfdir=$(SRCDIR)/etc \
 		--localstatedir=$(SRCDIR)/var \

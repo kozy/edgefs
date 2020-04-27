@@ -57,6 +57,7 @@ function ini_val() {
 	fi
 }
 
+rm -f ${NEDGE_HOME}/etc/samba/*.tdb ${NEDGE_HOME}/var/lib/samba/*.tdb ${NEDGE_HOME}/var/lock/*.tdb
 echo "Setting up smb.conf to join ADS \"${DOMAIN_NAME^^}\""
 
 ini_val $SMBCONF "global.security" "ads"
@@ -79,12 +80,25 @@ ini_val $SMBCONF "global.idmap config * : backend" "tdb"
 ini_val $SMBCONF "global.dedicated keytab file" "/etc/krb5.keytab"
 ini_val $SMBCONF "global.kerberos method" "secrets and keytab"
 ini_val $SMBCONF "global.username map" "${NEDGE_HOME}/etc/samba/user.map"
+ini_val $SMBCONF "global.name resolve order" "host bcast"
+
+ini_val $SMBCONF "global.allow trusted domains" yes
+ini_val $SMBCONF "global.local master" no
+ini_val $SMBCONF "global.domain master" no
+ini_val $SMBCONF "global.preferred master" no
+ini_val $SMBCONF "global.server role" "member server"
+ini_val $SMBCONF "global.dos filemode" yes
+ini_val $SMBCONF "global.server string" "EdgeFS SMB Server"
+ini_val $SMBCONF "global.server min protocol" SMB2_02
+ini_val $SMBCONF "global.server max protocol" SMB3
+ini_val $SMBCONF "global.client signing" "yes"
+ini_val $SMBCONF "global.client use spnego" "yes"
+ini_val $SMBCONF "global.winbind offline logon" "yes"
+ini_val $SMBCONF "global.winbind normalize names" "no"
 
 cat << EOF > ${NEDGE_HOME}/etc/samba/user.map
 !root = $WORKGROUP\Administrator $WORKGROUP\administrator
 EOF
-
-rm -f ${NEDGE_HOME}/etc/samba/*.tdb
 
 echo "Setting up /etc/nsswitch.conf"
 
@@ -93,7 +107,6 @@ if [[ ! `grep "winbind" /etc/nsswitch.conf` ]]; then
 	sed -i "s#^\(group\:\s*compat\)\$#\1 winbind#" /etc/nsswitch.conf
 	sed -i "s#^\(shadow\:\s*compat\)\$#\1 winbind#" /etc/nsswitch.conf
 fi
-pam-auth-update
 
 echo "Setting up Kerberos realm: \"${DOMAIN_NAME^^}\""
 
@@ -112,21 +125,31 @@ cat > /etc/krb5.conf << EOL
     dns_lookup_kdc = true
     forwardable = true
     proxiable = true
+    ticket_lifetime = 32d
+    renew_lifetime = 32d
+    renewable = true
+    udp_preference_limit = 1
+    default_tgs_enctypes = rc4-hmac des3-hmac-sha1 arcfour-hmac des-hmac-sha1 des-cbc-md5 des-cbc-crc
+    default_tkt_enctypes = rc4-hmac des3-hmac-sha1 arcfour-hmac des-hmac-sha1 des-cbc-md5 des-cbc-crc
+    permitted_enctypes = rc4-hmac des3-hmac-sha1 arcfour-hmac des-hmac-sha1 des-cbc-md5 des-cbc-crc
 [realms]
     ${DOMAIN_NAME^^} = {
         kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
+        master_kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
         admin_server = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
         default_domain = ${DOMAIN_NAME^^}       
     }
     ${DOMAIN_NAME,,} = {
         kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
+        master_kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
         admin_server = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
         default_domain = ${DOMAIN_NAME,,}
     }
     ${WORKGROUP^^} = {
         kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
+        master_kdc = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
         admin_server = $(echo ${ADMIN_SERVER,,} | awk '{print $1}')
-        default_domain = ${DOMAIN_NAME^^}       
+        default_domain = ${DOMAIN_NAME^^}
     }
     
 [domain_realm]
@@ -136,7 +159,7 @@ EOL
 
 echo "Generating Kerberos ticket"
 
-echo $AD_PASSWORD | kinit -V $AD_USERNAME@$REALM
+echo "$AD_PASSWORD" | kinit -V $AD_USERNAME@$REALM
 
 echo "Registering $NETBIOS_NAME to Active Directory: User $AD_USERNAME, DC1 $DC1"
 
