@@ -134,7 +134,7 @@ func InitCmd(progname string, args []string) {
 	err := cmd.Start()
 
 	if err != nil {
-		log.Fatalf("%s %v: cmd.Start() failed with '%s'\n", progname, err)
+		log.Fatalf("%s %v: cmd.Start() failed with '%s'\n", progname, args, err)
 	}
 
 	go func() {
@@ -147,7 +147,7 @@ func InitCmd(progname string, args []string) {
 
 	err = cmd.Wait()
 	if err != nil {
-		log.Fatalf("%s %v: cmd.Wait() failed with '%s'\n", progname, err)
+		log.Fatalf("%s %v: cmd.Wait() failed with '%s'\n", progname, args, err)
 	}
 }
 
