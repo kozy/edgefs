@@ -414,6 +414,14 @@ get_shard(char *key, size_t key_size, int shard_count)
 	return i;
 }
 
+int
+ccow_get_shard_index(ccow_shard_context_t shard_context, char *key, size_t key_size)
+{
+
+	return get_shard(key, key_size, shard_context->shard_count);
+}
+
+
 static int
 read_shard_attributes(struct ccow *tc,const char *bid, char *shard_name, int index,
 		int64_t *size, int64_t *objs, int64_t *used, uint64_t *genid) {
@@ -1287,6 +1295,7 @@ ccow_sharded_attributes_get(ccow_t tctx, const char *bid, size_t bid_size,
 	*logical_size = 0;
 	*object_count = 0;
 	*estimated_used = 0;
+	int err_count = 0;
 
 	// Get attributes from cache
 	sop_rec_table *sop_rec_tb = get_rec_table_from_cache(tc, bid, shard_context->shard_name);
@@ -1353,6 +1362,7 @@ ccow_sharded_attributes_get(ccow_t tctx, const char *bid, size_t bid_size,
 				ccow_release(marr[i].c);
 			uv_mutex_lock(&shard_lock);
 			err = err_create;
+			err_count++;
 			marr[i].err = err_create;
 			mr.count++;
 			uv_mutex_unlock(&shard_lock);
@@ -1365,13 +1375,9 @@ ccow_sharded_attributes_get(ccow_t tctx, const char *bid, size_t bid_size,
 	}
 	uv_mutex_unlock(&shard_lock);
 
-	if (err) {
-		log_error(lg, "Sharded attributes read error: %d", err);
-		goto _exit;
-	}
-
 	for (int i = 0; i < shard_context->shard_count; i++) {
-		attributes_reader(&marr[i], marr[i].iter);
+		if (!marr[i].err)
+			attributes_reader(&marr[i], marr[i].iter);
 	}
 
 _exit:
@@ -1382,6 +1388,10 @@ _exit:
 		}
 		if (marr[i].err != 0 && err == 0)
 			err = marr[i].err;
+	}
+	// getting partial result
+	if (err_count < shard_context->shard_count) {
+		err = 0;
 	}
 	return err;
 }

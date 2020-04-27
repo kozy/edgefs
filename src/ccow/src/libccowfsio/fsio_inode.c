@@ -72,9 +72,10 @@
 #define MD_SNAP_COUNT			0x0200
 #define MD_ALL					0x03FF
 
-/* Extern functions */
-extern int ccow_fsio_inode_glm_lock(ccowfs_inode * inode);
-extern int ccow_fsio_inode_glm_unlock(ccowfs_inode * inode);
+/* Global extern functions */
+extern int global_inode_acquire(ci_t *ci, inode_t inode, char *oid);
+extern int global_inode_release(ci_t *ci, inode_t inode, char *oid);
+extern int global_inode_get(ci_t *ci, inode_t inode, char *oid);
 
 int __encode_dir_attrs(ccowfs_inode * inode, void **encoded_attrs,
     uint64_t * encoded_attrs_len);
@@ -856,6 +857,13 @@ __fetch_inode_from_disk(ccowfs_inode * inode, int sync, int recovery)
 	cb_args->time = time;
 	cb_args->recovery = recovery;
 
+	if (inode->ci->glm_enabled) {
+		err = global_inode_get(inode->ci, inode->ino, inode->oid);
+		if (err && err != ENOENT && err != -ENOENT) {
+			log_error(fsio_lg, "Global get inode: %s failed err: %d", inode->oid, err);
+		}
+	}
+
 	/*
 	 * inode should not be present in hash table.
 	 * The inode->ino  field must be populated.
@@ -920,8 +928,8 @@ out:
 			je_free(cb_args);
 		}
 	}
-	log_debug(fsio_lg, "completed inode: %lu, sync: %d, recovery: %d",
-	    inode->ino, sync, recovery);
+	log_debug(fsio_lg, "completed inode: %lu, sync: %d, recovery: %d, err: %d",
+	    inode->ino, sync, recovery, err);
 
 	return err;
 }
@@ -1858,6 +1866,14 @@ ccowfs_inode_fetch_genid(ccowfs_inode *inode, uint64_t *genid)
 
 	log_trace(fsio_lg, "ci: %p, invalidating genid ino = %lu", ci, inode->ino);
 
+	if (ci->glm_enabled) {
+		err = global_inode_get(ci, inode->ino, inode->oid);
+		if (err && err != ENOENT && err != -ENOENT) {
+			log_error(fsio_lg, "Failed to get global inode: %lu, use local err: %d",
+				inode->ino, err);
+		}
+	}
+
 	*genid = 0;
 
 	err = tc_pool_get_tc(ci->tc_pool_handle, 0, &tc);
@@ -2030,11 +2046,15 @@ get_inode:
 			 * The runcount is extra protection for case when the cluster is strugling and
 			 * it could take more then 15 seconds for operation to complete.
 			 */
+			uint64_t timeout = 3*INODE_EXPIRE_TIMEOUT_US;
+			if (ci->glm_enabled) {
+				timeout = INODE_EXPIRE_TIMEOUT_US;
+			}
 			if (ccow_mh_immdir && INODE_IS_FILE(inode->ino) &&
 				atomic_get_uint64(&inode->refcount) >= 1 &&
 				atomic_get_uint64(&inode->runcount) == 0  &&
 				!inode->dirty &&
-				ccowfs_inode_expire_check(inode, vmchid, 3*INODE_EXPIRE_TIMEOUT_US, INODE_S3_EXPIRE_TIMEOUT_US)) {
+				ccowfs_inode_expire_check(inode, vmchid, timeout, INODE_S3_EXPIRE_TIMEOUT_US)) {
 					__remove_inode_from_hash_table_locked(inode);
 					__inode_free(inode);
 					inode = NULL;
@@ -2450,70 +2470,231 @@ ccowfs_inode_lock(ccowfs_inode * inode)
 {
 	int err;
 
-	log_trace(fsio_lg, "inode: %lu", inode->ino);
-	if (inode->ci->glm_enabled) {
-		err = ccow_fsio_inode_glm_lock(inode);
-		if (err)
-			return err;
-	}
+	log_trace(fsio_lg, "Lock inode: %lu", inode->ino);
 
 	return pthread_rwlock_wrlock(&(inode->rwlock));
 }
+
 
 int
 ccowfs_inode_unlock(ccowfs_inode * inode)
 {
 	int err;
 
-	log_trace(fsio_lg, "inode: %lu", inode->ino);
+	log_trace(fsio_lg, "Unlock inode: %lu", inode->ino);
 
 	err = pthread_rwlock_unlock(&(inode->rwlock));
 	if (err)
 		return err;
 
-	if (inode->ci->glm_enabled) {
-		err = ccow_fsio_inode_glm_unlock(inode);
-		if (err)
-			return err;
-	}
 	return err;
 }
 
+static int
+valid_global_share_name(ccowfs_inode * inode, ccow_shard_context_t shard_context,char *name) {
+	if (!inode->ci->glm_enabled || name == NULL) {
+		return 0;
+	}
+	int len = strlen(name);
+	return (shard_context != NULL && !inode->read_only &&
+		inode->ino != CCOW_FSIO_LOST_FOUND_DIR_INODE &&
+		inode->ino != CCOW_FSIO_S3OBJ_DIR_INODE &&
+		!(len == 11 && strncmp(name, LOST_FOUND_DIR_NAME, 11) == 0) &&
+		!(len == 8 && strncmp(name, S3OBJECTS_DIR_NAME, 8) == 0)
+		);
+}
+
+
 int
-ccowfs_inode_lock_shared(ccowfs_inode * inode)
-{
+ccowfs_inode_lock_global_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name) {
 	int err;
+	char oid[128];
 
-	log_trace(fsio_lg, "inode: %lu", inode->ino);
+	if (!inode->ci->glm_enabled) {
+		return 0;
+	}
 
-	if (inode->ci->glm_enabled) {
-		err = ccow_fsio_inode_glm_lock(inode);
-		if (err)
-			return err;
+	if (valid_global_share_name(inode, shard_context, name)) {
+		log_trace(fsio_lg, "Global lock shared inode: %s/%lu, glm: %d, name: %s",
+			inode->ci->bid, inode->ino, inode->ci->glm_enabled, name);
+		int idx  = ccow_get_shard_index(shard_context, name, strlen(name) + 1);
+		if (inode->ino == CCOW_FSIO_ROOT_INODE) {
+			sprintf(oid,"%s.%d", ROOT_INODE_STR, idx);
+		} else {
+			sprintf(oid,"%s.%d", inode->ino_str, idx);
+		}
+		log_trace(fsio_lg, "Global lock shared:  %s/%lu/%s oid: %s",
+			inode->ci->bid, inode->ino, name, oid);
+		err = global_inode_acquire(inode->ci, inode->ino, oid);
+		if (err) {
+			log_error(fsio_lg, "Global acquire inode: %s failed err: %d", oid, err);
+			if (err == -EBUSY) {
+				return err;
+			}
+		}
+	}
+	return 0;
+}
+
+int
+ccowfs_inode_lock_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name) {
+	int err;
+	char oid[128];
+
+	log_trace(fsio_lg, "Lock shared inode: %s/%lu, glm: %d",
+		inode->ci->bid, inode->ino, inode->ci->glm_enabled);
+
+	if (inode->ci->glm_enabled && shard_context != NULL) {
+		err = ccowfs_inode_lock_global_shared(inode, shard_context, name);
+		if (err) {
+			log_error(fsio_lg, "Global lock shared inode: %s/%lu, failed err: %d",
+				inode->ci->bid, inode->ino, err);
+		}
 	}
 
 	return pthread_rwlock_rdlock(&(inode->rwlock));
 }
 
 int
-ccowfs_inode_unlock_shared(ccowfs_inode * inode)
-{
+ccowfs_inode_unlock_global_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name) {
 
-	int err;
+	int err = 0;
 
-	log_trace(fsio_lg, "inode: %lu", inode->ino);
+	if (!inode->ci->glm_enabled) {
+		return 0;
+	}
 
-	err = pthread_rwlock_unlock(&(inode->rwlock));
-	if (err)
-		return err;
-
-	if (inode->ci->glm_enabled) {
-		err = ccow_fsio_inode_glm_unlock(inode);
-		if (err)
-			return err;
+	if (valid_global_share_name(inode, shard_context, name)) {
+		log_trace(fsio_lg, "Global unlock shared inode: %s/%lu, glm: %d, name: %s",
+			inode->ci->bid, inode->ino, inode->ci->glm_enabled, name);
+		int idx  = ccow_get_shard_index(shard_context, name, strlen(name) + 1);
+		char oid[128];
+		if (inode->ino == CCOW_FSIO_ROOT_INODE) {
+			sprintf(oid,"%s.%d", ROOT_INODE_STR, idx);
+		} else {
+			sprintf(oid,"%s.%d", inode->ino_str, idx);
+		}
+		log_trace(fsio_lg, "Global unlock shared:  %s/%lu/%s oid: %s",
+			inode->ci->bid, inode->ino, name, oid);
+		err = global_inode_release(inode->ci, inode->ino, oid);
+		if (err) {
+			log_error(fsio_lg, "Global release inode: %s failed err: %d", oid, err);
+		}
 	}
 	return err;
 }
+
+int
+ccowfs_inode_unlock_shared(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name) {
+
+	int err;
+
+	log_trace(fsio_lg, "Unlock shared inode: %lu", inode->ino);
+
+	err = pthread_rwlock_unlock(&(inode->rwlock));
+
+	if (inode->ci->glm_enabled && shard_context != NULL) {
+		int e = ccowfs_inode_unlock_global_shared(inode, shard_context, name);
+		if (e) {
+			log_error(fsio_lg, "Global unlock shared inode: %s/%lu, failed err: %d",
+				inode->ci->bid, inode->ino, e);
+		}
+	}
+
+	return err;
+}
+
+int
+ccowfs_inode_global_dir_read(ccowfs_inode * inode) {
+	int err, res = 0;
+	char oid[128];
+
+	if (inode->ci->glm_enabled && !inode->read_only &&
+		inode->ino != CCOW_FSIO_LOST_FOUND_DIR_INODE &&
+		inode->ino != CCOW_FSIO_S3OBJ_DIR_INODE) {
+		log_debug(fsio_lg, "Global dir read lock inode:  %s/%lu", inode->ci->bid, inode->ino);
+		for (int idx=0; idx < FSIO_DIR_SHARD_COUNT; idx++) {
+			if (inode->ino == CCOW_FSIO_ROOT_INODE) {
+				sprintf(oid,"%s.%d", ROOT_INODE_STR, idx);
+			} else {
+				sprintf(oid,"%s.%d", inode->ino_str, idx);
+			}
+			err = global_inode_get(inode->ci, inode->ino, oid);
+			if (err && err != -ENOENT && err != ENOENT) {
+				res = err;
+				log_error(fsio_lg, "Global get inode: %s failed err: %d", oid, err);
+			}
+		}
+	}
+	return res;
+}
+
+int
+ccowfs_inode_global_dir_read_share(ccowfs_inode * inode, ccow_shard_context_t shard_context,
+	 char *name) {
+	int err;
+	char oid[128];
+
+	if (!inode->ci->glm_enabled) {
+		return 0;
+	}
+
+	log_trace(fsio_lg, "Global dir read share inode: %s/%lu, glm: %d",
+		inode->ci->bid, inode->ino, inode->ci->glm_enabled);
+
+	if (valid_global_share_name(inode, shard_context, name)) {
+		int idx  = ccow_get_shard_index(shard_context, name, strlen(name) + 1);
+		if (inode->ino == CCOW_FSIO_ROOT_INODE) {
+			sprintf(oid,"%s.%d", ROOT_INODE_STR, idx);
+		} else {
+			sprintf(oid,"%s.%d", inode->ino_str, idx);
+		}
+		err = global_inode_get(inode->ci, inode->ino, oid);
+		log_trace(fsio_lg, "Global dir read shared:  %s/%lu/%s oid: %s",
+			inode->ci->bid, inode->ino, name, oid);
+		if (err && err != ENOENT && err != -ENOENT) {
+			log_error(fsio_lg, "Global dir read shared: %s/%lu/%s failed oid: %s, err: %d",
+				inode->ci->bid, inode->ino, name, oid, err);
+		}
+	}
+	return 0;
+}
+
+int
+ccowfs_inode_lock_dir_read(ccowfs_inode * inode) {
+	int err;
+
+	if (inode->ci->glm_enabled) {
+		err = ccowfs_inode_global_dir_read(inode);
+		if (err) {
+			log_error(fsio_lg, "Global dir read failed: %s/%lu failed err: %d",
+				inode->ci->bid, inode->ino, err);
+		}
+	}
+
+	return pthread_rwlock_rdlock(&(inode->rwlock));
+}
+
+int
+ccowfs_inode_unlock_dir_read(ccowfs_inode * inode) {
+
+	int err;
+
+	if (inode->ci->glm_enabled && !inode->read_only &&
+		inode->ino != CCOW_FSIO_LOST_FOUND_DIR_INODE &&
+		inode->ino != CCOW_FSIO_S3OBJ_DIR_INODE) {
+		log_trace(fsio_lg, "Global dir read unlock inode:  %s/%lu", inode->ci->bid, inode->ino);
+	}
+
+	err = pthread_rwlock_unlock(&(inode->rwlock));
+
+	return err;
+}
+
 
 void
 s3dir_invalidate_all(ci_t *ci)
@@ -2759,9 +2940,9 @@ ccow_fsio_get_file_stat(ci_t * ci, inode_t ino, struct stat *stat)
 		goto out;
 	}
 
-	ccowfs_inode_lock_shared(inode);
+	ccowfs_inode_lock_shared(inode, NULL, NULL);
 	err = ccowfs_inode_get_attr_locked(inode, stat);
-	ccowfs_inode_unlock_shared(inode);
+	ccowfs_inode_unlock_shared(inode, NULL, NULL);
 
 	if (err) {
 		log_error(fsio_lg,

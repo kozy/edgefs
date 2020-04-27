@@ -47,13 +47,14 @@
 
 #define DQLITE_CLUSTER_CONFIG	"%s/etc/dqlite/cluster.json"
 #define CONFIG_BUF_SZ		8 * 1024
-#define JOIN_RETRY		3
-#define JOIN_TIME		100 * 1000
+#define JOIN_TIMEOUT	600  // 600s timeout
+#define BIND_TIMEOUT	300  // 300s bind timeout
 #define SLEEP_TIME		100 * 1000
+#define ADDRESS_MAX_LEN 32
 
 struct ccow_dqlite_server {
 	uint64_t	id;
-	char		addr[INET_ADDRSTRLEN + 6 + 1];
+	char		addr[ADDRESS_MAX_LEN];
 	char		dir[PATH_MAX];
 	dqlite_node	*node;
 };
@@ -241,7 +242,16 @@ ccow_dq_start()
 		goto out_;
 	}
 
-	err = dqlite_node_set_bind_address(cdq_server.node, cdq_server.addr);
+	int wait = 0;
+
+	while (wait < BIND_TIMEOUT) {
+		err = dqlite_node_set_bind_address(cdq_server.node, cdq_server.addr);
+		if (!err)
+			break;
+		sleep(5);
+		wait += 5;
+		printf("Retry set bind address: %s\n", cdq_server.addr);
+	}
 	if (err) {
 		log_error(lg, "Failed to bind dqlite node address %s, "
 				"err: %d\n", cdq_server.addr, err);
@@ -288,15 +298,15 @@ ccow_dq_usage()
 static void
 node_str_to_json(char *nodes)
 {
-	char *list;
+	char list[1024];
 	char *node, *id_str, *ip;
 	int id, err;
 
-	if (nodes == NULL)
+	if (nodes == NULL || strlen(nodes) == 0)
 		return;
 
 	config_ready = 1;
-	list = strdup(nodes);
+	strcpy(list, nodes);
 
 	sprintf(config_buf, "{\n\t\"nodes\": [\n");
 	node = strtok(list, ";");
@@ -316,13 +326,12 @@ node_str_to_json(char *nodes)
 			sprintf(config_buf, "%s\t\t}\n", config_buf);
 	}
 	sprintf(config_buf, "%s\t]\n}", config_buf);
-	free(list);
 }
 
 static int
 is_ip_port_valid(char *ipport)
 {
-	char *ip, *port;
+	char *ip, *port = NULL;
 	struct in_addr in_addr;
 	uint16_t port_num;
 	int err;
@@ -342,7 +351,7 @@ is_ip_port_valid(char *ipport)
 		fprintf(stderr, "Invalid server port: " "%s\n", port);
 		return 0;
 	}
-	while(*port != '\0') {
+	while(port && *port != '\0') {
 		if (!isdigit(*port++)) {
 			port = ip + 1;
 			fprintf(stderr, "Invalid server port: " "%s\n", port);
@@ -355,14 +364,14 @@ is_ip_port_valid(char *ipport)
 static int
 is_nodes_str_valid(char *nodes)
 {
-	char *list;
+	char list[1024];
 	char *node, *id_str, *ip;
 	int id, err;
 
-	if (nodes == NULL)
+	if (nodes == NULL || strlen(nodes) == 0)
 		return 0;
 
-	list = strdup(nodes);
+	strcpy(list, nodes);
 
 	node = strtok(list, ";");
 	while (node != NULL) {
@@ -377,12 +386,10 @@ is_nodes_str_valid(char *nodes)
 		if (err <= 0 || !is_ip_port_valid(ip)) {
 			fprintf(stderr, "Invalid node id %d(%s) or IP-port %s\n",
 					id, node, ip);
-			free(list);
 			return 0;
 		}
 		node = strtok(NULL, ";");
 	}
-	free(list);
 	return 1;
 }
 
@@ -390,8 +397,8 @@ static int
 ccow_dq_parse_options(int argc, char *argv[])
 {
 	int option_index = 0, err = 0, c;
-	char validation_buf[INET_ADDRSTRLEN + 6];
-	char *cluster_nodes;
+	char validation_buf[ADDRESS_MAX_LEN];
+	char *cluster_nodes = NULL;
 
 	static struct option long_options[] = {
 		{"help",        0,              0,  'h' },
@@ -427,9 +434,9 @@ ccow_dq_parse_options(int argc, char *argv[])
 				 * validated address and port
 				 */
 				strncpy(cdq_server.addr, optarg,
-					INET_ADDRSTRLEN + 6 );
+					ADDRESS_MAX_LEN );
 				strncpy(validation_buf, optarg,
-					INET_ADDRSTRLEN + 6 );
+					ADDRESS_MAX_LEN );
 				if (!is_ip_port_valid(validation_buf))
 					return -EINVAL;
 				break;
@@ -570,6 +577,8 @@ main(int argc, char *argv[])
 	setpriority(PRIO_PROCESS, getpid(), -15);
 	signal(SIGTERM, signal_handler);
 	signal(SIGINT, signal_handler);
+    signal(SIGHUP, signal_handler);
+
 
 	log_info(lg, "Starting DQLite ...\n");
 	err = ccow_dq_start();
@@ -580,20 +589,21 @@ main(int argc, char *argv[])
 	log_info(lg, "DQLite node started.\n");
 
 	if (err == 0) {
-		int retry = 0;
-		do {
+		int wait = 0;
+		while (wait < JOIN_TIMEOUT) {
 			/*
 			 * Retries are useful when few servers are started
 			 * in parallel. Wait before retry.
 			 */
 			err = ccow_dq_join_cluster();
 			if (err != 0) {
-				usleep(JOIN_TIME);
-				retry++;
-				log_error(lg, "Retrying (%d) cluster "
-						"join ...\n", retry);
+				sleep(5);
+				wait += 5;
+				log_error(lg, "Retrying cluster join after (%d)s ...\n", wait);
+				continue;
 			}
-		} while (err != 0 && retry < JOIN_RETRY);
+			break;
+		}
 
 		if (err != 0) {
 			log_error(lg, "Failed to join cluster. Exiting ...\n");

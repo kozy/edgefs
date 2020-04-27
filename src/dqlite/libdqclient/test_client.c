@@ -33,7 +33,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "Expecting server id to be an integer\n");
 		exit(1);
 	}
-	snprintf(client.srv_ipaddr, INET_ADDRSTRLEN, "%s", argv[2]);
+	snprintf(client.srv_ipaddr, ADDRESS_MAX_LEN, "%s", argv[2]);
 
 	err = cdq_start(&client);
 	if (err !=0) {

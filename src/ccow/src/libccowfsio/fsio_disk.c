@@ -38,6 +38,11 @@
 #include "fsio_common.h"
 #include "fsio_system.h"
 
+/* Global extern functions */
+extern int global_inode_acquire(ci_t *ci, inode_t inode, char *oid);
+extern int global_inode_release(ci_t *ci, inode_t inode, char *oid);
+extern int global_inode_get(ci_t *ci, inode_t inode, char *oid);
+
 /**
  * Requirements :
  * 1. Allow multiple threads to read from same inode in parallel.
@@ -104,15 +109,37 @@ __parse_object_attrs(ci_t *ci, disk_worker_md *disk_worker, ccow_lookup_t iter)
 }
 
 static int
-__create_completion(ci_t *ci, disk_worker_md *disk_worker)
+__create_completion(ci_t *ci, disk_worker_md *disk_worker, int type)
 {
 	int err = 0;
 	ccow_lookup_t iter = NULL;
 
-	log_trace(fsio_lg, "ci: %p, disk_worker: %p", ci, disk_worker);
+	log_trace(fsio_lg, "ci: %p, disk_worker: %p, ino: %lu, type: %d",
+		ci, disk_worker, disk_worker->ino, type);
 
 	assert(disk_worker->comp == NULL);
 	assert(disk_worker->available_op_count == 0);
+
+	if (ci->glm_enabled) {
+		if (type == DISK_WRITE || type == DISK_MD) {
+			log_trace(fsio_lg, "Global op: %d, inode: %s/%lu", type, ci->bid, disk_worker->ino);
+			err = global_inode_acquire(ci, disk_worker->ino, disk_worker->oid);
+			log_debug(fsio_lg, "Global acquire inode: %lu err: %d", disk_worker->ino, err);
+			if (err) {
+				log_error(fsio_lg, "Global acquire inode: %lu failed err: %d", disk_worker->ino, err);
+				err = 0;
+			}
+		} else {
+			log_trace(fsio_lg, "Global get inode: %s/%lu", ci->bid, disk_worker->ino);
+			err = global_inode_get(ci, disk_worker->ino, disk_worker->oid);
+			log_debug(fsio_lg, "Global get inode: %lu err: %d", disk_worker->ino, err);
+			if (err) {
+				if (err != -ENOENT)
+					log_error(fsio_lg, "Global get inode: %lu failed err: %d", disk_worker->ino, err);
+				err = 0;
+			}
+		}
+	}
 
 	err = ccowfs_create_stream_completion(ci, disk_worker->oid,
 	    disk_worker->oid_size, &(disk_worker->genid), MAX_OP_COUNT,
@@ -176,13 +203,13 @@ get_size_diff(ccow_lookup_t iter)
 }
 
 static int
-__finalize_completion(ci_t * ci, disk_worker_md * disk_worker, int client_flush)
+__finalize_completion(ci_t * ci, disk_worker_md * disk_worker, int client_flush, int type)
 {
 	ccow_lookup_t iter = NULL;
 	int err = 0;
 
-	log_trace(fsio_lg,"ci: %p, disk_worker: %p last_io: %d",
-		ci, disk_worker, disk_worker->last_io);
+	log_trace(fsio_lg,"ci: %p, disk_worker: %p, ino: %lu, type: %d, last_io: %d",
+		ci, disk_worker, disk_worker->ino, type, disk_worker->last_io);
 
 	if (disk_worker->comp == NULL)
 		goto out;
@@ -212,6 +239,16 @@ out:
 		ccow_lookup_release(iter);
 	log_trace(fsio_lg, "completed ci: %p, disk_worker: %p", ci,
 	    disk_worker);
+	if (ci->glm_enabled) {
+		if (type == DISK_WRITE || type == DISK_MD) {
+			log_debug(fsio_lg, "Global md unlock inode:  %s/%lu", ci->bid, disk_worker->ino);
+			err = global_inode_release(ci, disk_worker->ino, disk_worker->oid);
+			if (err) {
+				log_error(fsio_lg, "Global md release inode: %lu failed err: %d", disk_worker->ino, err);
+				err = 0;
+			}
+		}
+	}
 
 	return err;
 }
@@ -238,7 +275,7 @@ disk_worker_freez(ci_t * ci, disk_worker_md * disk_worker, int client_flush)
 		 */
 		if (disk_worker->comp) {
 			if  (disk_worker->in_flight_ops == 0  && disk_worker->md_update_in_flght == 0) {
-				err = __finalize_completion(ci, disk_worker, client_flush);
+				err = __finalize_completion(ci, disk_worker, client_flush, DISK_WRITE);
 				if (err) {
 					log_error(fsio_lg,
 					    "__finalize_completion return %d", err);
@@ -406,14 +443,15 @@ disk_worker_get_ref(ci_t *ci, disk_worker_md *disk_worker, disk_op_type type,
 	int err = 0;
 	uint64_t ops_required = 0;
 
-	log_trace(fsio_lg,"ci: %p, disk_worker: %p, type: %d, "
-	    "out_completion: %p", ci, disk_worker, type, out_completion);
+	log_trace(fsio_lg,"ci: %p, disk_worker: %p, type: %d, ino: %lu, "
+	    "out_completion: %p", ci, disk_worker, type, disk_worker->ino, out_completion);
 
 	*out_completion = NULL;
 
 	/*Allow only one write thread at a time */
-	if (type == DISK_WRITE)
+	if (type == DISK_WRITE) {
 		pthread_mutex_lock(&disk_worker->write_mutex);
+	}
 
 	/*
 	 * Only one write thread can go ahead at a time.
@@ -442,7 +480,7 @@ disk_worker_get_ref(ci_t *ci, disk_worker_md *disk_worker, disk_op_type type,
 			assert(disk_worker->in_flight_ops == 0 && disk_worker->md_update_in_flght == 0);
 			assert(disk_worker->available_op_count == 0);
 
-			err = __create_completion(ci, disk_worker);
+			err = __create_completion(ci, disk_worker, type);
 			if (err) {
 				log_error(fsio_lg,
 				    "__create_completion return %d", err);
@@ -491,7 +529,7 @@ disk_worker_get_ref(ci_t *ci, disk_worker_md *disk_worker, disk_op_type type,
 			 * We can finalize and create new one if no other threads are in flight.
 			 */
 			if (disk_worker->in_flight_ops == 0 && disk_worker->md_update_in_flght == 0) {
-				err = __finalize_completion(ci, disk_worker, 0);
+				err = __finalize_completion(ci, disk_worker, 0, type);
 				if (err) {
 					log_error(fsio_lg,
 						"__finalize_completion return %d",
@@ -532,8 +570,8 @@ disk_worker_put_ref(ci_t * ci, disk_worker_md * disk_worker,
 {
 	int err = 0;
 
-	log_trace(fsio_lg, "ci: %p, disk_worker: %p, type: %d, last_io: %d",
-	    ci, disk_worker, type, last_io);
+	log_trace(fsio_lg, "ci: %p, disk_worker: %p, type: %d, ino: %lu, last_io: %d",
+	    ci, disk_worker, type, disk_worker->ino, last_io);
 
 	/** if last_io is DEFAULT_LAST_IO:
 	 *		That means no IO was scheduled with the completion.
@@ -561,7 +599,7 @@ disk_worker_put_ref(ci_t * ci, disk_worker_md * disk_worker,
 	if (disk_worker->in_flight_ops == 0 && disk_worker->md_update_in_flght == 0) {
 		if (disk_worker->last_io >= (MAX_OP_COUNT - MIN_FREE_OPS_REQUIRED)
 		    || disk_worker->needs_flush) {
-			err = __finalize_completion(ci, disk_worker, 0);
+			err = __finalize_completion(ci, disk_worker, 0, type);
 			if (err) {
 				log_error(fsio_lg,
 				    "__finalize_completion return %d", err);
@@ -579,8 +617,9 @@ disk_worker_put_ref(ci_t * ci, disk_worker_md * disk_worker,
 out:
 	pthread_mutex_unlock(&disk_worker->worker_mutex);
 
-	if (type == DISK_WRITE)
+	if (type == DISK_WRITE) {
 		pthread_mutex_unlock(&disk_worker->write_mutex);
+	}
 
 	log_debug(fsio_lg, "completed ci: %p, disk_worker: %p, type: %d, "
 	    "last_io: %d", ci, disk_worker, type, last_io);
@@ -637,13 +676,13 @@ disk_worker_flush(ci_t * ci, disk_worker_md * disk_worker, int client_flush)
 {
 	int err = 0;
 
-	log_trace(fsio_lg, "ci: %p, disk_worker: %p", ci, disk_worker);
+	log_trace(fsio_lg, "ci: %p, disk_worker: %p, ino: %lu", ci, disk_worker, disk_worker->ino);
 
 	pthread_mutex_lock(&disk_worker->worker_mutex);
 	while (1) {
 		if (disk_worker->comp) {
 			if (disk_worker->in_flight_ops == 0 && disk_worker->md_update_in_flght == 0) {
-				err = __finalize_completion(ci, disk_worker, client_flush);
+				err = __finalize_completion(ci, disk_worker, client_flush, DISK_WRITE);
 				if (err) {
 					log_error(fsio_lg, "__finalize_completion return %d",
 						err);
@@ -675,7 +714,7 @@ disk_worker_flush(ci_t * ci, disk_worker_md * disk_worker, int client_flush)
 out:
 	pthread_mutex_unlock(&disk_worker->worker_mutex);
 
-	log_debug(fsio_lg, "completed ci: %p, disk_worker: %p", ci, disk_worker);
+	log_debug(fsio_lg, "completed ci: %p, disk_worker: %p, ino: %lu", ci, disk_worker, disk_worker->ino);
 
 	return err;
 }
@@ -685,7 +724,7 @@ disk_worker_is_dirty(ci_t * ci, disk_worker_md * disk_worker)
 {
 	int dirty = 0;
 
-	log_trace(fsio_lg, "ci: %p, disk_worker: %p", ci, disk_worker);
+	log_trace(fsio_lg, "ci: %p, disk_worker: %p, ino: %lu", ci, disk_worker, disk_worker->ino);
 
 	/*
 	 * Treat the completion as dirty if we have it open. (as it needs to be
@@ -701,7 +740,7 @@ disk_worker_is_dirty(ci_t * ci, disk_worker_md * disk_worker)
 	} else if (disk_worker->comp)
 			dirty = 1;
 
-	log_debug(fsio_lg, "completed ci: %p, disk_worker: %p", ci, disk_worker);
+	log_debug(fsio_lg, "completed ci: %p, disk_worker: %p, ino: %lu", ci, disk_worker, disk_worker->ino);
 
 	return dirty;
 }

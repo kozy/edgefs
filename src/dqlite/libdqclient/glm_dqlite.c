@@ -106,7 +106,7 @@ dqlite_glm_ilock(void *cl, pthread_mutex_t *mutex, char *ino_str,
 				*cached = 1;
 			}
 			pthread_mutex_unlock(mutex);
-			
+
 		}
 		return err;
 	}
@@ -139,6 +139,45 @@ dqlite_glm_iunlock(void *cl, pthread_mutex_t *mutex, char *ino_str,
 	}
 	return err;
 }
+
+
+static int
+dqlite_glm_acquire(void *cl, geo_lock_t *lock_rec)
+{
+	struct cdq_client *client = cl;
+	return geolock_acquire_lock_rec(client, lock_rec);
+}
+
+static int
+dqlite_glm_release(void *cl, geo_lock_t *lock_rec)
+{
+	struct cdq_client *client = cl;
+	return geolock_release_lock_rec(client, lock_rec);
+}
+
+static int
+dqlite_glm_clean(void *cl, geo_lock_t *lock_rec)
+{
+	struct cdq_client *client = cl;
+	return geolock_clean_lock_rec(client, lock_rec);
+}
+
+static int
+dqlite_glm_get(void *cl, const char *path_key, geo_lock_t *lock_rec)
+{
+	struct cdq_client *client = cl;
+	int rec_count = 0;
+	int err = geolock_get_lock_rec(client, path_key, lock_rec, &rec_count);
+	if (err) {
+		return err;
+	}
+	if (rec_count == 0) {
+		return -ENOENT;
+	}
+	return 0;
+}
+
+
 
 static void
 dqlite_glm_disconnect(void *cl)
@@ -201,5 +240,9 @@ struct dqlite_glm_ops dqlite_glm_ops = {
 	.connect = dqlite_glm_connect,
 	.disconnect = dqlite_glm_disconnect,
 	.lock = dqlite_glm_ilock,
-	.unlock = dqlite_glm_iunlock
+	.unlock = dqlite_glm_iunlock,
+	.acquire = dqlite_glm_acquire,
+	.release = dqlite_glm_release,
+	.clean = dqlite_glm_clean,
+	.get = dqlite_glm_get
 };

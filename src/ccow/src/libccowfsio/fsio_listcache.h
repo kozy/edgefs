@@ -13,6 +13,7 @@ extern "C" {
 #include "ccowfsio.h"
 
 #define FSIO_LIST_CACHE_TTL 20
+#define FSIO_LIST_CACHE_GLOBAL_TTL 5
 
 typedef struct fsio_list_cache_entry_t {
 	char *name;
@@ -24,6 +25,7 @@ typedef struct fsio_list_cache_entry_t {
 typedef struct fsio_list_cache_t {
     hashtable_t *fsio_list_cache_entry_ht;
     pthread_mutex_t fsio_list_cache_entry_ht_lock;
+    int ttl;
 } fsio_list_cache_t;
 
 
@@ -33,13 +35,12 @@ int fsio_list_cache_entry_init(fsio_list_cache_entry_t *fsio_list_cache_entry, i
 void fsio_list_cache_entry_destroy(fsio_list_cache_entry_t *fsio_list_cache_entry);
 
 int fsio_list_cache_entry_age(fsio_list_cache_entry_t *fsio_list_cache_entry);
-int fsio_list_cache_entry_expired(fsio_list_cache_entry_t *fsio_list_cache_entry);
 
 // fsio_list_cache_entry_t hash table methods
 char *build_list_key(inode_t parent, inode_t child, char *buf);
 
 
-int fsio_list_cache_create(fsio_list_cache_t *fsio_list_cache);
+int fsio_list_cache_create(fsio_list_cache_t *fsio_list_cache, int ttl);
 int fsio_list_cache_destroy(fsio_list_cache_t *fsio_list_cache);
 int fsio_list_cache_clean(fsio_list_cache_t *fsio_list_cache);
 

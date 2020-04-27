@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #include "json.h"
 #include "dqclient.h"
@@ -16,6 +17,7 @@ cdq_connect_server(char *ipaddr)
 	int fd, err = 0;
 	char *ipv4addr, *port;
 	in_port_t port_num;
+
 
 	if (!ipaddr) {
 		errno = EINVAL;
@@ -43,17 +45,27 @@ cdq_connect_server(char *ipaddr)
 	inaddr.sin_addr.s_addr = inet_addr(ipv4addr);
 	inaddr.sin_port = htons(port_num);
 
-	fd = socket(AF_INET, SOCK_STREAM, 0);
-	if (fd < 0) {
+	int wait = 0;
+
+	while (wait < CONNECTION_TIMEOUT) {
+		fd = socket(AF_INET, SOCK_STREAM, 0);
+		if (fd < 0) {
+			return fd;
+		}
+
+		err = connect(fd, &inaddr, sizeof inaddr);
+		if (err < 0) {
+			close(fd);
+			wait += 10;
+			printf("Retry connect to ipv4: %s:%u\n", ipv4addr, port_num);
+			sleep(10);
+			continue;
+		}
+		printf("Connected to ipv4: %s:%u\n", ipv4addr, port_num);
 		return fd;
 	}
 
-	err = connect(fd, &inaddr, sizeof inaddr);
-	if (err < 0) {
-		close(fd);
-		return err;
-	}
-	return fd;
+	return err;
 }
 
 void
@@ -128,6 +140,7 @@ cdq_prepare_stmt(struct cdq_client *client, char *stmt, unsigned *stmt_id)
 
 	err = clientSendPrepare(&client->cl, stmt);
 	if (err) {
+		fprintf(stderr, "Send Prepare stmt: %s, id: %u, err: %d\n", stmt, *stmt_id, err);
 		return err;
 	}
 	err = clientRecvStmt(&client->cl, stmt_id);
@@ -142,6 +155,7 @@ cdq_exec_stmt(struct cdq_client *client, unsigned stmt_id,
 
 	err = clientSendExec(&client->cl, stmt_id);
 	if (err) {
+		fprintf(stderr, "Send Exec id: %u, err: %d\n", stmt_id, err);
 		return err;
 	}
 	err = clientRecvResult(&client->cl, last_insert_id, rows_affected);
@@ -161,8 +175,17 @@ cdq_query_stmt(struct cdq_client *client, unsigned stmt_id, struct rows *rows)
 
 	err = clientSendQuery(&client->cl, stmt_id);
 	if (err) {
+		fprintf(stderr, "Send Query id: %u, err: %d\n", stmt_id, err);
 		return err;
 	}
+	err = clientRecvRows(&client->cl, rows);
+	return err;
+}
+
+int
+cdq_query_stmt_more(struct cdq_client *client, struct rows *rows)
+{
+	int err;
 	err = clientRecvRows(&client->cl, rows);
 	return err;
 }
@@ -213,7 +236,7 @@ cdq_node_leave_cluster(uint64_t leader_id, char *leader_ip,
 
 	memset(&client, 0, sizeof client);
 	client.srv_id =  leader_id;
-	strncpy(client.srv_ipaddr, leader_ip, INET_ADDRSTRLEN + 6);
+	strncpy(client.srv_ipaddr, leader_ip, ADDRESS_MAX_LEN);
 
 	err = cdq_start(&client);
 	if (err != 0) {
@@ -240,7 +263,7 @@ cdq_node_join_cluster(uint64_t leader_id, char *leader_ip,
 	/* Connect to a leader */
 	memset(&client, 0, sizeof client);
 	client.srv_id =  leader_id;
-	strncpy(client.srv_ipaddr, leader_ip, INET_ADDRSTRLEN + 6);
+	strncpy(client.srv_ipaddr, leader_ip, ADDRESS_MAX_LEN);
 
 	err = cdq_start(&client);
 	if (err != 0) {
@@ -267,7 +290,7 @@ cdq_get_cluster_nodes(uint64_t id, char *addr)
 
 	memset(&client, 0, sizeof client);
 	client.srv_id =  id;
-	strncpy(client.srv_ipaddr, addr, INET_ADDRSTRLEN + 6);
+	strncpy(client.srv_ipaddr, addr, ADDRESS_MAX_LEN);
 
 	err = cdq_start(&client);
 	if (err != 0) {
@@ -304,7 +327,7 @@ cdq_is_leader(uint64_t id, char *addr)
 
 	memset(&client, 0, sizeof client);
 	client.srv_id =  id;
-	strncpy(client.srv_ipaddr, addr, INET_ADDRSTRLEN + 6);
+	strncpy(client.srv_ipaddr, addr, ADDRESS_MAX_LEN);
 
 	err = cdq_start(&client);
 	if (err != 0) {

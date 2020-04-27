@@ -43,15 +43,17 @@ fsio_list_cache_entry_age(fsio_list_cache_entry_t *fsio_list_cache_entry) {
 }
 
 
-int
-fsio_list_cache_entry_expired(fsio_list_cache_entry_t *fsio_list_cache_entry) {
-	return (fsio_list_cache_entry_age(fsio_list_cache_entry) > FSIO_LIST_CACHE_TTL);
+static int
+fsio_list_cache_entry_expired(fsio_list_cache_entry_t *fsio_list_cache_entry, int ttl) {
+	return (fsio_list_cache_entry_age(fsio_list_cache_entry) > ttl);
 }
 
 
 /* fsio_list_cache_entry_t hash tables */
 int
-fsio_list_cache_create(fsio_list_cache_t *fsio_list_cache) {
+fsio_list_cache_create(fsio_list_cache_t *fsio_list_cache, int ttl) {
+	fsio_list_cache->ttl = ttl;
+
 	if (fsio_list_cache->fsio_list_cache_entry_ht != NULL)
 		return 0;
 
@@ -126,7 +128,7 @@ fsio_list_cache_clean(fsio_list_cache_t *fsio_list_cache) {
 		fsio_list_cache_entry_t *fsio_list_cache_entry = hashtable_get(fsio_list_cache->fsio_list_cache_entry_ht,
 			(void *)key, strlen(key) + 1, &ent_size);
 		if (fsio_list_cache_entry != NULL && ent_size == sizeof(fsio_list_cache_entry_t)) {
-			if (fsio_list_cache_entry_expired(fsio_list_cache_entry)) {
+			if (fsio_list_cache_entry_expired(fsio_list_cache_entry, fsio_list_cache->ttl)) {
 				fsio_list_cache_entry_destroy(fsio_list_cache_entry);
 				num++;
 				hashtable_remove(fsio_list_cache->fsio_list_cache_entry_ht, (void *)key, strlen(key) + 1);
@@ -149,6 +151,9 @@ int
 fsio_list_cache_put(fsio_list_cache_t *fsio_list_cache, fsio_list_cache_entry_t *fsio_list_cache_entry)
 {
 	int err = 0;
+
+	if (fsio_list_cache == NULL)
+		return 0;
 
 	char buf[128];
 	char  *key = build_list_key(fsio_list_cache_entry->parent, fsio_list_cache_entry->child, buf);
@@ -178,6 +183,8 @@ int
 fsio_list_cache_get(fsio_list_cache_t *fsio_list_cache, char *key, char *res, int res_max)
 {
 	size_t ent_size;
+	if (fsio_list_cache == NULL)
+		return ENOENT;
 	pthread_mutex_lock(&fsio_list_cache->fsio_list_cache_entry_ht_lock);
 
 	fsio_list_cache_entry_t *ent = hashtable_get(fsio_list_cache->fsio_list_cache_entry_ht, (void *)key, strlen(key) + 1, &ent_size);
@@ -185,7 +192,7 @@ fsio_list_cache_get(fsio_list_cache_t *fsio_list_cache, char *key, char *res, in
 	log_trace(fsio_lg,"ht get by fsio_list_cache_entry key: %s, size: %d", key, (int) ent_size);
 
 	if (ent != NULL && ent_size == sizeof(fsio_list_cache_entry_t)) {
-		if (fsio_list_cache_entry_expired(ent)) {
+		if (fsio_list_cache_entry_expired(ent, fsio_list_cache->ttl)) {
 			pthread_mutex_unlock(&fsio_list_cache->fsio_list_cache_entry_ht_lock);
 			fsio_list_cache_delete(fsio_list_cache, key);
 			return ENOENT;
@@ -203,6 +210,8 @@ fsio_list_cache_get(fsio_list_cache_t *fsio_list_cache, char *key, char *res, in
 void
 fsio_list_cache_delete(fsio_list_cache_t *fsio_list_cache, char *key)
 {
+	if (fsio_list_cache == NULL)
+		return;
 	pthread_mutex_lock(&fsio_list_cache->fsio_list_cache_entry_ht_lock);
 	size_t ent_size;
 	fsio_list_cache_entry_t *fsio_list_cache_entry = hashtable_get(fsio_list_cache->fsio_list_cache_entry_ht, (void *)key, strlen(key) + 1, &ent_size);

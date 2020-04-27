@@ -38,11 +38,12 @@ $(TARGET_LIB)-clean:
 $(TARGET_BIN): $(TARGET_LIB)/libdqclient.a $(TARGET_OBJS)
 	gcc -o $@ $^ $(LXFLAGS)
 
-install: $(TARGET_BIN) $(TARGET_LIB)/libdqclient.a
+install: $(TARGET_BIN) $(TARGET_LIB)/libdqclient.a $(TARGET_LIB)/list_geolock
 	mkdir -p $(DESTDIR)$(SRCDIR)/sbin 2> /dev/null || true
 	cp -a $(TARGET_BIN) $(DESTDIR)$(SRCDIR)/sbin
 	cp -a $(TARGET_LIB)/libdqclient.a $(DESTDIR)$(SRCDIR)/lib
 	cp -a $(TARGET_LIB)/libdqclient.so $(DESTDIR)$(SRCDIR)/lib
+	cp -a $(TARGET_LIB)/list_geolock $(DESTDIR)$(SRCDIR)/sbin
 	cp -a $(TARGET_LIB)/dqclient.h $(DESTDIR)$(SRCDIR)/include
 	cp -a $(TARGET_LIB)/geolock.h $(DESTDIR)$(SRCDIR)/include
 
