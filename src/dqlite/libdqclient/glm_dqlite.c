@@ -179,13 +179,14 @@ dqlite_glm_get(void *cl, const char *path_key, geo_lock_t *lock_rec)
 
 
 
-static void
+static int
 dqlite_glm_disconnect(void *cl)
 {
 	struct cdq_client *client = cl;
 
 	cdq_stop(client);
 	je_free(client);
+	return 0;
 }
 
 static int
