@@ -60,4 +60,4 @@ $(LIST_GEOLOCK): $(LIST_GEOLOCK_OBJS) $(TARGET_LIB).a
 	gcc -o $@ $^  $(LDFLAGS)
 
 clean:
-	rm -f $(STRESS_TEST) $(TEST_DQCLIENT) $(TARGET_LIB).a *.o
+	rm -f $(STRESS_TEST) $(TEST_DQCLIENT) $(TARGET_LIB).a $(TARGET_LIB).so *.o
