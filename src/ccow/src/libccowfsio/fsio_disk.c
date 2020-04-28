@@ -121,7 +121,7 @@ __create_completion(ci_t *ci, disk_worker_md *disk_worker, int type)
 	assert(disk_worker->available_op_count == 0);
 
 	if (ci->glm_enabled) {
-		if (type == DISK_WRITE || type == DISK_MD) {
+		// if (type == DISK_WRITE || type == DISK_MD) {
 			log_trace(fsio_lg, "Global op: %d, inode: %s/%lu", type, ci->bid, disk_worker->ino);
 			err = global_inode_acquire(ci, disk_worker->ino, disk_worker->oid);
 			log_debug(fsio_lg, "Global acquire inode: %lu err: %d", disk_worker->ino, err);
@@ -129,16 +129,16 @@ __create_completion(ci_t *ci, disk_worker_md *disk_worker, int type)
 				log_error(fsio_lg, "Global acquire inode: %lu failed err: %d", disk_worker->ino, err);
 				err = 0;
 			}
-		} else {
-			log_trace(fsio_lg, "Global get inode: %s/%lu", ci->bid, disk_worker->ino);
-			err = global_inode_get(ci, disk_worker->ino, disk_worker->oid);
-			log_debug(fsio_lg, "Global get inode: %lu err: %d", disk_worker->ino, err);
-			if (err) {
-				if (err != -ENOENT)
-					log_error(fsio_lg, "Global get inode: %lu failed err: %d", disk_worker->ino, err);
-				err = 0;
-			}
-		}
+		// } else {
+		// 	log_trace(fsio_lg, "Global get inode: %s/%lu", ci->bid, disk_worker->ino);
+		// 	err = global_inode_get(ci, disk_worker->ino, disk_worker->oid);
+		// 	log_debug(fsio_lg, "Global get inode: %lu err: %d", disk_worker->ino, err);
+		// 	if (err) {
+		// 		if (err != -ENOENT)
+		// 			log_error(fsio_lg, "Global get inode: %lu failed err: %d", disk_worker->ino, err);
+		// 		err = 0;
+		// 	}
+		// }
 	}
 
 	err = ccowfs_create_stream_completion(ci, disk_worker->oid,
@@ -240,14 +240,14 @@ out:
 	log_trace(fsio_lg, "completed ci: %p, disk_worker: %p", ci,
 	    disk_worker);
 	if (ci->glm_enabled) {
-		if (type == DISK_WRITE || type == DISK_MD) {
+		// if (type == DISK_WRITE || type == DISK_MD) {
 			log_debug(fsio_lg, "Global md unlock inode:  %s/%lu", ci->bid, disk_worker->ino);
 			err = global_inode_release(ci, disk_worker->ino, disk_worker->oid);
 			if (err) {
 				log_error(fsio_lg, "Global md release inode: %lu failed err: %d", disk_worker->ino, err);
 				err = 0;
 			}
-		}
+		// }
 	}
 
 	return err;
