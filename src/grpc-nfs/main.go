@@ -205,7 +205,7 @@ func InitGrpc(ipnport, svc string) {
 	}
 	glmSvcConf, err := efsutil.GetMDKey("", "svcs", svc, "", "X-GeoLock-Service")
 	if err != nil {
-		log.Fatalf(err.Error())
+		glmSvcConf = ""
 	}
 	if glmSvc != "" && glmSvcConf != glmSvc {
 		err = efsutil.UpdateMD("", "svcs", svc, "", "X-GeoLock-Service", glmSvc)
