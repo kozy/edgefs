@@ -199,7 +199,26 @@ func InitGrpc(ipnport, svc string) {
 	}
 	os.Setenv("CCOW_MH_IMMDIR", mhImmDir)
 
-	log.Printf("nfs gRPC svc=%s, X-MH-ImmDir=%s\n", svc, mhImmDir)
+	glmSvc := ""
+	if envGlm := os.Getenv("EFSNFS_GEOLOCK_SERVICE"); envGlm != "" {
+		glmSvc = envGlm
+	}
+	glmSvcConf, err := efsutil.GetMDKey("", "svcs", svc, "", "X-GeoLock-Service")
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+	if glmSvc != "" && glmSvcConf != glmSvc {
+		err = efsutil.UpdateMD("", "svcs", svc, "", "X-GeoLock-Service", glmSvc)
+		if err != nil {
+			log.Fatalf(err.Error())
+		}
+		glmSvcConf = glmSvc
+	}
+	if glmSvcConf != "" {
+		os.Setenv("CCOW_GEOLOCK_SERVICE", glmSvcConf)
+	}
+
+	log.Printf("nfs gRPC svc=%s, X-MH-ImmDir=%s X-GeoLock-Service=%s\n", svc, mhImmDir, glmSvcConf)
 
 	keys, err := efsutil.GetKeys("", "svcs", svc, "", 1000)
 	if err != nil {
