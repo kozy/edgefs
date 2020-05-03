@@ -65,15 +65,11 @@ func ServiceServeDSQL(sname string, bpath string, opts string) error {
 
 	for _, key := range keys {
 		node := strings.Split(key, ",")
-		path := strings.Split(node[1], "@")
 		o := strings.Split(opts, ",")
 
 		serve_path := fmt.Sprintf("%s,%s@%s", o[0], bpath, o[1])
 		if strings.Compare(key, serve_path) == 0 {
 			return fmt.Errorf("This service is alerady serving : %s", serve_path)
-		}
-		if strings.Compare(path[0], bpath) != 0 {
-			return fmt.Errorf("This service is serving other path: %s", path[0])
 		}
 		if strings.Compare(node[0], o[0]) == 0 {
 			return fmt.Errorf("This node id (%s) is used by another node", o[0])
@@ -122,7 +118,6 @@ func ServiceServeDSQL(sname string, bpath string, opts string) error {
 
 	o := strings.Split(opts, ",")
 	dataDir := fmt.Sprintf("%s,%s@%s", o[0], bpath, o[1])
-	fmt.Printf("Serving new databases %s\n", dataDir)
 
 	c_datadir := C.CString(dataDir)
 	defer C.free(unsafe.Pointer(c_datadir))
@@ -149,6 +144,8 @@ func ServiceServeDSQL(sname string, bpath string, opts string) error {
 		return fmt.Errorf("%s: ccow_wait err=%d",
 					efsutil.GetFUNC(), ret)
 	}
+
+	fmt.Printf("Serving new databases %s\n", dataDir)
 
 	return nil
 }

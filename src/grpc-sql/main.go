@@ -30,6 +30,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"net"
@@ -44,13 +45,106 @@ var (
 )
 
 var PREFIX = "/opt/nedge/"
-var exportsList = PREFIX + "etc/ganesha/exportslist"
 
 type logWriter struct {
 }
 
 func (writer logWriter) Write(bytes []byte) (int, error) {
 	return fmt.Print(time.Now().UTC().Format("2006-01-02T15:04:05.999Z") + " " + string(bytes))
+}
+
+func findBpath(svc string) (string, string) {
+
+	var bpath string
+
+	keys, err := efsutil.GetKeys("", "svcs", svc, "", 1000)
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	for _, v := range keys {
+		s := strings.Split(v, ",")
+		x := strings.Split(s[1], "@")
+		bpath = x[0]
+		if bpath != "//" {
+			return x[1], bpath
+		}
+	}
+
+	return "", ""
+}
+
+func updateSvc(svc string, bpath string, localId string, ids []string, addrs []string) {
+
+	keys, err := efsutil.GetKeys("", "svcs", svc, "", 1000)
+	if err != nil {
+		log.Fatalf(err.Error())
+	}
+
+	// delete non-existing entries
+	var nKeys []string
+	for _, v := range keys {
+		nKeys = append(nKeys, v)
+	}
+	for k := 0; k < len(nKeys); k++ {
+		s := strings.Split(nKeys[k], ",")
+		x := strings.Split(s[1], "@")
+		id := s[0]
+		addr := x[1]
+		found := false
+		for i := 0; i < len(addrs); i++ {
+			if addrs[i] == addr && ids[i] == id {
+				// to trigger delete local record if bpath isn't matching
+				if id == localId && bpath != x[0] {
+					continue
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			// delete outdated record from service
+			rec := id + "," + x[0] + "@" + addr
+			err = efsutil.DeleteByKey("/svcs/" + svc + "/", rec)
+			if err != nil {
+				log.Fatalf("Cannot delete service record %s: %+v", rec, err)
+			}
+
+			// delete element from in-memory array
+			for j := 0; j < len(keys); j++ {
+				if keys[j] == nKeys[k] {
+					keys[j] = keys[len(keys)-1]
+					keys[len(keys)-1] = ""
+					keys = keys[:len(keys)-1]
+					break
+				}
+			}
+		}
+	}
+
+	// add new entries
+	for i := 0; i < len(addrs); i++ {
+		found := false
+		for k := 0; k < len(keys); k++ {
+			s := strings.Split(keys[k], ",")
+			x := strings.Split(s[1], "@")
+			id := s[0]
+			addr := x[1]
+			if addrs[i] == addr && ids[i] == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			var bp string
+			if ids[i] == localId { bp = bpath } else { bp = "//" }
+			rec := ids[i] + "," + bp + "@" + addrs[i]
+			err = efsutil.InsertKey("/svcs/" + svc + "/", rec)
+			if err != nil {
+				log.Fatalf("Cannot delete service record %s: %+v", rec, err)
+			}
+		}
+	}
 }
 
 func InitGrpc(svc string) ([]string, []string, string) {
@@ -98,12 +192,82 @@ func main() {
 		return
 	}
 
-	ids, addrs, bpath := InitGrpc(*serviceName)
+	var ids []string
+	var addrs []string
+	var bpath string
+	var nodeips []string
 
-	nodeips, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Fatalf("Unable to obtain network interfaces")
-		return
+	if ns := os.Getenv("K8S_NAMESPACE"); ns != "" {
+		K8S_NAMESPACE := ns
+
+		serviceHostEnv := strings.ToUpper(K8S_NAMESPACE + "_dsql_" + *serviceName + "_service_host")
+		serviceHostEnv = strings.Replace(serviceHostEnv, "-", "_", -1)
+
+		localIPv4Address := "0.0.0.0"
+		if envIP := os.Getenv(serviceHostEnv); envIP != "" {
+			localIPv4Address = envIP
+		}
+		nodeips = append(nodeips, localIPv4Address)
+
+		defport := os.Getenv("EFSDSQL_PORT")
+		if defport == "" {
+			log.Fatalf("Default DSQL port is not defined")
+		}
+
+		localId := 0
+		ord := 1
+		for _, ep := range strings.Split(os.Getenv("EFSDSQL_ENDPOINTS"), ";") {
+			ips, err := net.LookupIP(ep)
+			if err != nil {
+				log.Fatalf("Unreachable endpoint %s", ep)
+			} else {
+				addr := ""
+				for _, ip := range ips {
+					if ip.To4() != nil {
+						addr = ip.String()
+						break
+					}
+				}
+				if addr == "" {
+					log.Fatalf("No IPv4 address found for endpoint %s", ep)
+				}
+				ids = append(ids, strconv.Itoa(ord))
+				addrs = append(addrs, addr + ":" + defport)
+				if addr == localIPv4Address {
+					localId = ord
+				}
+				ord++
+			}
+		}
+
+		if localId == 0 {
+			log.Fatalf("Endpoint list missing local dsql service record")
+		}
+
+		var laddr string
+		laddr, bpath = findBpath(*serviceName)
+		if bpath == "" {
+			log.Fatalf("Cannot find bucket to hold RAFT append logs. Revisit service %s", *serviceName)
+		}
+
+		if laddr != localIPv4Address + ":" + defport {
+			log.Printf("Service %s will be updated to reflect new local IPv4 address %s (old address %s)", *serviceName, localIPv4Address, laddr)
+		}
+
+		updateSvc(*serviceName, bpath, strconv.Itoa(localId), ids, addrs)
+
+	} else {
+		ids, addrs, bpath = InitGrpc(*serviceName)
+
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			log.Fatalf("Unable to obtain network interfaces")
+			return
+		}
+
+		for _, a := range addrs {
+			nodeips = append(nodeips, a.String())
+		}
 	}
 
 	var idx, max int
@@ -114,11 +278,9 @@ func main() {
 	max = len(ids)
 	for idx = 0; idx < max; idx++ {
 		if idx == max -1 {
-			fmt.Fprintf(&clusterNodes, "%s,%s",
-			ids[idx], addrs[idx])
+			fmt.Fprintf(&clusterNodes, "%s,%s", ids[idx], addrs[idx])
 		} else {
-			fmt.Fprintf(&clusterNodes, "%s,%s;",
-			ids[idx], addrs[idx])
+			fmt.Fprintf(&clusterNodes, "%s,%s;", ids[idx], addrs[idx])
 		}
 	}
 
@@ -133,8 +295,7 @@ func main() {
 		} else {
 			var i int
 			for i = 0; i < len(nodeips); i++ {
-				ip_str := strings.Split(nodeips[i].String(),
-							"/")
+				ip_str := strings.Split(nodeips[i], "/")
 				if strings.Contains(addrs[idx], ip_str[0]) {
 					start_daemon = true
 				}
@@ -144,8 +305,9 @@ func main() {
 			fmt.Println("Starting service dqlite ...",
 			ids[idx], "at", bpath, addrs[idx])
 			InitCmd("ccow-sql", []string{"-i", ids[idx],
-				"-a", addrs[idx], "-d", bpath,
+				"-a", addrs[idx], "-d", bpath + "/.raft",
 				"-o", clusterNodes.String()})
+			break
 		}
 	}
 
