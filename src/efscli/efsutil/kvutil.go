@@ -34,6 +34,7 @@ import "unsafe"
 
 import (
 	"fmt"
+	"strings"
 )
 
 func GetKeys(cl string, tn string, bk string, obj string, count int) ([]string, error) {
@@ -114,6 +115,144 @@ func GetKeys(cl string, tn string, bk string, obj string, count int) ([]string, 
 	}
 
 	return res, nil
+}
+
+func InsertKey(opath string, key string) error {
+	if key == "" {
+		return fmt.Errorf("Key not provided")
+	}
+
+	c_key := C.CString(key)
+	defer C.free(unsafe.Pointer(c_key))
+
+	conf, err := GetLibccowConf()
+	if err != nil {
+		return err
+	}
+
+	c_conf := C.CString(string(conf))
+	defer C.free(unsafe.Pointer(c_conf))
+
+	s := strings.SplitN(opath, "/", 4)
+
+	c_cl := C.CString(s[0])
+	defer C.free(unsafe.Pointer(c_cl))
+
+	c_tn := C.CString(s[1])
+	defer C.free(unsafe.Pointer(c_tn))
+
+	c_bk := C.CString(s[2])
+	defer C.free(unsafe.Pointer(c_bk))
+
+	c_obj := C.CString(s[3])
+	defer C.free(unsafe.Pointer(c_obj))
+
+	var tc C.ccow_t
+
+	ret := C.ccow_admin_init(c_conf, c_cl, C.strlen(c_cl)+1, &tc)
+	if ret != 0 {
+		return fmt.Errorf("ccow_admin_init err=%d", ret)
+	}
+	defer C.ccow_tenant_term(tc)
+
+	var comp C.ccow_completion_t
+
+	// insert into service object
+	ret = C.ccow_create_completion(tc, nil, nil, 1, &comp)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_create_completion err=%d",
+					GetFUNC(), ret)
+	}
+
+	ret = C.ccow_create_completion(tc, nil, nil, 1, &comp)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_create_completion err=%d", GetFUNC(), ret)
+	}
+
+	var iov_key C.struct_iovec
+	iov_key.iov_base = unsafe.Pointer(c_key)
+	iov_key.iov_len = C.strlen(c_key) + 1
+
+	ret = C.ccow_insert_list(c_bk, C.strlen(c_bk)+1, c_obj, C.strlen(c_obj)+1,
+				comp, &iov_key, 1)
+	if ret != 0 {
+		C.ccow_release(comp)
+		return fmt.Errorf("%s: ccow_insert_list err=%d",
+					GetFUNC(), ret)
+	}
+
+	ret = C.ccow_wait(comp, 0)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_wait err=%d",
+					GetFUNC(), ret)
+	}
+
+	return nil
+}
+
+func DeleteByKey(opath string, key string) error {
+	if key == "" {
+		return fmt.Errorf("Key not provided")
+	}
+
+	c_key := C.CString(key)
+	defer C.free(unsafe.Pointer(c_key))
+
+	s := strings.SplitN(opath, "/", 4)
+
+	c_cl := C.CString(s[0])
+	defer C.free(unsafe.Pointer(c_cl))
+
+	c_tn := C.CString(s[1])
+	defer C.free(unsafe.Pointer(c_tn))
+
+	c_bk := C.CString(s[2])
+	defer C.free(unsafe.Pointer(c_bk))
+
+	c_obj := C.CString(s[3])
+	defer C.free(unsafe.Pointer(c_obj))
+
+	conf, err := GetLibccowConf()
+	if err != nil {
+		return err
+	}
+
+	c_conf := C.CString(string(conf))
+	defer C.free(unsafe.Pointer(c_conf))
+
+	clempty := C.CString("")
+	defer C.free(unsafe.Pointer(clempty))
+
+	var tc C.ccow_t
+
+	ret := C.ccow_admin_init(c_conf, clempty, 1, &tc)
+	if ret != 0 {
+		return fmt.Errorf("ccow_admin_init err=%d", ret)
+	}
+	defer C.ccow_tenant_term(tc)
+
+	var comp C.ccow_completion_t
+	ret = C.ccow_create_completion(tc, nil, nil, 1, &comp)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_create_completion err=%d", GetFUNC(), ret)
+	}
+
+	var iov_key C.struct_iovec
+	iov_key.iov_base = unsafe.Pointer(c_key)
+	iov_key.iov_len = C.strlen(c_key) + 1
+
+	ret = C.ccow_delete_list(c_bk, C.strlen(c_bk) + 1, c_obj, C.strlen(c_obj) + 1, comp, &iov_key, 1)
+	if ret != 0 {
+		C.ccow_release(comp)
+		return fmt.Errorf("%s: ccow_delete_list_cont err=%d", GetFUNC(), ret)
+	}
+
+	ret = C.ccow_wait(comp, 0)
+	if ret != 0 {
+		return fmt.Errorf("%s: ccow_wait err=%d", GetFUNC(), ret)
+	}
+
+	return nil
 }
 
 func GetKeyValues(cl string, tn string, bk string, obj string, pat string, max_len int, count int) ([]KeyValue, error) {
