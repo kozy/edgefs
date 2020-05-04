@@ -250,7 +250,7 @@ ccow_dq_start()
 			break;
 		sleep(5);
 		wait += 5;
-		printf("Retry set bind address: %s\n", cdq_server.addr);
+		printf("Retry set bind address: %s, err: %d\n", cdq_server.addr, err);
 	}
 	if (err) {
 		log_error(lg, "Failed to bind dqlite node address %s, "
@@ -568,16 +568,18 @@ main(int argc, char *argv[])
 	sprintf(logname, "ccow-sql-%"PRIu64, cdq_server.id);
 	lg = Logger_create(logname);
 
-	int write_pidfile_res = write_pidfile(pidfile, getpid());
-	if (write_pidfile_res) {
-		fprintf(stderr, "Failed to write pidfile\n");
-		return 1;
+	if (daemonize) {
+		int write_pidfile_res = write_pidfile(pidfile, getpid());
+		if (write_pidfile_res) {
+			fprintf(stderr, "Failed to write pidfile\n");
+			return 1;
+		}
 	}
 
 	setpriority(PRIO_PROCESS, getpid(), -15);
 	signal(SIGTERM, signal_handler);
 	signal(SIGINT, signal_handler);
-    signal(SIGHUP, signal_handler);
+	signal(SIGHUP, signal_handler);
 
 
 	log_info(lg, "Starting DQLite ...\n");

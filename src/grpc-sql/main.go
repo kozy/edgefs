@@ -173,6 +173,8 @@ func main() {
 	log.SetFlags(0)
 	log.SetOutput(new(logWriter))
 
+	os.Setenv("CCOW_LOG_STDOUT", "1")
+
 	serviceName := getopt.StringLong("service", 's', "", "Name of service")
 	optHelp := getopt.BoolLong("help", 0, "Help")
 	getopt.Parse()
@@ -197,19 +199,20 @@ func main() {
 	var bpath string
 	var nodeips []string
 
+	svcIPv4Address := "0.0.0.0"
+	defport := ""
+
 	if ns := os.Getenv("K8S_NAMESPACE"); ns != "" {
 		K8S_NAMESPACE := ns
 
 		serviceHostEnv := strings.ToUpper(K8S_NAMESPACE + "_dsql_" + *serviceName + "_service_host")
 		serviceHostEnv = strings.Replace(serviceHostEnv, "-", "_", -1)
 
-		localIPv4Address := "0.0.0.0"
 		if envIP := os.Getenv(serviceHostEnv); envIP != "" {
-			localIPv4Address = envIP
+			svcIPv4Address = envIP
 		}
-		nodeips = append(nodeips, localIPv4Address)
 
-		defport := os.Getenv("EFSDSQL_PORT")
+		defport = os.Getenv("EFSDSQL_PORT")
 		if defport == "" {
 			log.Fatalf("Default DSQL port is not defined")
 		}
@@ -233,7 +236,7 @@ func main() {
 				}
 				ids = append(ids, strconv.Itoa(ord))
 				addrs = append(addrs, addr + ":" + defport)
-				if addr == localIPv4Address {
+				if addr == svcIPv4Address {
 					localId = ord
 				}
 				ord++
@@ -250,28 +253,27 @@ func main() {
 			log.Fatalf("Cannot find bucket to hold RAFT append logs. Revisit service %s", *serviceName)
 		}
 
-		if laddr != localIPv4Address + ":" + defport {
-			log.Printf("Service %s will be updated to reflect new local IPv4 address %s (old address %s)", *serviceName, localIPv4Address, laddr)
+		if laddr != svcIPv4Address + ":" + defport {
+			log.Printf("Service %s will be updated to reflect new service IPv4 address %s (old address %s)", *serviceName, svcIPv4Address, laddr)
 		}
 
 		updateSvc(*serviceName, bpath, strconv.Itoa(localId), ids, addrs)
 
 	} else {
 		ids, addrs, bpath = InitGrpc(*serviceName)
+	}
 
-		addrs, err := net.InterfaceAddrs()
-		if err != nil {
-			log.Fatalf("Unable to obtain network interfaces")
-			return
-		}
+	localAddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Fatalf("Unable to obtain network interfaces")
+		return
+	}
 
-		for _, a := range addrs {
-			nodeips = append(nodeips, a.String())
-		}
+	for _, a := range localAddrs {
+		nodeips = append(nodeips, a.String())
 	}
 
 	var idx, max int
-	var start_daemon bool
 
 	var clusterNodes strings.Builder;
 	/* Create list of all nodes in the cluster */
@@ -289,23 +291,26 @@ func main() {
 		 * Check if any of the IP addresses for the cluster IPs
 		 * match th IP address of the node.
 		 */
-		start_daemon = false
+		startAddr := ""
 		if strings.Contains(addrs[idx], "127.") {
-			start_daemon = true
+			startAddr = addrs[idx]
 		} else {
 			var i int
 			for i = 0; i < len(nodeips); i++ {
 				ip_str := strings.Split(nodeips[i], "/")
 				if strings.Contains(addrs[idx], ip_str[0]) {
-					start_daemon = true
+					startAddr = addrs[idx]
+				}
+				if strings.Contains(addrs[idx], svcIPv4Address) {
+					startAddr = ip_str[0] + ":" + defport
 				}
 			}
 		}
-		if (start_daemon) {
+		if (startAddr != "") {
 			fmt.Println("Starting service dqlite ...",
-			ids[idx], "at", bpath, addrs[idx])
+			ids[idx], "at", bpath, startAddr)
 			InitCmd("ccow-sql", []string{"-i", ids[idx],
-				"-a", addrs[idx], "-d", bpath + "/.raft",
+				"-a", startAddr, "-d", bpath + "/.raft-" + *serviceName,
 				"-o", clusterNodes.String()})
 			break
 		}
